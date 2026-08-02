@@ -9,6 +9,8 @@
 //! 显示管线在阶段 6 随查看器一起做 —— 窗宽窗位是交互式的,
 //! 放在客户端才有意义。
 
+pub mod display;
 pub mod frames;
 
+pub use display::{ModalityLut, Photometric, Pipeline, VoiFunction, Window};
 pub use frames::{FrameError, Frames};
