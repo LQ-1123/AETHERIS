@@ -9,6 +9,7 @@ pub mod extract;
 pub mod fixture;
 pub mod model;
 pub mod query;
+pub mod spacing;
 pub mod uid;
 
 pub use extract::{ExtractError, extract_metadata};
@@ -16,6 +17,7 @@ pub use model::{
     InstanceMeta, InstanceMetadata, PatientMeta, SeriesMeta, StudyMeta, normalize_person_name,
 };
 pub use query::{MatchKey, Query, QueryError, QueryLevel};
+pub use spacing::{Confidence, Measurement, PixelSpacing, Spacing, distance, resolve};
 pub use uid::{Uid, UidError};
 
 /// crate 版本,用于服务端启动日志与客户端 About 信息。
