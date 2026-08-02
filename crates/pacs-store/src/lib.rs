@@ -77,6 +77,12 @@ pub enum StoreError {
     },
     #[error("相对路径 {relative:?} 越出了存储根")]
     PathEscape { relative: String },
+    /// 数据库有记录、盘上没文件。
+    ///
+    /// 单独成一类是因为它的含义和其他 IO 错误不同:这是存储与数据库不一致的
+    /// 信号(孤儿记录),调用方应当回 404 并告警,而不是当成一般的读失败。
+    #[error("相对路径 {relative:?} 对应的文件不存在")]
+    NotFound { relative: String },
 }
 
 impl StoreError {
@@ -235,10 +241,12 @@ impl Store {
         Ok(())
     }
 
-    /// 把相对路径还原成绝对路径,用于读回文件。
+    /// 把相对路径还原成绝对路径。**不检查文件是否存在,也不跟随符号链接。**
     ///
     /// 即使路径来自我们自己的数据库也要挡一道:库被写坏或迁移出错时,
     /// 一个含 `..` 的路径能让 WADO 读到存储根之外的任意文件。
+    ///
+    /// 读回文件请用 [`Store::resolve_for_read`] —— 它额外挡符号链接逃逸。
     pub fn resolve(&self, relative: &str) -> Result<PathBuf, StoreError> {
         let candidate = Path::new(relative);
         let escapes = candidate.is_absolute()
@@ -251,6 +259,53 @@ impl Store {
             });
         }
         Ok(self.root.join(candidate))
+    }
+
+    /// 解析出可以安全读取的绝对路径。
+    ///
+    /// 比 [`Store::resolve`] 多两道:
+    ///
+    /// 1. **canonicalize 后再验一次是否still在根内**。仅检查路径分量挡不住
+    ///    符号链接 —— 存储根里若有一个 `evil.dcm -> /etc/passwd`,
+    ///    它的每个分量都是 `Normal`,组件检查完全放行,跟随后却读到了根外。
+    ///    canonicalize 会展开所有链接,展开后的真实路径才是判断依据。
+    /// 2. 文件不存在时返回 [`StoreError::NotFound`],让调用方能区分
+    ///    「数据库有记录但盘上没文件」(需要告警的不一致)和「路径非法」。
+    ///
+    /// 代价是一次 `realpath(2)` 系统调用。WADO 的每次取回都要读文件,
+    /// 相比读取本身这点开销可以忽略。
+    pub async fn resolve_for_read(&self, relative: &str) -> Result<PathBuf, StoreError> {
+        let candidate = self.resolve(relative)?;
+
+        let canonical = match fs::canonicalize(&candidate).await {
+            Ok(path) => path,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Err(StoreError::NotFound {
+                    relative: relative.to_owned(),
+                });
+            }
+            Err(error) => return Err(StoreError::at(&candidate)(error)),
+        };
+
+        // 根本身在 open() 里已经 canonicalize 过,两边可比
+        if !canonical.starts_with(&self.root) {
+            tracing::error!(
+                relative,
+                resolved = %canonical.display(),
+                root = %self.root.display(),
+                "存储路径经符号链接越出了存储根,已拒绝"
+            );
+            return Err(StoreError::PathEscape {
+                relative: relative.to_owned(),
+            });
+        }
+        Ok(canonical)
+    }
+
+    /// 读回一个已落盘的实例。
+    pub async fn read(&self, relative: &str) -> Result<Vec<u8>, StoreError> {
+        let path = self.resolve_for_read(relative).await?;
+        fs::read(&path).await.map_err(StoreError::at(&path))
     }
 
     /// 清掉 `.tmp/` 下的残留,返回删除数量。

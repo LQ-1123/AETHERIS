@@ -132,12 +132,18 @@ impl FindHandler for PacsStoreHandler {
 fn classify(error: &pacs_store::StoreError) -> StoreFailure {
     use std::io::ErrorKind;
 
+    // 刻意逐个列举而不用 `_ =>`:StoreError 新增变体时编译器会在这里报错,
+    // 强制重新判断它属于"值得重传"还是"重传也白搭"。用通配的话新变体会被
+    // 默默归到不可重传一类,而那可能正好是错的。
     let out_of_resources = match error {
         pacs_store::StoreError::Io { source, .. } => matches!(
             source.kind(),
             ErrorKind::StorageFull | ErrorKind::QuotaExceeded | ErrorKind::PermissionDenied
         ),
         pacs_store::StoreError::PathEscape { .. } => false,
+        // NotFound 是读路径的错误(resolve_for_read),落盘路径产生不了它。
+        // 真出现说明代码走错了分支,当作不可重传的处理失败。
+        pacs_store::StoreError::NotFound { .. } => false,
     };
 
     if out_of_resources {

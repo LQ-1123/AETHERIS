@@ -26,13 +26,30 @@ pub struct WebState {
     /// 存在的理由和 `pacs_db::DEFAULT_LIMIT` 一样:不设上限的话,
     /// 一个无条件查询会把整个库拉进内存。
     pub max_results: usize,
+    /// 影像存储。WADO-RS 需要,QIDO-RS 不需要。
+    ///
+    /// 做成 `Option` 是为了让只挂查询接口的部署(比如把取回放到另一个进程)
+    /// 不必构造 `Store`。为 `None` 时取回接口回 500 并告警,
+    /// 而不是静默返回 404 —— 后者会让"存储没配"看起来像"影像不存在"。
+    pub store: Option<Arc<pacs_store::Store>>,
 }
 
 impl WebState {
+    /// 只挂查询接口。
     pub fn new(pool: PgPool) -> Self {
         Self {
             pool,
             max_results: pacs_db::DEFAULT_LIMIT,
+            store: None,
+        }
+    }
+
+    /// 查询 + 取回。
+    pub fn with_store(pool: PgPool, store: Arc<pacs_store::Store>) -> Self {
+        Self {
+            pool,
+            max_results: pacs_db::DEFAULT_LIMIT,
+            store: Some(store),
         }
     }
 }
@@ -43,11 +60,25 @@ impl WebState {
 /// 漏写不会变成默认放行(见 `pacs_auth::middleware` 的模块文档)。
 pub fn dicomweb_routes(state: WebState, auth: Arc<AuthService>) -> Router {
     Router::new()
+        // —— QIDO-RS ——
         .route("/studies", get(search_studies))
         .route("/studies/{study_uid}/series", get(search_series))
         .route(
             "/studies/{study_uid}/series/{series_uid}/instances",
             get(search_instances),
+        )
+        // —— WADO-RS ——
+        .route(
+            "/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}",
+            get(crate::wado::retrieve_instance),
+        )
+        .route(
+            "/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}/metadata",
+            get(crate::wado::retrieve_metadata),
+        )
+        .route(
+            "/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}/frames/{frames}",
+            get(crate::wado::retrieve_frames),
         )
         // 先 with_state 再 layer:反过来会让状态类型在中间件那层被擦掉
         .with_state(state)

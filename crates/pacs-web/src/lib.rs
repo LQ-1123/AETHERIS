@@ -15,5 +15,7 @@
 
 pub mod qido;
 pub mod routes;
+pub mod wado;
 
 pub use routes::{WebState, dicomweb_routes};
+pub use wado::WadoError;

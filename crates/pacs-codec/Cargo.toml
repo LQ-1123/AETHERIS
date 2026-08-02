@@ -9,9 +9,16 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# 让本 crate 的测试能用 pacs-core 的合成 DICOM 夹具
+fixtures = ["pacs-core/fixtures"]
+
 [dependencies]
 pacs-core.workspace = true
 dicom.workspace = true
 dicom-pixeldata.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+pacs-core = { workspace = true, features = ["fixtures"] }

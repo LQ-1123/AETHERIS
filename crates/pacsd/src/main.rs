@@ -104,7 +104,12 @@ async fn main() -> Result<()> {
         .nest("/auth", pacs_auth::http::routes(auth_service.clone()))
         .nest(
             "/dicomweb",
-            pacs_web::dicomweb_routes(pacs_web::WebState::new(pool.clone()), auth_service.clone()),
+            pacs_web::dicomweb_routes(
+                // Store 里只有一个 PathBuf,克隆便宜;包进 Arc 是让 WADO 的
+                // handler 和 DIMSE 的 store handler 共用同一份存储根配置
+                pacs_web::WebState::with_store(pool.clone(), Arc::new(store.clone())),
+                auth_service.clone(),
+            ),
         )
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND });
 

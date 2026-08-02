@@ -14,6 +14,7 @@
 
 pub mod find;
 pub mod ingest;
+pub mod retrieve;
 
 use std::time::Duration;
 
@@ -23,6 +24,7 @@ use thiserror::Error;
 
 pub use find::{DEFAULT_LIMIT, FindResults, find};
 pub use ingest::{Ingested, StorageRecord, ingest_instance};
+pub use retrieve::{StoredInstance, find_instance, list_series_instances};
 
 #[derive(Debug, Error)]
 pub enum DbError {

@@ -195,6 +195,83 @@ async fn resolve_rejects_paths_escaping_the_root() {
     assert!(f.store.resolve("ab/cd/1.2/3.4/5.6.dcm").is_ok());
 }
 
+/// 符号链接逃逸:组件检查放行,但 canonicalize 之后必须被挡住。
+///
+/// 这是 `resolve` 单靠分量检查挡不住的一类:`evil.dcm` 的每个分量都是
+/// `Normal`,可它指向存储根之外。
+#[tokio::test]
+async fn resolve_for_read_blocks_symlink_escape() {
+    let f = Fixture::new().await;
+
+    // 在存储根外面放一个文件,再从根内建符号链接指向它
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.txt");
+    tokio::fs::write(&secret, b"root only").await.unwrap();
+
+    let link = f.store.root().join("evil.dcm");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&secret, &link).unwrap();
+    #[cfg(not(unix))]
+    {
+        eprintln!(">>> 非 Unix 平台跳过符号链接测试");
+        return;
+    }
+
+    // 分量检查会放行 —— 这正是需要第二道的原因
+    assert!(
+        f.store.resolve("evil.dcm").is_ok(),
+        "分量检查本来就挡不住符号链接,这里确认这一前提"
+    );
+
+    // 读路径必须拒绝
+    let result = f.store.resolve_for_read("evil.dcm").await;
+    assert!(
+        matches!(result, Err(StoreError::PathEscape { .. })),
+        "符号链接指向根外时必须拒绝,实际:{result:?}"
+    );
+    assert!(
+        matches!(
+            f.store.read("evil.dcm").await,
+            Err(StoreError::PathEscape { .. })
+        ),
+        "read 同样要挡住"
+    );
+}
+
+/// 数据库有记录、盘上没文件时要能区分出来 —— 那是存储与库不一致的信号。
+#[tokio::test]
+async fn resolve_for_read_reports_a_missing_file_distinctly() {
+    let f = Fixture::new().await;
+
+    let result = f.store.resolve_for_read("ab/cd/1.2/3.4/nope.dcm").await;
+    assert!(
+        matches!(result, Err(StoreError::NotFound { .. })),
+        "文件不存在应回 NotFound 而不是 PathEscape 或一般 IO 错误,实际:{result:?}"
+    );
+}
+
+/// 正常落盘的文件要能原样读回来。
+#[tokio::test]
+async fn read_returns_the_stored_bytes() {
+    let f = Fixture::new().await;
+    let bytes = b"DICM-and-then-some-payload".repeat(40);
+    let stored = f
+        .store
+        .store(
+            InstanceKey {
+                study: &uid("1.2.826.0.1.3680043.8.498.700"),
+                series: &uid("1.2.826.0.1.3680043.8.498.701"),
+                sop: &uid("1.2.826.0.1.3680043.8.498.702"),
+            },
+            &bytes,
+        )
+        .await
+        .expect("应能落盘");
+
+    let read_back = f.store.read(&stored.relative_path).await.expect("应能读回");
+    assert_eq!(read_back, bytes, "读回的字节必须与写入完全一致");
+}
+
 #[tokio::test]
 async fn concurrent_stores_of_a_series_all_succeed() {
     let f = Fixture::new().await;
