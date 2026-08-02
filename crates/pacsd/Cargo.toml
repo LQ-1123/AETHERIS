@@ -36,3 +36,4 @@ pacs-core = { workspace = true, features = ["fixtures"] }
 dicom.workspace = true
 dotenvy.workspace = true
 tempfile.workspace = true
+serde_json.workspace = true

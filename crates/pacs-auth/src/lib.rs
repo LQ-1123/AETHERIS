@@ -7,12 +7,14 @@
 
 pub mod audit;
 pub mod http;
+pub mod middleware;
 pub mod model;
 pub mod password;
 pub mod repository;
 pub mod service;
 pub mod token;
 
+pub use middleware::{Identity, require};
 pub use model::{InvalidUsername, Permission, Role, User, normalize_username};
 pub use password::{PasswordError, WeakPassword};
 pub use service::{AuthError, AuthService};

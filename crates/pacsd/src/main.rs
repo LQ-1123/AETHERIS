@@ -98,9 +98,14 @@ async fn main() -> Result<()> {
             .context("认证服务初始化失败")?,
     );
 
-    // HTTP 路由
+    // HTTP 路由。/auth 不鉴权(登录本身就是取令牌的入口),
+    // /dicomweb 整棵子树要求 ViewImages。
     let http_app = Router::new()
         .nest("/auth", pacs_auth::http::routes(auth_service.clone()))
+        .nest(
+            "/dicomweb",
+            pacs_web::dicomweb_routes(pacs_web::WebState::new(pool.clone()), auth_service.clone()),
+        )
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND });
 
     // DIMSE 监听

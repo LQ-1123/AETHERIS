@@ -83,11 +83,30 @@ pub async fn create_user(pool: &PgPool, new: NewUser<'_>) -> Result<User, RepoEr
     user_from_row(row)
 }
 
+/// 带密码哈希的查询结果。
+///
+/// 必须把 10 列摊平写成一个元组,**不能写成 `(UserRow, String)`** ——
+/// 嵌套元组会让 sqlx 以为第一列是 Postgres 的 `RECORD` 复合类型,
+/// 于是拿整行去解 `INT8`,运行期报 `ColumnDecode`。
+/// 这个错编译期看不出来:两种写法的类型都成立,只有真跑查询才暴露。
+type UserWithHashRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    String,
+    bool,
+    bool,
+    Option<DateTime<Utc>>,
+    DateTime<Utc>,
+    String,
+);
+
 pub async fn find_by_username(
     pool: &PgPool,
     username: &str,
 ) -> Result<Option<(User, String)>, RepoError> {
-    let row: Option<(UserRow, String)> = sqlx::query_as(
+    let row: Option<UserWithHashRow> = sqlx::query_as(
         "SELECT id, institution_id, username, display_name, role,
                 is_active, must_change_password, last_login_at, created_at, password_hash
          FROM users WHERE username = $1",
@@ -96,10 +115,33 @@ pub async fn find_by_username(
     .fetch_optional(pool)
     .await?;
 
-    match row {
-        Some((row, hash)) => Ok(Some((user_from_row(row)?, hash))),
-        None => Ok(None),
-    }
+    let Some((
+        id,
+        institution_id,
+        name,
+        display_name,
+        role,
+        is_active,
+        must_change,
+        last_login,
+        created,
+        hash,
+    )) = row
+    else {
+        return Ok(None);
+    };
+    let user = user_from_row((
+        id,
+        institution_id,
+        name,
+        display_name,
+        role,
+        is_active,
+        must_change,
+        last_login,
+        created,
+    ))?;
+    Ok(Some((user, hash)))
 }
 
 pub async fn find_by_id(pool: &PgPool, user_id: i64) -> Result<Option<User>, RepoError> {

@@ -2658,6 +2658,8 @@ name = "pacs-web"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "dicom",
+ "dicom-json",
  "pacs-auth",
  "pacs-codec",
  "pacs-core",
@@ -2665,6 +2667,7 @@ dependencies = [
  "pacs-store",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
@@ -2691,6 +2694,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pemfile",
+ "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
