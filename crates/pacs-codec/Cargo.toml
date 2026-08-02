@@ -1,0 +1,17 @@
+[package]
+name = "pacs-codec"
+description = "像素解码、缩略图、帧提取(CPU 密集,独立线程池)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+dicom.workspace = true
+dicom-pixeldata.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

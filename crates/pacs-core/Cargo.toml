@@ -1,0 +1,28 @@
+[package]
+name = "pacs-core"
+description = "领域模型:Patient/Study/Series/Instance、UID、元数据提取"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# 合成 DICOM 测试对象,供本 crate 与下游 crate 的测试使用
+fixtures = ["dep:uuid"]
+
+[dependencies]
+dicom.workspace = true
+dicom-json.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, optional = true }
+
+[dev-dependencies]
+# 自依赖以打开 fixtures feature:测试能用合成 DICOM 对象,发布构建不带这些代码
+pacs-core = { path = ".", features = ["fixtures"] }

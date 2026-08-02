@@ -1,0 +1,23 @@
+[package]
+name = "pacs-web"
+description = "axum:QIDO/WADO/STOW-RS 与认证 API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+pacs-db.workspace = true
+pacs-auth.workspace = true
+pacs-store.workspace = true
+pacs-codec.workspace = true
+axum.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

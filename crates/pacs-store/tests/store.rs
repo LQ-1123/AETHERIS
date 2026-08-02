@@ -1,0 +1,229 @@
+//! `pacs-store` 落盘行为的测试。
+
+use std::path::Path;
+
+use pacs_core::Uid;
+use pacs_store::{InstanceKey, Store, StoreError, StoreOutcome, TEMP_DIR};
+
+fn uid(s: &str) -> Uid {
+    Uid::parse(s).expect("测试 UID 应合法")
+}
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    store: Store,
+    study: Uid,
+    series: Uid,
+    sop: Uid,
+}
+
+impl Fixture {
+    async fn new() -> Self {
+        let dir = tempfile::tempdir().expect("应能建临时目录");
+        let store = Store::open(dir.path()).await.expect("应能打开存储");
+        Self {
+            _dir: dir,
+            store,
+            study: uid("1.2.826.0.1.3680043.8.498.1"),
+            series: uid("1.2.826.0.1.3680043.8.498.2"),
+            sop: uid("1.2.826.0.1.3680043.8.498.3"),
+        }
+    }
+
+    fn key(&self) -> InstanceKey<'_> {
+        InstanceKey {
+            study: &self.study,
+            series: &self.series,
+            sop: &self.sop,
+        }
+    }
+}
+
+#[tokio::test]
+async fn stores_a_file_and_reports_where() {
+    let f = Fixture::new().await;
+    let bytes = b"DICM-payload";
+
+    let stored = f.store.store(f.key(), bytes).await.expect("应能落盘");
+
+    assert_eq!(stored.outcome, StoreOutcome::Created);
+    assert_eq!(stored.size, bytes.len() as u64);
+    assert!(stored.relative_path.ends_with(&format!("{}.dcm", f.sop)));
+
+    // 返回的相对路径必须能读回同样的内容 —— 这是数据库里存的东西
+    let absolute = f.store.resolve(&stored.relative_path).expect("路径应合法");
+    assert_eq!(tokio::fs::read(&absolute).await.unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn digest_matches_the_content() {
+    let f = Fixture::new().await;
+    let stored = f.store.store(f.key(), b"payload").await.unwrap();
+
+    // 库里存的校验和要能用来验完整性,算错了就失去意义
+    use sha2::{Digest, Sha256};
+    let expected: [u8; 32] = Sha256::digest(b"payload").into();
+    assert_eq!(stored.sha256, expected);
+}
+
+/// 设备重传同一个实例非常常见,必须幂等而不是报错。
+#[tokio::test]
+async fn identical_retransmission_is_idempotent() {
+    let f = Fixture::new().await;
+    let bytes = b"same-bytes";
+
+    let first = f.store.store(f.key(), bytes).await.unwrap();
+    let second = f.store.store(f.key(), bytes).await.unwrap();
+
+    assert_eq!(first.outcome, StoreOutcome::Created);
+    assert_eq!(second.outcome, StoreOutcome::AlreadyIdentical);
+    assert_eq!(first.relative_path, second.relative_path);
+    assert_eq!(first.sha256, second.sha256);
+}
+
+/// 同一个 UID 送来不同内容是发送方的 bug,覆盖但要如实报告,好让上层告警。
+#[tokio::test]
+async fn conflicting_content_is_reported_as_replaced() {
+    let f = Fixture::new().await;
+
+    f.store.store(f.key(), b"first-version").await.unwrap();
+    let second = f
+        .store
+        .store(f.key(), b"second-version-longer")
+        .await
+        .unwrap();
+
+    assert_eq!(second.outcome, StoreOutcome::Replaced);
+    let absolute = f.store.resolve(&second.relative_path).unwrap();
+    assert_eq!(
+        tokio::fs::read(&absolute).await.unwrap(),
+        b"second-version-longer"
+    );
+}
+
+/// 长度相同但内容不同 —— 只比文件大小会漏掉,必须真的比内容。
+#[tokio::test]
+async fn same_length_different_content_is_replaced() {
+    let f = Fixture::new().await;
+
+    f.store.store(f.key(), b"AAAA").await.unwrap();
+    let second = f.store.store(f.key(), b"BBBB").await.unwrap();
+
+    assert_eq!(second.outcome, StoreOutcome::Replaced);
+}
+
+/// 成功返回后不该有临时文件残留 —— 有的话说明 rename 那步没走完。
+#[tokio::test]
+async fn leaves_no_temporary_files_behind() {
+    let f = Fixture::new().await;
+    f.store.store(f.key(), b"payload").await.unwrap();
+
+    let mut entries = tokio::fs::read_dir(f.store.root().join(TEMP_DIR))
+        .await
+        .unwrap();
+    assert!(
+        entries.next_entry().await.unwrap().is_none(),
+        ".tmp/ 应该是空的"
+    );
+}
+
+/// 崩溃恢复:临时文件的存在意味着那次落盘没走完,对应事务也没提交,清掉是安全的。
+#[tokio::test]
+async fn cleanup_removes_orphaned_temp_files() {
+    let f = Fixture::new().await;
+    let temp_dir = f.store.root().join(TEMP_DIR);
+    for name in ["a.part", "b.part"] {
+        tokio::fs::write(temp_dir.join(name), b"half-written")
+            .await
+            .unwrap();
+    }
+    // 已经落好的文件不能被误删
+    let stored = f.store.store(f.key(), b"good").await.unwrap();
+
+    assert_eq!(f.store.cleanup_temp().await.unwrap(), 2);
+    assert_eq!(f.store.cleanup_temp().await.unwrap(), 0, "清理应可重复执行");
+    assert!(
+        f.store
+            .resolve(&stored.relative_path)
+            .map(|p| Path::new(&p).exists())
+            .unwrap(),
+        "已落盘的影像不该被清理动到"
+    );
+}
+
+/// 同一序列的多个实例落进同一个目录,WADO 拉整个 series 才是顺序读。
+#[tokio::test]
+async fn instances_of_a_series_share_a_directory() {
+    let f = Fixture::new().await;
+    let other_sop = uid("1.2.826.0.1.3680043.8.498.4");
+
+    let a = f.store.store(f.key(), b"one").await.unwrap();
+    let b = f
+        .store
+        .store(
+            InstanceKey {
+                study: &f.study,
+                series: &f.series,
+                sop: &other_sop,
+            },
+            b"two",
+        )
+        .await
+        .unwrap();
+
+    let dir = |p: &str| p.rsplit_once('/').unwrap().0.to_owned();
+    assert_eq!(dir(&a.relative_path), dir(&b.relative_path));
+}
+
+/// 数据库被写坏或迁移出错时,一个含 `..` 的路径不能让 WADO 读到存储根外面去。
+#[tokio::test]
+async fn resolve_rejects_paths_escaping_the_root() {
+    let f = Fixture::new().await;
+
+    for hostile in [
+        "../etc/passwd",
+        "/etc/passwd",
+        "aa/../../../etc/passwd",
+        "./x",
+    ] {
+        assert!(
+            matches!(f.store.resolve(hostile), Err(StoreError::PathEscape { .. })),
+            "应拒绝 {hostile:?}"
+        );
+    }
+    // 正常的相对路径仍然放行
+    assert!(f.store.resolve("ab/cd/1.2/3.4/5.6.dcm").is_ok());
+}
+
+#[tokio::test]
+async fn concurrent_stores_of_a_series_all_succeed() {
+    let f = Fixture::new().await;
+    let sops: Vec<Uid> = (0..32)
+        .map(|i| uid(&format!("1.2.826.0.1.3680043.8.498.100.{i}")))
+        .collect();
+
+    let results = futures::future::join_all(sops.iter().map(|sop| {
+        let store = f.store.clone();
+        let (study, series) = (f.study.clone(), f.series.clone());
+        async move {
+            store
+                .store(
+                    InstanceKey {
+                        study: &study,
+                        series: &series,
+                        sop,
+                    },
+                    sop.as_str().as_bytes(),
+                )
+                .await
+        }
+    }))
+    .await;
+
+    // 并发建同一棵目录树时,"目录已存在"不能被当成错误
+    let paths: std::collections::HashSet<String> = results
+        .into_iter()
+        .map(|r| r.expect("并发落盘不该失败").relative_path)
+        .collect();
+    assert_eq!(paths.len(), 32, "32 个实例应落到 32 个不同路径");
+}

@@ -1,0 +1,34 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.pth
+*.h5
+*.ckpt
+data/
+*.dcm
+.DS_Store
+# Rust
+target/
+**/target/
+
+# 前端
+node_modules/
+dist/
+
+# 医学影像(补充格式)
+*.nii
+*.nii.gz
+*.nrrd
+*.mha
+*.onnx
+datasets/
+
+# 密钥与日志
+.env
+*.log
+*.key
+*.pem
+
+# 工具的本机配置(权限白名单因人而异,不进仓库;.claude/plans/ 要提交)
+.claude/settings.local.json

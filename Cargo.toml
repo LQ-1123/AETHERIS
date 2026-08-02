@@ -1,0 +1,93 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pacs-core",
+    "crates/pacs-store",
+    "crates/pacs-db",
+    "crates/pacs-dimse",
+    "crates/pacs-auth",
+    "crates/pacs-web",
+    "crates/pacs-codec",
+    "crates/pacs-ai",
+    "crates/pacsd",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+# 内部 crates
+pacs-core = { path = "crates/pacs-core" }
+pacs-store = { path = "crates/pacs-store" }
+pacs-db = { path = "crates/pacs-db" }
+pacs-dimse = { path = "crates/pacs-dimse" }
+pacs-auth = { path = "crates/pacs-auth" }
+pacs-web = { path = "crates/pacs-web" }
+pacs-codec = { path = "crates/pacs-codec" }
+pacs-ai = { path = "crates/pacs-ai" }
+
+# DICOM(dicom-rs 0.10 生态)
+dicom = "0.10"
+dicom-json = "0.10"
+# sop-class:开启 SOP Class 字典,用来校验我们接受的抽象语法清单
+dicom-dictionary-std = { version = "0.10", features = ["sop-class"] }
+dicom-ul = { version = "0.10", features = ["async"] }
+dicom-pixeldata = { version = "0.10", features = ["openjp2", "image"] }
+
+# 异步运行时与 Web
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+
+# TLS
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+
+# 数据库(0.9 要求 rustc >= 1.94;本地 DB 走回环,不启用 TLS)
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "postgres",
+    "macros",
+    "migrate",
+    "chrono",
+    "uuid",
+    "json",
+] }
+
+# 认证
+# std 一举解决两件事:password-hash 的 Error 才实现 std::error::Error
+# (否则 thiserror 的 #[source] 用不了),且 rand_core/std 蕴含 getrandom,
+# 才拿得到 OsRng 来生成盐和令牌。
+argon2 = { version = "0.5", features = ["std"] }
+# jsonwebtoken 11 要求显式选一个加密后端,否则运行时 panic。
+# 选纯 Rust 的 rust_crypto 而不是 aws_lc_rs:后者需要 C 工具链(cmake),
+# 会拖累 Tauri 客户端的跨平台构建和分发。
+# 不要 use_pem —— 我们用共享密钥 HS256,不读 PEM 证书,少一块解析代码就少一块攻击面。
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+base64 = "0.22"
+
+# 基础设施
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+dotenvy = "0.15"
+
+# 仅测试用
+futures = "0.3"
+tempfile = "3"

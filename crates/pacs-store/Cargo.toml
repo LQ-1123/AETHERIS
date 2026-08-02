@@ -1,0 +1,22 @@
+[package]
+name = "pacs-store"
+description = "影像文件落盘:fsync 语义、两级哈希分片路径、孤儿清理"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+tokio.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+tempfile.workspace = true

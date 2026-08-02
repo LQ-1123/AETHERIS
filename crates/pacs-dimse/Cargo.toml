@@ -1,0 +1,23 @@
+[package]
+name = "pacs-dimse"
+description = "自研 DIMSE 服务类:命令集编解码、C-ECHO/STORE/FIND/MOVE/GET SCP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+dicom.workspace = true
+dicom-ul.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+pacs-core = { workspace = true, features = ["fixtures"] }
+dicom-dictionary-std.workspace = true
+tempfile.workspace = true

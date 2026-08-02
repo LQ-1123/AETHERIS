@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # 数据库测试覆盖入库 SQL,必须在 CI 真跑 —— 没有库的话它们会静默跳过。
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: pacs
+          POSTGRES_PASSWORD: pacs
+          POSTGRES_DB: pacs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PACS_TEST_DATABASE_URL: postgres://pacs:pacs@127.0.0.1:5432/pacs_test
+
+    steps:
+      - uses: actions/checkout@v4
+      # 工具链版本由 rust-toolchain.toml 决定,rustup 自动读取
+      - name: Install toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace

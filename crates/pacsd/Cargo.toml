@@ -1,0 +1,38 @@
+[package]
+name = "pacsd"
+description = "PACS 服务端主程序:配置、日志、DIMSE 与 HTTP 监听"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+pacs-store.workspace = true
+pacs-db.workspace = true
+pacs-dimse.workspace = true
+pacs-auth.workspace = true
+pacs-web.workspace = true
+pacs-codec.workspace = true
+pacs-ai.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+axum-server.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+rcgen.workspace = true
+
+[dev-dependencies]
+pacs-core = { workspace = true, features = ["fixtures"] }
+dicom.workspace = true
+dotenvy.workspace = true
+tempfile.workspace = true

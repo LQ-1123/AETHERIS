@@ -1,0 +1,18 @@
+[package]
+name = "pacs-ai"
+description = "AI 接口预留:仅 trait 与任务表,无实现"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true

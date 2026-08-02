@@ -1,0 +1,277 @@
+//! 入库:把一个实例的四层元数据写进数据库。
+//!
+//! 整体在一个事务里,要么四层全部就位,要么什么都不留。这条约束是 C-STORE
+//! 可靠性的后半段 —— 文件已经 fsync 落盘了(见 `pacs-store`),数据库这边
+//! 半途失败会留下取不回来的孤儿文件。
+
+use pacs_core::InstanceMetadata;
+use sqlx::{PgPool, Postgres, Transaction};
+
+use crate::DbError;
+
+/// 已落盘文件的位置与校验信息。
+#[derive(Debug, Clone, Copy)]
+pub struct StorageRecord<'a> {
+    /// 相对存储根的路径。
+    pub relative_path: &'a str,
+    pub size: u64,
+    pub sha256: &'a [u8],
+}
+
+/// 入库结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ingested {
+    pub patient_id: i64,
+    pub study_id: i64,
+    pub series_id: i64,
+    pub instance_id: i64,
+    /// 该实例是新增还是覆盖了已有记录(设备重传)。
+    pub instance_created: bool,
+}
+
+/// 把一个实例写进数据库。
+///
+/// 同一个 SOPInstanceUID 重复入库是幂等的:设备重传很常见,不该报错。
+pub async fn ingest_instance(
+    pool: &PgPool,
+    metadata: &InstanceMetadata,
+    storage: StorageRecord<'_>,
+) -> Result<Ingested, DbError> {
+    let mut tx = pool.begin().await?;
+
+    let patient_id = upsert_patient(&mut tx, metadata).await?;
+    let study_id = upsert_study(&mut tx, metadata, patient_id).await?;
+    let series_id = upsert_series(&mut tx, metadata, study_id).await?;
+    let (instance_id, instance_created) =
+        upsert_instance(&mut tx, metadata, series_id, storage).await?;
+
+    refresh_counts(&mut tx, study_id, series_id).await?;
+
+    tx.commit().await?;
+
+    Ok(Ingested {
+        patient_id,
+        study_id,
+        series_id,
+        instance_id,
+        instance_created,
+    })
+}
+
+/// 各层的 upsert 都用 `COALESCE(EXCLUDED.x, 原值)` 合并。
+///
+/// 同一个检查的不同实例,头信息完整程度经常不一样(有的带 StudyDescription
+/// 有的不带)。用 EXCLUDED 直接覆盖的话,后到的残缺实例会把先前存好的字段抹成
+/// NULL。COALESCE 让新的非空值生效、空值不破坏已有数据。
+async fn upsert_patient(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+) -> Result<i64, DbError> {
+    let patient = &metadata.patient;
+    let id = sqlx::query_scalar::<_, i64>(
+        r#"
+        INSERT INTO patients (
+            patient_id, issuer_of_patient_id, name, name_normalized,
+            birth_date, sex, attributes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (institution_id, patient_id) DO UPDATE SET
+            issuer_of_patient_id = COALESCE(EXCLUDED.issuer_of_patient_id, patients.issuer_of_patient_id),
+            name                 = COALESCE(EXCLUDED.name, patients.name),
+            name_normalized      = COALESCE(EXCLUDED.name_normalized, patients.name_normalized),
+            birth_date           = COALESCE(EXCLUDED.birth_date, patients.birth_date),
+            sex                  = COALESCE(EXCLUDED.sex, patients.sex),
+            attributes           = patients.attributes || EXCLUDED.attributes
+        RETURNING id
+        "#,
+    )
+    .bind(&patient.patient_id)
+    .bind(&patient.issuer_of_patient_id)
+    .bind(&patient.name)
+    .bind(&patient.name_normalized)
+    .bind(patient.birth_date)
+    .bind(&patient.sex)
+    .bind(&patient.attributes)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(id)
+}
+
+async fn upsert_study(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+    patient_id: i64,
+) -> Result<i64, DbError> {
+    let study = &metadata.study;
+    let id = sqlx::query_scalar::<_, i64>(
+        r#"
+        INSERT INTO studies (
+            patient_fk, study_instance_uid, study_date, study_time,
+            accession_number, study_id, description, referring_physician, attributes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (study_instance_uid) DO UPDATE SET
+            study_date          = COALESCE(EXCLUDED.study_date, studies.study_date),
+            study_time          = COALESCE(EXCLUDED.study_time, studies.study_time),
+            accession_number    = COALESCE(EXCLUDED.accession_number, studies.accession_number),
+            study_id            = COALESCE(EXCLUDED.study_id, studies.study_id),
+            description         = COALESCE(EXCLUDED.description, studies.description),
+            referring_physician = COALESCE(EXCLUDED.referring_physician, studies.referring_physician),
+            attributes          = studies.attributes || EXCLUDED.attributes
+        RETURNING id
+        "#,
+    )
+    .bind(patient_id)
+    .bind(study.uid.as_str())
+    .bind(study.date)
+    .bind(study.time)
+    .bind(&study.accession_number)
+    .bind(&study.study_id)
+    .bind(&study.description)
+    .bind(&study.referring_physician)
+    .bind(&study.attributes)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(id)
+}
+
+async fn upsert_series(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+    study_id: i64,
+) -> Result<i64, DbError> {
+    let series = &metadata.series;
+    let id = sqlx::query_scalar::<_, i64>(
+        r#"
+        INSERT INTO series (
+            study_fk, series_instance_uid, series_number, modality,
+            description, body_part_examined, series_date, series_time, attributes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (series_instance_uid) DO UPDATE SET
+            series_number      = COALESCE(EXCLUDED.series_number, series.series_number),
+            modality           = COALESCE(EXCLUDED.modality, series.modality),
+            description        = COALESCE(EXCLUDED.description, series.description),
+            body_part_examined = COALESCE(EXCLUDED.body_part_examined, series.body_part_examined),
+            series_date        = COALESCE(EXCLUDED.series_date, series.series_date),
+            series_time        = COALESCE(EXCLUDED.series_time, series.series_time),
+            attributes         = series.attributes || EXCLUDED.attributes
+        RETURNING id
+        "#,
+    )
+    .bind(study_id)
+    .bind(series.uid.as_str())
+    .bind(series.number)
+    .bind(&series.modality)
+    .bind(&series.description)
+    .bind(&series.body_part_examined)
+    .bind(series.date)
+    .bind(series.time)
+    .bind(&series.attributes)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(id)
+}
+
+/// 实例层不做 COALESCE 合并:重传的是同一份影像的新副本,整行直接覆盖。
+///
+/// 返回值里的 `created` 用 `xmax = 0` 判断 —— 新插入的行 xmax 为 0,
+/// 走 DO UPDATE 分支的行 xmax 是当前事务号。这个值只用于上报,
+/// 计数不依赖它(见 [`refresh_counts`])。
+async fn upsert_instance(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+    series_id: i64,
+    storage: StorageRecord<'_>,
+) -> Result<(i64, bool), DbError> {
+    let instance = &metadata.instance;
+    let row = sqlx::query_as::<_, (i64, bool)>(
+        r#"
+        INSERT INTO instances (
+            series_fk, sop_instance_uid, sop_class_uid, instance_number,
+            transfer_syntax_uid, image_rows, image_columns, number_of_frames,
+            image_position_patient, image_orientation_patient,
+            storage_path, file_size, file_sha256, attributes
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (sop_instance_uid) DO UPDATE SET
+            series_fk                 = EXCLUDED.series_fk,
+            sop_class_uid             = EXCLUDED.sop_class_uid,
+            instance_number           = EXCLUDED.instance_number,
+            transfer_syntax_uid       = EXCLUDED.transfer_syntax_uid,
+            image_rows                = EXCLUDED.image_rows,
+            image_columns             = EXCLUDED.image_columns,
+            number_of_frames          = EXCLUDED.number_of_frames,
+            image_position_patient    = EXCLUDED.image_position_patient,
+            image_orientation_patient = EXCLUDED.image_orientation_patient,
+            storage_path              = EXCLUDED.storage_path,
+            file_size                 = EXCLUDED.file_size,
+            file_sha256               = EXCLUDED.file_sha256,
+            attributes                = EXCLUDED.attributes
+        RETURNING id, (xmax = 0) AS created
+        "#,
+    )
+    .bind(series_id)
+    .bind(instance.uid.as_str())
+    .bind(instance.sop_class_uid.as_ref().map(|uid| uid.as_str()))
+    .bind(instance.number)
+    .bind(instance.transfer_syntax_uid.as_str())
+    .bind(instance.rows)
+    .bind(instance.columns)
+    .bind(instance.number_of_frames)
+    .bind(instance.image_position_patient.as_deref())
+    .bind(instance.image_orientation_patient.as_deref())
+    .bind(storage.relative_path)
+    .bind(i64::try_from(storage.size).unwrap_or(i64::MAX))
+    .bind(storage.sha256)
+    .bind(&instance.attributes)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(row)
+}
+
+/// 按实际行数重算聚合列。
+///
+/// 刻意用重算而不是 `count = count + 1`:增量在重传、事务回滚、并发入库下都会
+/// 漂移,而漂移出来的 NumberOfStudyRelatedInstances 会直接出现在 C-FIND 响应里。
+/// 代价是每次入库多两次索引扫描,对一个几百层的序列完全可以接受;
+/// 真到了成为瓶颈的时候(阶段 2 建 benchmark 时验证),再换成增量 + 定期对账。
+async fn refresh_counts(
+    tx: &mut Transaction<'_, Postgres>,
+    study_id: i64,
+    series_id: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"
+        UPDATE series
+        SET number_of_instances = (SELECT count(*) FROM instances WHERE series_fk = $1)
+        WHERE id = $1
+        "#,
+    )
+    .bind(series_id)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE studies SET
+            number_of_series = (SELECT count(*) FROM series WHERE study_fk = $1),
+            number_of_instances = (
+                SELECT count(*) FROM instances i
+                JOIN series s ON i.series_fk = s.id
+                WHERE s.study_fk = $1
+            ),
+            modalities = COALESCE(
+                (SELECT array_agg(DISTINCT modality ORDER BY modality)
+                 FROM series WHERE study_fk = $1 AND modality IS NOT NULL),
+                '{}'
+            )
+        WHERE id = $1
+        "#,
+    )
+    .bind(study_id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}

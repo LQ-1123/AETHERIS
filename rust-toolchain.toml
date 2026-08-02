@@ -1,0 +1,6 @@
+[toolchain]
+# 锁定工具链版本，保证本地与 CI 可复现。
+# sqlx 0.9 要求 rustc >= 1.94。
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "default"

@@ -1,0 +1,31 @@
+[package]
+name = "pacs-auth"
+description = "账号、argon2 哈希、token、RBAC、审计"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pacs-core.workspace = true
+pacs-db.workspace = true
+argon2.workspace = true
+jsonwebtoken.workspace = true
+base64.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+
+[dev-dependencies]
+dotenvy.workspace = true
+tokio.workspace = true
