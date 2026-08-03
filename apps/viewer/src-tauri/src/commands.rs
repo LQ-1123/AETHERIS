@@ -1,35 +1,45 @@
-//! Tauri 命令 - 前端调用的 IPC 接口
+//! Tauri IPC commands used by the viewer frontend.
 
-use crate::state::{DisplayMetadata, ViewerState};
+use crate::state::{SeriesMetadata, ViewerState};
 use std::path::PathBuf;
 use tauri::State;
 
-/// 打开 DICOM 文件
 #[tauri::command]
-pub fn open_dicom(
-    path: String,
-    state: State<ViewerState>,
-) -> Result<DisplayMetadata, String> {
-    state
-        .open(PathBuf::from(path))
-        .map_err(|e| e.to_string())
+pub async fn open_series(
+    paths: Vec<String>,
+    state: State<'_, ViewerState>,
+) -> Result<SeriesMetadata, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.open_series(paths.into_iter().map(PathBuf::from).collect())
+    })
+    .await
+    .map_err(|error| format!("打开序列任务失败: {error}"))?
+    .map_err(|error| error.to_string())
 }
 
-/// 关闭实例
 #[tauri::command]
-pub fn close_instance(handle: u64, state: State<ViewerState>) -> Result<(), String> {
-    state.close(handle).map_err(|e| e.to_string())
+pub fn close_series(handle: u64, state: State<'_, ViewerState>) -> Result<(), String> {
+    state.close(handle).map_err(|error| error.to_string())
 }
 
-/// 生成查找表
 #[tauri::command]
 pub fn build_lut(
     handle: u64,
-    window_center: Option<f64>,
-    window_width: Option<f64>,
-    state: State<ViewerState>,
-) -> Result<Vec<u8>, String> {
+    frame_index: u32,
+    window_center: f64,
+    window_width: f64,
+    voi_function: String,
+    state: State<'_, ViewerState>,
+) -> Result<tauri::ipc::Response, String> {
     state
-        .build_lut(handle, window_center, window_width)
-        .map_err(|e| e.to_string())
+        .build_lut(
+            handle,
+            frame_index,
+            window_center,
+            window_width,
+            &voi_function,
+        )
+        .map(tauri::ipc::Response::new)
+        .map_err(|error| error.to_string())
 }

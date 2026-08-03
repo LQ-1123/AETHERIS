@@ -2,7 +2,8 @@
 
 自建 PACS：Rust 服务端 + Tauri 桌面查看器。可分发、多账号、共享平台数据库。
 
-实施计划见 [`.claude/plans/pacs-plan.md`](.claude/plans/pacs-plan.md)。
+实施计划见 [`pacs-plan.md`](pacs-plan.md)，Viewer 交接与后续清单见
+[`nextplan.md`](nextplan.md)。
 
 ## 结构
 
@@ -20,8 +21,8 @@ crates/
 apps/viewer/    Tauri 2 客户端(可脱离服务端打开本地 DICOM)
 ```
 
-进度：阶段 0（环境）、阶段 1（存储 + 数据库）、阶段 2（C-ECHO/C-STORE SCP）已完成，
-阶段 3（账号体系 + TLS）待开始。
+进度：阶段 0–4 已完成；阶段 5 的 QIDO-RS/WADO-RS 读取侧已完成，STOW-RS 待做；
+阶段 6 的本地 Viewer MVP 已完成，远程服务端工作列表待做。
 
 ## 试一试
 
@@ -44,6 +45,24 @@ cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+### 本地 Viewer
+
+Viewer 支持单文件多帧和同一 Study/Series 的多文件灰度序列。多文件序列严格按
+`ImagePositionPatient`/`ImageOrientationPatient` 排序；缺少可靠几何时拒绝打开，
+不会退回文件名或 `InstanceNumber` 猜测顺序。
+
+```sh
+cd apps/viewer
+npm install
+npm run build
+npm test
+npm run tauri dev
+```
+
+当前工具包括窗宽窗位、光标锚定缩放、平移、序列滑条、窗预设和两点测距。
+普通滚轮切换帧，`Ctrl + 滚轮`缩放，中键拖动平移。
+测距会区分已标定毫米、探测器平面毫米和仅像素三种结果。
 
 ### 数据库
 

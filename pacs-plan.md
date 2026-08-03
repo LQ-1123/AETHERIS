@@ -212,10 +212,10 @@ CT 的 `PixelSpacing (0028,0030)` 是重建平面上的真实毫米,直接乘就
 
 ## 分阶段实施
 
-> **进度**:阶段 0–4 已完成并通过验收(2026-08-02)。
-> 全量测试 `cargo test --workspace -- --test-threads=1` 全绿,
-> `cargo clippy --workspace --all-targets -- -D warnings` 无警告。
-> 下一步:阶段 5(DICOMweb)。
+> **进度（2026-08-03）**：阶段 0–4 已完成；阶段 5 的 QIDO-RS/WADO-RS
+> 读取侧已完成，STOW-RS 待做；阶段 6 的本地 Viewer MVP 已完成，远程工作列表待做。
+> Viewer 的 TypeScript 构建、9 项前端单元测试、7 项独立 Rust 测试和 Clippy 已通过。
+> 根 workspace 的数据库互操作测试仍需在可访问本机 PostgreSQL/DCMTK 的环境复验。
 
 **阶段 0 — 环境** ✅
 `brew uninstall rust` → 装 rustup → `rust-toolchain.toml` 锁 1.97.1;
@@ -257,14 +257,15 @@ Study/Patient Root 信息模型;通配和日期范围匹配;pending 流式响应
 cancel-safe。结果集在发送前已全部取出、发送阶段纯输出,通常几毫秒走完;
 中途到达的 C-CANCEL 会在下一轮被读到并忽略(绝不中止 association)。
 
-**阶段 5 — DICOMweb**
-`pacs-web`: QIDO-RS(复用阶段 4 查询层)、WADO-RS(含 `/frames`)、STOW-RS,
-全部带认证。`pacs-codec` 解码和缩略图。交付:HTTP 侧可用,查看器可开工。
+**阶段 5 — DICOMweb（读取侧完成，上传待做）**
+`pacs-web`:QIDO-RS(复用阶段 4 查询层)和 WADO-RS(含 `/frames`)已完成并带认证；
+STOW-RS 尚未实现。`pacs-codec` 已提供帧解码和显示管线。
 
-**阶段 6 — Tauri 查看器**
-本地文件打开 → 单帧显示(Rescale/VOI/Photometric 管线) → 窗宽窗位 → 缩放
-平移 → CT 序列浏览(按空间位置排序 + 预取) → 测距(CT 精确 / X 光带校准)。
-帧数据走自定义协议直传。
+**阶段 6 — Tauri 查看器（本地 MVP 完成）**
+已完成单文件多帧和多文件 CT/MR 序列打开、显示管线、窗宽窗位、窗预设、
+光标锚定缩放、平移、按空间位置排序、前后帧预取、病人信息和两点测距。
+测距区分 CT 精确值、X 光探测器平面 caveat 和仅像素；帧数据走自定义协议直传。
+尚未完成远程登录、QIDO 工作列表和 WADO 打开流程。
 
 **阶段 7 — 分发**
 `tauri-plugin-updater` 自动更新;代码签名(macOS 公证);首次启动配置服务器
@@ -312,4 +313,3 @@ C-MOVE/C-GET SCP(要反向做 SCU 连目的地 AE,最复杂的状态机);AE Titl
 
 未做:多区域超声(同屏 B 超 + 多普勒频谱)每个区域标定不同,目前退回像素。
 阶段 6 查看器有了测量点坐标之后,可以按点落在哪个区域来选标定。
-
