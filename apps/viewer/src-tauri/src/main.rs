@@ -7,8 +7,36 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
+mod protocol;
+mod state;
+
+use state::ViewerState;
+
 fn main() {
-    tauri::Builder::default()
+    // 初始化日志
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let state = ViewerState::new();
+
+    let builder = tauri::Builder::default()
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            commands::open_dicom,
+            commands::close_instance,
+            commands::build_lut,
+        ]);
+
+    // 注册自定义协议
+    let builder = protocol::register_protocol(builder);
+
+    builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
