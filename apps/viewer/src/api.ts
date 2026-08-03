@@ -1,5 +1,7 @@
 import type {
   PatientSummary,
+  MprMetadata,
+  MprPlane,
   RemoteSeriesSummary,
   RemoteUser,
   SeriesMetadata,
@@ -125,6 +127,46 @@ export async function buildLut(
   if (result instanceof Uint8Array) return result;
   if (result instanceof ArrayBuffer) return new Uint8Array(result);
   return new Uint8Array(result);
+}
+
+export async function prepareMpr(handle: number, stackIndex: number): Promise<MprMetadata> {
+  const invoke = await getInvoke();
+  return invoke<MprMetadata>('prepare_mpr', { handle, stackIndex });
+}
+
+export async function renderMprSlice(
+  handle: number,
+  plane: MprPlane,
+  sliceIndex: number,
+  windowCenter: number,
+  windowWidth: number,
+  voiFunction: VoiFunction,
+): Promise<ArrayBuffer> {
+  const invoke = await getInvoke();
+  const result = await invoke<ArrayBuffer | Uint8Array | number[]>('render_mpr_slice', {
+    handle,
+    plane,
+    sliceIndex,
+    windowCenter,
+    windowWidth,
+    voiFunction,
+  });
+  if (result instanceof ArrayBuffer) return result;
+  if (result instanceof Uint8Array) return result.buffer.slice(
+    result.byteOffset,
+    result.byteOffset + result.byteLength,
+  ) as ArrayBuffer;
+  return new Uint8Array(result).buffer;
+}
+
+export async function closeMpr(handle: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('close_mpr', { handle });
+}
+
+export async function cancelMprBuild(): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('cancel_mpr_build');
 }
 
 export function getFrameUrl(handle: number, stack: number, frame: number): string {

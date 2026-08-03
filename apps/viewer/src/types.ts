@@ -1,5 +1,7 @@
 export type VoiFunction = 'LINEAR' | 'LINEAR_EXACT' | 'SIGMOID';
-export type ToolMode = 'window' | 'pan' | 'length';
+export type ToolMode = 'window' | 'pan' | 'crosshair' | 'length';
+export type ViewerMode = '2d' | 'mpr';
+export type MprPlane = 'axial' | 'coronal' | 'sagittal';
 
 export interface PatientStudyInfo {
   patient_name: string | null;
@@ -74,6 +76,45 @@ export interface LengthMeasurement {
   id: string;
   start: Point;
   end: Point;
+}
+
+export interface PatientPoint3D {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface MprPlaneMetadata {
+  plane: MprPlane;
+  rows: number;
+  cols: number;
+  slice_count: number;
+  pixel_spacing_mm: number;
+  slice_spacing_mm: number;
+  origin: [number, number, number];
+  x_axis: [number, number, number];
+  y_axis: [number, number, number];
+  normal: [number, number, number];
+}
+
+export interface MprMetadata {
+  stack_index: number;
+  dimensions: [number, number, number];
+  source_spacing_mm: [number, number, number];
+  patient_bounds_min: [number, number, number];
+  patient_bounds_max: [number, number, number];
+  initial_crosshair: [number, number, number];
+  planes: MprPlaneMetadata[];
+}
+
+export interface MprViewportState extends ViewTransform {
+  plane: MprPlane;
+  sliceIndex: number;
+}
+
+export interface MprBuildProgress {
+  completed: number;
+  total: number;
 }
 
 export interface ViewState extends ViewTransform {

@@ -40,6 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tempfile = "3"
+rayon = "1.10"
 
 [dev-dependencies]
 pacs-core = { path = "../../../crates/pacs-core", features = ["fixtures"] }
@@ -51,3 +52,11 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# MPR is numeric hot-loop code. Keep `tauri dev` responsive without paying the
+# compile-time cost of optimizing the complete Tauri dependency graph.
+[profile.dev.package.pacs-viewer]
+opt-level = 2
+
+[profile.dev.package.pacs-codec]
+opt-level = 2

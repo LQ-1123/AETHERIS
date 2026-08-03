@@ -1,9 +1,11 @@
 //! Tauri IPC commands used by the viewer frontend.
 
+use crate::mpr::{MprMetadata, Plane};
 use crate::remote::{
     DownloadProgress, PatientSummary, RemoteState, RemoteUser, SeriesSummary, StudySummary,
 };
 use crate::state::{SeriesMetadata, ViewerState};
+use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 
@@ -58,6 +60,67 @@ pub fn build_lut(
         )
         .map(tauri::ipc::Response::new)
         .map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Serialize)]
+pub struct MprBuildProgress {
+    completed: usize,
+    total: usize,
+}
+
+#[tauri::command]
+pub async fn prepare_mpr(
+    handle: u64,
+    stack_index: u32,
+    app: AppHandle,
+    state: State<'_, ViewerState>,
+) -> Result<MprMetadata, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.prepare_mpr(handle, stack_index, |completed, total| {
+            let _ = app.emit("mpr-build-progress", MprBuildProgress { completed, total });
+        })
+    })
+    .await
+    .map_err(|error| format!("MPR 构建任务失败: {error}"))?
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn render_mpr_slice(
+    handle: u64,
+    plane: Plane,
+    slice_index: u32,
+    window_center: f64,
+    window_width: f64,
+    voi_function: String,
+    state: State<'_, ViewerState>,
+) -> Result<tauri::ipc::Response, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.render_mpr_slice(
+            handle,
+            plane,
+            slice_index,
+            window_center,
+            window_width,
+            &voi_function,
+        )
+    })
+    .await
+    .map_err(|error| format!("MPR 切面任务失败: {error}"))?
+    .map(tauri::ipc::Response::new)
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn close_mpr(handle: u64, state: State<'_, ViewerState>) -> Result<(), String> {
+    state.close_mpr(handle).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn cancel_mpr_build(state: State<'_, ViewerState>) {
+    state.cancel_mpr_build();
 }
 
 #[tauri::command]

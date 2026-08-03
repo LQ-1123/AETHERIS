@@ -1,14 +1,17 @@
 //! Local DICOM series state for the desktop viewer.
 
+use crate::mpr::{MprMetadata, Plane, SourceSlice, Volume};
 use dicom::core::Tag;
 use dicom::dictionary_std::tags;
 use dicom::object::{DefaultDicomObject, open_file};
 use pacs_codec::{Frames, GrayLut, Photometric, Pipeline, VoiFunction};
 use pacs_core::geometry::{SliceInput, Vec3, group_slices_by_orientation, sort_slices};
 use pacs_core::spacing::{Confidence, PixelSpacing, Source, resolve};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use thiserror::Error;
 
@@ -21,6 +24,7 @@ const PREFETCH_RADIUS: u32 = 2;
 #[derive(Clone)]
 pub struct ViewerState {
     inner: Arc<Mutex<ViewerStateInner>>,
+    mpr_cancelled: Arc<AtomicBool>,
 }
 
 struct ViewerStateInner {
@@ -32,6 +36,7 @@ struct ViewerStateInner {
 struct LoadedSeries {
     identity: SeriesIdentity,
     image_stacks: Vec<LoadedImageStack>,
+    mpr: Option<Arc<Volume>>,
     /// 远程序列的下载目录。句柄关闭时随 `LoadedSeries` 一起删除。
     _temporary_directory: Option<tempfile::TempDir>,
 }
@@ -70,6 +75,10 @@ struct LoadedFrame {
     rows: u32,
     cols: u32,
     bits_allocated: u16,
+    position: Option<[f64; 3]>,
+    orientation: Option<[f64; 6]>,
+    row_spacing_mm: Option<f64>,
+    col_spacing_mm: Option<f64>,
 }
 
 struct ParsedFile {
@@ -195,6 +204,7 @@ impl ViewerState {
                 series: HashMap::new(),
                 frame_cache: FrameCache::new(FRAME_CACHE_LIMIT),
             })),
+            mpr_cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -258,6 +268,7 @@ impl ViewerState {
         let loaded = LoadedSeries {
             identity,
             image_stacks,
+            mpr: None,
             _temporary_directory: temporary_directory,
         };
         let metadata = loaded.metadata(handle, 0)?;
@@ -420,6 +431,123 @@ impl ViewerState {
             function,
         };
         Ok(GrayLut::build(&frame.pipeline, Some(&window), Some(frame.bits_allocated)).table)
+    }
+
+    pub fn prepare_mpr(
+        &self,
+        handle: SeriesHandle,
+        stack_index: u32,
+        progress: impl Fn(usize, usize) + Sync,
+    ) -> Result<MprMetadata, ViewerError> {
+        self.mpr_cancelled.store(false, Ordering::Release);
+        let frames = {
+            let inner = self.lock();
+            let series = inner
+                .series
+                .get(&handle)
+                .ok_or(ViewerError::UnknownHandle(handle))?;
+            let stack = series
+                .image_stacks
+                .get(stack_index as usize)
+                .ok_or(ViewerError::UnknownImageStack { stack_index })?;
+            stack.frames.clone()
+        };
+        if frames.len() < 2 {
+            return Err(ViewerError::InvalidSeries(
+                "MPR 至少需要两张属于同一空间堆栈的切片".to_owned(),
+            ));
+        }
+
+        let frame_count = frames.len();
+        let decoded = AtomicUsize::new(0);
+        let sources = frames
+            .into_par_iter()
+            .enumerate()
+            .map(|(index, frame)| {
+                if self.mpr_cancelled.load(Ordering::Acquire) {
+                    return Err(ViewerError::Unsupported("已取消 MPR 构建".to_owned()));
+                }
+                let bytes = self.get_frame_bytes(handle, stack_index, index as u32)?;
+                let completed = decoded.fetch_add(1, Ordering::AcqRel) + 1;
+                if completed == frame_count || completed.is_multiple_of(5) {
+                    progress(completed, frame_count * 2);
+                }
+                Ok(SourceSlice {
+                    rows: frame.rows,
+                    cols: frame.cols,
+                    bits_allocated: frame.bits_allocated,
+                    pipeline: frame.pipeline,
+                    position: frame.position,
+                    orientation: frame.orientation,
+                    row_spacing_mm: frame.row_spacing_mm,
+                    col_spacing_mm: frame.col_spacing_mm,
+                    bytes,
+                })
+            })
+            .collect::<Result<Vec<_>, ViewerError>>()?;
+        let cancelled = Arc::clone(&self.mpr_cancelled);
+        let volume = Volume::build(
+            stack_index,
+            sources,
+            move || cancelled.load(Ordering::Acquire),
+            |completed, total| progress(frame_count + completed, frame_count + total),
+        )
+        .map_err(ViewerError::InvalidSeries)?;
+        let metadata = volume.metadata();
+        let mut inner = self.lock();
+        let series = inner
+            .series
+            .get_mut(&handle)
+            .ok_or(ViewerError::UnknownHandle(handle))?;
+        series.mpr = Some(Arc::new(volume));
+        inner.frame_cache.remove_series(handle);
+        Ok(metadata)
+    }
+
+    pub fn render_mpr_slice(
+        &self,
+        handle: SeriesHandle,
+        plane: Plane,
+        slice_index: u32,
+        window_center: f64,
+        window_width: f64,
+        voi_function: &str,
+    ) -> Result<Vec<u8>, ViewerError> {
+        let volume = {
+            let inner = self.lock();
+            Arc::clone(
+                inner
+                    .series
+                    .get(&handle)
+                    .ok_or(ViewerError::UnknownHandle(handle))?
+                    .mpr
+                    .as_ref()
+                    .ok_or_else(|| ViewerError::Unsupported("尚未构建 MPR 体数据".to_owned()))?,
+            )
+        };
+        volume
+            .render_slice(
+                plane,
+                slice_index,
+                window_center,
+                window_width,
+                voi_function,
+            )
+            .map_err(ViewerError::Unsupported)
+    }
+
+    pub fn close_mpr(&self, handle: SeriesHandle) -> Result<(), ViewerError> {
+        let mut inner = self.lock();
+        let series = inner
+            .series
+            .get_mut(&handle)
+            .ok_or(ViewerError::UnknownHandle(handle))?;
+        series.mpr = None;
+        Ok(())
+    }
+
+    pub fn cancel_mpr_build(&self) {
+        self.mpr_cancelled.store(true, Ordering::Release);
     }
 }
 
@@ -643,6 +771,10 @@ fn build_loaded_image_stack(
                 rows: file.rows,
                 cols: file.cols,
                 bits_allocated: file.bits_allocated,
+                position: fixed_array::<3>(file.position.as_deref()),
+                orientation: fixed_array::<6>(file.orientation.as_deref()),
+                row_spacing_mm: physical_spacing(file.spacing).map(|spacing| spacing.0),
+                col_spacing_mm: physical_spacing(file.spacing).map(|spacing| spacing.1),
             });
         }
     }
@@ -812,6 +944,17 @@ fn spacing_info(spacing: PixelSpacing) -> SpacingInfo {
             column_over_row: 1.0 / aspect_ratio.row_over_column,
         },
     }
+}
+
+fn physical_spacing(spacing: PixelSpacing) -> Option<(f64, f64)> {
+    match spacing {
+        PixelSpacing::Physical(value) => Some((value.row_mm, value.column_mm)),
+        PixelSpacing::PixelsOnly { .. } => None,
+    }
+}
+
+fn fixed_array<const N: usize>(values: Option<&[f64]>) -> Option<[f64; N]> {
+    values?.get(..N)?.try_into().ok()
 }
 
 fn source_name(source: Source) -> &'static str {
@@ -1109,6 +1252,39 @@ mod tests {
                 .len(),
             65_536
         );
+    }
+
+    #[test]
+    fn builds_and_renders_mpr_from_a_regular_stack() {
+        let directory = tempfile::tempdir().unwrap();
+        let study = unique_uid();
+        let series = unique_uid();
+        let paths = [0, 1, 2]
+            .into_iter()
+            .map(|z| write_slice(&directory, &study, &series, z).0)
+            .collect();
+        let state = ViewerState::new();
+        let opened = state.open_series(paths).unwrap();
+        let metadata = state
+            .prepare_mpr(opened.handle, opened.active_stack, |_, _| {})
+            .unwrap();
+        assert_eq!(metadata.dimensions, [4, 4, 3]);
+        let axial = metadata
+            .planes
+            .iter()
+            .find(|plane| plane.plane == Plane::Axial)
+            .unwrap();
+        let bytes = state
+            .render_mpr_slice(
+                opened.handle,
+                Plane::Axial,
+                axial.slice_count / 2,
+                -600.0,
+                1500.0,
+                "LINEAR",
+            )
+            .unwrap();
+        assert_eq!(bytes.len(), axial.rows as usize * axial.cols as usize);
     }
 
     #[test]

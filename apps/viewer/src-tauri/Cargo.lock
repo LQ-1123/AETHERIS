@@ -3051,6 +3051,7 @@ dependencies = [
  "dicom-json",
  "pacs-codec",
  "pacs-core",
+ "rayon",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

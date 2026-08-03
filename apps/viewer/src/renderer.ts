@@ -6,13 +6,14 @@ import {
   type ImageGeometry,
   type ViewportSize,
 } from './geometry';
-import type { FrameMetadata, LengthMeasurement, Point, ViewState } from './types';
+import type { FrameMetadata, LengthMeasurement, Point, ViewState, ViewTransform } from './types';
 
 export class Renderer {
   private imageContext: CanvasRenderingContext2D;
   private overlayContext: CanvasRenderingContext2D;
   private sourceCanvas = document.createElement('canvas');
   private sourceContext: CanvasRenderingContext2D;
+  private sourceImageData: ImageData | null = null;
   private frameData: Uint8Array | Uint16Array | null = null;
   private frame: FrameMetadata | null = null;
   private viewport: ViewportSize = { width: 1, height: 1 };
@@ -53,13 +54,12 @@ export class Renderer {
     }
     this.frameData = frame.bits_allocated === 8 ? new Uint8Array(buffer) : new Uint16Array(buffer);
     this.frame = frame;
-    this.sourceCanvas.width = frame.cols;
-    this.sourceCanvas.height = frame.rows;
+    this.prepareSourceCanvas(frame);
   }
 
   applyLut(lut: Uint8Array): void {
     if (!this.frameData || !this.frame) return;
-    const imageData = this.sourceContext.createImageData(this.frame.cols, this.frame.rows);
+    const imageData = this.prepareSourceCanvas(this.frame);
     const output = imageData.data;
     for (let index = 0; index < this.frameData.length; index += 1) {
       const gray = lut[this.frameData[index]] ?? 0;
@@ -68,6 +68,25 @@ export class Renderer {
       output[offset + 1] = gray;
       output[offset + 2] = gray;
       output[offset + 3] = 255;
+    }
+    this.sourceContext.putImageData(imageData, 0, 0);
+  }
+
+  setGrayFrame(buffer: ArrayBuffer, frame: FrameMetadata): void {
+    const pixels = new Uint8Array(buffer);
+    const expected = frame.rows * frame.cols;
+    if (pixels.length !== expected) {
+      throw new Error(`MPR 切面长度异常: 收到 ${pixels.length} 字节，预期 ${expected} 字节`);
+    }
+    this.frameData = pixels;
+    this.frame = frame;
+    const imageData = this.prepareSourceCanvas(frame);
+    for (let index = 0; index < pixels.length; index += 1) {
+      const offset = index * 4;
+      imageData.data[offset] = pixels[index];
+      imageData.data[offset + 1] = pixels[index];
+      imageData.data[offset + 2] = pixels[index];
+      imageData.data[offset + 3] = 255;
     }
     this.sourceContext.putImageData(imageData, 0, 0);
   }
@@ -86,8 +105,51 @@ export class Renderer {
     const frame = state.metadata.frames[state.currentFrame];
     if (!frame || !this.frameData) return;
 
+    this.renderView(state, frame, measurements, draft, selectedId, null);
+  }
+
+  renderMpr(
+    view: ViewTransform,
+    frame: FrameMetadata,
+    measurements: LengthMeasurement[],
+    draft: LengthMeasurement | null,
+    selectedId: string | null,
+    crosshair: Point,
+  ): void {
+    const ratio = window.devicePixelRatio || 1;
+    this.imageContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.imageContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
+    this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
+    if (!this.frameData) return;
+    this.renderView(view, frame, measurements, draft, selectedId, crosshair);
+  }
+
+  renderMprOverlay(
+    view: ViewTransform,
+    frame: FrameMetadata,
+    measurements: LengthMeasurement[],
+    draft: LengthMeasurement | null,
+    selectedId: string | null,
+    crosshair: Point,
+  ): void {
+    const ratio = window.devicePixelRatio || 1;
+    this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
+    this.renderOverlay(view, frame, measurements, draft, selectedId, crosshair);
+  }
+
+  private renderView(
+    view: ViewTransform,
+    frame: FrameMetadata,
+    measurements: LengthMeasurement[],
+    draft: LengthMeasurement | null,
+    selectedId: string | null,
+    crosshair: Point | null,
+  ): void {
+
     const image = imageGeometry(frame);
-    const transform = renderTransform(this.viewport, image, state);
+    const transform = renderTransform(this.viewport, image, view);
     this.imageContext.imageSmoothingEnabled = false;
     this.imageContext.drawImage(
       this.sourceCanvas,
@@ -97,10 +159,22 @@ export class Renderer {
       transform.height,
     );
 
+    this.renderOverlay(view, frame, measurements, draft, selectedId, crosshair);
+  }
+
+  private renderOverlay(
+    view: ViewTransform,
+    frame: FrameMetadata,
+    measurements: LengthMeasurement[],
+    draft: LengthMeasurement | null,
+    selectedId: string | null,
+    crosshair: Point | null,
+  ): void {
     for (const measurement of measurements) {
-      this.drawMeasurement(measurement, frame, state, measurement.id === selectedId, false);
+      this.drawMeasurement(measurement, frame, view, measurement.id === selectedId, false);
     }
-    if (draft) this.drawMeasurement(draft, frame, state, false, true);
+    if (draft) this.drawMeasurement(draft, frame, view, false, true);
+    if (crosshair) this.drawCrosshair(crosshair, frame, view);
   }
 
   toImage(point: Point, state: ViewState): Point {
@@ -113,6 +187,14 @@ export class Renderer {
     return imageToScreen(point, this.viewport, imageGeometry(frame), state);
   }
 
+  toImageFor(point: Point, frame: FrameMetadata, view: ViewTransform): Point {
+    return screenToImage(point, this.viewport, imageGeometry(frame), view);
+  }
+
+  toScreenFor(point: Point, frame: FrameMetadata, view: ViewTransform): Point {
+    return imageToScreen(point, this.viewport, imageGeometry(frame), view);
+  }
+
   getViewport(): ViewportSize {
     return this.viewport;
   }
@@ -120,19 +202,32 @@ export class Renderer {
   clear(): void {
     this.frameData = null;
     this.frame = null;
+    this.sourceImageData = null;
     this.imageContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
     this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
+  }
+
+  private prepareSourceCanvas(frame: FrameMetadata): ImageData {
+    if (this.sourceCanvas.width !== frame.cols || this.sourceCanvas.height !== frame.rows) {
+      this.sourceCanvas.width = frame.cols;
+      this.sourceCanvas.height = frame.rows;
+      this.sourceImageData = null;
+    }
+    if (!this.sourceImageData) {
+      this.sourceImageData = this.sourceContext.createImageData(frame.cols, frame.rows);
+    }
+    return this.sourceImageData;
   }
 
   private drawMeasurement(
     measurement: LengthMeasurement,
     frame: FrameMetadata,
-    state: ViewState,
+    view: ViewTransform,
     selected: boolean,
     draft: boolean,
   ): void {
-    const start = this.toScreen(measurement.start, state);
-    const end = this.toScreen(measurement.end, state);
+    const start = this.toScreenFor(measurement.start, frame, view);
+    const end = this.toScreenFor(measurement.end, frame, view);
     const color = selected ? '#ffffff' : draft ? '#7fd6ff' : '#ffd166';
     const context = this.overlayContext;
     context.save();
@@ -166,6 +261,31 @@ export class Renderer {
     context.fillRect(labelX - 5, labelY - 14, metrics.width + 10, 19);
     context.fillStyle = color;
     context.fillText(label, labelX, labelY);
+    context.restore();
+  }
+
+  private drawCrosshair(point: Point, frame: FrameMetadata, view: ViewTransform): void {
+    const screen = this.toScreenFor(point, frame, view);
+    const transform = renderTransform(this.viewport, imageGeometry(frame), view);
+    const left = Math.max(0, transform.originX);
+    const right = Math.min(this.viewport.width, transform.originX + transform.width);
+    const top = Math.max(0, transform.originY);
+    const bottom = Math.min(this.viewport.height, transform.originY + transform.height);
+    const context = this.overlayContext;
+    context.save();
+    context.strokeStyle = '#45d4e3';
+    context.lineWidth = 1;
+    context.setLineDash([5, 4]);
+    context.beginPath();
+    context.moveTo(left, screen.y);
+    context.lineTo(right, screen.y);
+    context.moveTo(screen.x, top);
+    context.lineTo(screen.x, bottom);
+    context.stroke();
+    context.setLineDash([]);
+    context.beginPath();
+    context.arc(screen.x, screen.y, 4, 0, Math.PI * 2);
+    context.stroke();
     context.restore();
   }
 }

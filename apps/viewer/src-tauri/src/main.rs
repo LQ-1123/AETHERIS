@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod mpr;
 mod protocol;
 mod remote;
 mod state;
@@ -36,6 +37,10 @@ fn main() {
             commands::close_series,
             commands::select_image_stack,
             commands::build_lut,
+            commands::prepare_mpr,
+            commands::render_mpr_slice,
+            commands::close_mpr,
+            commands::cancel_mpr_build,
             commands::remote_login,
             commands::remote_logout,
             commands::list_patients,

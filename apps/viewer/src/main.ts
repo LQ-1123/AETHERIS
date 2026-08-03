@@ -1,8 +1,10 @@
 import {
   ChevronLeft,
   ChevronRight,
+  Crosshair,
   FolderOpen,
   Info,
+  Layers3,
   LogIn,
   LogOut,
   Move,
@@ -24,8 +26,10 @@ window.addEventListener('DOMContentLoaded', () => {
     icons: {
       ChevronLeft,
       ChevronRight,
+      Crosshair,
       FolderOpen,
       Info,
+      Layers3,
       LogIn,
       LogOut,
       Move,
