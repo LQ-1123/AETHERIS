@@ -28,6 +28,7 @@ pacs-core = { path = "../../../crates/pacs-core" }
 pacs-codec = { path = "../../../crates/pacs-codec" }
 
 tauri = { version = "2.11.5", features = [] }
+tauri-plugin-dialog = "2.5.0"
 # 与根 workspace 保持同版本,避免共享 crate 在两边解析出不同的依赖
 dicom = "0.10"
 dicom-json = "0.10"

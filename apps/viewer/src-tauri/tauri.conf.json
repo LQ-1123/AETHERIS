@@ -4,12 +4,11 @@
   "version": "0.1.0",
   "identifier": "cn.local.remote-pacs.viewer",
   "build": {
-    "frontendDist": "../",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "frontendDist": "../dist",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "PACS 查看器",
@@ -22,6 +21,19 @@
       }
     ],
     "security": {
+      "capabilities": [
+        {
+          "identifier": "main-capability",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "dialog:allow-open",
+            "dialog:allow-message",
+            "dialog:allow-ask",
+            "dialog:allow-confirm"
+          ]
+        }
+      ],
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' pacs-frame: http://pacs-frame.localhost ipc: http://ipc.localhost"
     }
   },

@@ -339,8 +339,9 @@ impl ViewerState {
 
         let obj = open_file(&path).map_err(|e| ViewerError::Dicom(e.to_string()))?;
         let frames = Frames::decode(&obj).map_err(|e| ViewerError::Dicom(e.to_string()))?;
+        // Frames::frame() 使用 1-based 索引
         let frame_data = frames
-            .frame(frame_index)
+            .frame(frame_index + 1)
             .map_err(|e| ViewerError::Dicom(e.to_string()))?;
 
         // 插入缓存

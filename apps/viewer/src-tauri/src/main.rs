@@ -25,6 +25,7 @@ fn main() {
     let state = ViewerState::new();
 
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::open_dicom,
