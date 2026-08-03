@@ -34,6 +34,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::open_series,
             commands::close_series,
+            commands::select_image_stack,
             commands::build_lut,
             commands::remote_login,
             commands::remote_logout,

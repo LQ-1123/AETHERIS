@@ -54,7 +54,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 Viewer 支持单文件多帧和同一 Study/Series 的多文件灰度序列。多文件序列严格按
 `ImagePositionPatient`/`ImageOrientationPatient` 排序；缺少可靠几何时拒绝打开，
-不会退回文件名或 `InstanceNumber` 猜测顺序。
+不会退回文件名或 `InstanceNumber` 猜测顺序。同一 Series 混有定位像或不同尺寸时，
+Viewer 会按几何朝向和尺寸拆成独立图像组，默认打开帧数最多的主堆栈，并可在阅片区
+右上角切换其他图像组。
 
 ```sh
 cd apps/viewer

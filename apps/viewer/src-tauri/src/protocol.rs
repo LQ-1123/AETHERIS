@@ -6,7 +6,7 @@ use tauri::{Manager, Runtime};
 
 /// 注册 pacs-frame:// 协议
 ///
-/// 路径格式: pacs-frame://localhost/{handle}/{frame}
+/// 路径格式: pacs-frame://localhost/{handle}/{stack}/{frame}
 /// 返回该帧的原始像素字节（Uint16Array 可直接读取）
 pub fn register_protocol<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.register_asynchronous_uri_scheme_protocol(
@@ -25,14 +25,14 @@ pub fn register_protocol<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Build
 }
 
 async fn handle_request(request: Request<Vec<u8>>, state: ViewerState) -> Response<Vec<u8>> {
-    // 解析路径: /handle/frame
+    // 解析路径: /handle/stack/frame
     let path = request.uri().path();
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
-    if parts.len() != 2 {
+    if parts.len() != 3 {
         return Response::builder()
             .status(400)
-            .body(b"Invalid path: expected /handle/frame".to_vec())
+            .body(b"Invalid path: expected /handle/stack/frame".to_vec())
             .unwrap();
     }
 
@@ -46,19 +46,30 @@ async fn handle_request(request: Request<Vec<u8>>, state: ViewerState) -> Respon
         }
     };
 
-    let frame: u32 = match parts[1].parse() {
+    let stack: u32 = match parts[1].parse() {
+        Ok(value) => value,
+        Err(_) => {
+            return Response::builder()
+                .status(400)
+                .body(format!("Invalid stack: {}", parts[1]).into_bytes())
+                .unwrap();
+        }
+    };
+
+    let frame: u32 = match parts[2].parse() {
         Ok(f) => f,
         Err(_) => {
             return Response::builder()
                 .status(400)
-                .body(format!("Invalid frame: {}", parts[1]).into_bytes())
+                .body(format!("Invalid frame: {}", parts[2]).into_bytes())
                 .unwrap();
         }
     };
 
     // Pixel decoding is CPU intensive and must not block Tauri's async runtime.
     let decoded =
-        tauri::async_runtime::spawn_blocking(move || state.get_frame_bytes(handle, frame)).await;
+        tauri::async_runtime::spawn_blocking(move || state.get_frame_bytes(handle, stack, frame))
+            .await;
     match decoded {
         Ok(Ok(data)) => Response::builder()
             .status(200)

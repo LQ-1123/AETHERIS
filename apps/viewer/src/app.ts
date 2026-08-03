@@ -12,6 +12,7 @@ import {
   openSeries,
   remoteLogin,
   remoteLogout,
+  selectImageStack,
 } from './api';
 import { clampToImage, pointToSegmentDistance, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
@@ -81,6 +82,7 @@ export class App {
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
   private frameSlider = requiredElement<HTMLInputElement>('frame-slider');
   private presetSelect = requiredElement<HTMLSelectElement>('preset-select');
+  private imageStackSelect = requiredElement<HTMLSelectElement>('image-stack-select');
   private errorBanner = requiredElement<HTMLElement>('error-banner');
 
   constructor() {
@@ -183,6 +185,55 @@ export class App {
     }
   }
 
+  private async switchImageStack(requested: number): Promise<void> {
+    if (!this.state || this.busy || requested === this.state.metadata.active_stack) return;
+    const previous = this.state;
+    let changed = false;
+    try {
+      this.setBusy(true, '正在切换图像组...');
+      const metadata = await selectImageStack(previous.metadata.handle, requested);
+      if (!metadata.frames.length) throw new Error('所选图像组没有可显示的帧');
+      const preset = metadata.frames[0].window_presets[0];
+      if (!preset) throw new Error('所选图像组没有可用的显示窗口');
+
+      this.frameRequests.invalidate();
+      this.lutRequests.invalidate();
+      this.frameCache.clear();
+      this.pendingFrames.clear();
+      this.draft = null;
+      this.selectedMeasurementId = null;
+      this.state = {
+        metadata,
+        currentFrame: 0,
+        windowCenter: preset.center,
+        windowWidth: preset.width,
+        voiFunction: preset.function,
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+        lut: null,
+        tool: previous.tool,
+      };
+      changed = true;
+      this.updateUi();
+      await this.loadCurrentFrame();
+      this.showSeriesWarning();
+    } catch (error) {
+      if (changed) {
+        this.frameRequests.invalidate();
+        this.lutRequests.invalidate();
+        this.frameCache.clear();
+        this.pendingFrames.clear();
+        this.state = previous;
+        await this.loadCurrentFrame().catch(console.error);
+      }
+      this.showError(errorMessage(error));
+    } finally {
+      this.setBusy(false);
+      this.updateUi();
+    }
+  }
+
   private async loadCurrentFrame(): Promise<void> {
     if (!this.state) return;
     const state = this.state;
@@ -195,6 +246,7 @@ export class App {
         this.getFrame(frameIndex),
         buildLut(
           state.metadata.handle,
+          state.metadata.active_stack,
           frameIndex,
           state.windowCenter,
           state.windowWidth,
@@ -221,6 +273,7 @@ export class App {
     try {
       const lut = await buildLut(
         state.metadata.handle,
+        state.metadata.active_stack,
         frameIndex,
         state.windowCenter,
         state.windowWidth,
@@ -254,12 +307,18 @@ export class App {
     if (cached) return cached;
     if (!this.state) throw new Error('没有已打开的序列');
     const handle = this.state.metadata.handle;
-    const requestKey = `${handle}:${index}`;
+    const stack = this.state.metadata.active_stack;
+    const requestKey = `${handle}:${stack}:${index}`;
     const pending = this.pendingFrames.get(requestKey);
     if (pending) return pending;
-    const request = loadFrame(handle, index)
+    const request = loadFrame(handle, stack, index)
       .then((buffer) => {
-        if (this.state?.metadata.handle === handle) this.frameCache.set(index, buffer);
+        if (
+          this.state?.metadata.handle === handle &&
+          this.state.metadata.active_stack === stack
+        ) {
+          this.frameCache.set(index, buffer);
+        }
         return buffer;
       })
       .finally(() => this.pendingFrames.delete(requestKey));
@@ -369,6 +428,9 @@ export class App {
 
     this.frameSlider.addEventListener('input', () => void this.setFrame(Number(this.frameSlider.value)));
     this.presetSelect.addEventListener('change', () => this.applyPreset(Number(this.presetSelect.value)));
+    this.imageStackSelect.addEventListener('change', () => {
+      void this.switchImageStack(Number(this.imageStackSelect.value));
+    });
     this.overlayCanvas.addEventListener('contextmenu', (event) => event.preventDefault());
     this.overlayCanvas.addEventListener('pointerdown', (event) => this.pointerDown(event));
     this.overlayCanvas.addEventListener('pointermove', (event) => this.pointerMove(event));
@@ -835,6 +897,7 @@ export class App {
     requiredElement<HTMLButtonElement>('previous-frame').disabled = this.state.currentFrame === 0;
     requiredElement<HTMLButtonElement>('next-frame').disabled = this.state.currentFrame === total - 1;
 
+    this.updateImageStackOptions();
     this.updatePresetOptions(frame);
     const patient = this.state.metadata.patient;
     setText('patient-name', formatPersonName(patient.patient_name) || '未提供');
@@ -859,6 +922,28 @@ export class App {
           ? '探测器平面'
           : '仅像素';
     setText('annotation-count', `${this.currentMeasurements().length} 项标注`);
+  }
+
+  private updateImageStackOptions(): void {
+    if (!this.state) return;
+    const stacks = this.state.metadata.image_stacks;
+    const control = requiredElement<HTMLElement>('image-stack-control');
+    control.hidden = stacks.length <= 1;
+    const signature = stacks
+      .map((stack) => `${stack.index}:${stack.label}:${stack.cols}x${stack.rows}`)
+      .join('|');
+    if (this.imageStackSelect.dataset.signature !== signature) {
+      this.imageStackSelect.replaceChildren();
+      for (const stack of stacks) {
+        const option = document.createElement('option');
+        option.value = String(stack.index);
+        option.textContent = `${stack.label} · ${stack.cols} x ${stack.rows}`;
+        this.imageStackSelect.append(option);
+      }
+      this.imageStackSelect.dataset.signature = signature;
+    }
+    this.imageStackSelect.value = String(this.state.metadata.active_stack);
+    this.imageStackSelect.disabled = this.busy;
   }
 
   private updatePresetOptions(frame: FrameMetadata): void {

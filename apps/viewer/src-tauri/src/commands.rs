@@ -27,8 +27,20 @@ pub fn close_series(handle: u64, state: State<'_, ViewerState>) -> Result<(), St
 }
 
 #[tauri::command]
+pub fn select_image_stack(
+    handle: u64,
+    stack_index: u32,
+    state: State<'_, ViewerState>,
+) -> Result<SeriesMetadata, String> {
+    state
+        .select_image_stack(handle, stack_index)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn build_lut(
     handle: u64,
+    stack_index: u32,
     frame_index: u32,
     window_center: f64,
     window_width: f64,
@@ -38,6 +50,7 @@ pub fn build_lut(
     state
         .build_lut(
             handle,
+            stack_index,
             frame_index,
             window_center,
             window_width,

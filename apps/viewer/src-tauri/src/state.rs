@@ -4,7 +4,7 @@ use dicom::core::Tag;
 use dicom::dictionary_std::tags;
 use dicom::object::{DefaultDicomObject, open_file};
 use pacs_codec::{Frames, GrayLut, Photometric, Pipeline, VoiFunction};
-use pacs_core::geometry::{SliceInput, sort_slices};
+use pacs_core::geometry::{SliceInput, Vec3, group_slices_by_orientation, sort_slices};
 use pacs_core::spacing::{Confidence, PixelSpacing, Source, resolve};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use thiserror::Error;
 
 pub type SeriesHandle = u64;
-type FrameKey = (SeriesHandle, u32);
+type FrameKey = (SeriesHandle, u32, u32);
 
 const FRAME_CACHE_LIMIT: usize = 512 * 1024 * 1024;
 const PREFETCH_RADIUS: u32 = 2;
@@ -30,9 +30,36 @@ struct ViewerStateInner {
 }
 
 struct LoadedSeries {
-    frames: Vec<LoadedFrame>,
+    identity: SeriesIdentity,
+    image_stacks: Vec<LoadedImageStack>,
     /// 远程序列的下载目录。句柄关闭时随 `LoadedSeries` 一起删除。
     _temporary_directory: Option<tempfile::TempDir>,
+}
+
+struct SeriesIdentity {
+    patient: PatientStudyInfo,
+    study_uid: Option<String>,
+    series_uid: Option<String>,
+}
+
+struct LoadedImageStack {
+    summary: ImageStackMetadata,
+    frames: Vec<LoadedFrame>,
+    frame_metadata: Vec<FrameMetadata>,
+    warnings: Vec<String>,
+}
+
+struct PreparedImageStack {
+    files: Vec<ParsedFile>,
+    normal: Option<Vec3>,
+    warnings: Vec<String>,
+}
+
+struct ImageStackPlan {
+    order: Vec<usize>,
+    first_source_index: usize,
+    normal: Vec3,
+    warnings: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -81,6 +108,8 @@ pub enum ViewerError {
     EmptySelection,
     #[error("未知的序列句柄: {0}")]
     UnknownHandle(SeriesHandle),
+    #[error("未知的图像组: {stack_index}")]
+    UnknownImageStack { stack_index: u32 },
     #[error("I/O 错误: {0}")]
     Io(#[from] std::io::Error),
     #[error("DICOM 解析错误: {0}")]
@@ -99,8 +128,19 @@ pub struct SeriesMetadata {
     pub patient: PatientStudyInfo,
     pub study_uid: Option<String>,
     pub series_uid: Option<String>,
+    pub active_stack: u32,
+    pub image_stacks: Vec<ImageStackMetadata>,
     pub frames: Vec<FrameMetadata>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct ImageStackMetadata {
+    pub index: u32,
+    pub label: String,
+    pub frame_count: u32,
+    pub rows: u32,
+    pub cols: u32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -183,86 +223,31 @@ impl ViewerState {
             return Err(ViewerError::EmptySelection);
         }
 
-        let mut parsed = paths
+        let parsed = paths
             .into_iter()
             .map(parse_file)
             .collect::<Result<Vec<_>, _>>()?;
-        let mut warnings = Vec::new();
-
-        if parsed.len() > 1 {
-            validate_multi_file_series(&parsed)?;
-            let slices = parsed
-                .iter()
-                .map(|file| SliceInput {
-                    position: file.position.as_deref().unwrap_or(&[]),
-                    orientation: file.orientation.as_deref().unwrap_or(&[]),
-                })
-                .collect::<Vec<_>>();
-            let sorted = sort_slices(&slices).map_err(|error| {
-                ViewerError::InvalidSeries(format!(
-                    "无法按 ImagePositionPatient/ImageOrientationPatient 安全排序: {error}"
-                ))
-            })?;
-            if sorted.duplicate_position_groups > 0 {
-                warnings.push(format!(
-                    "序列包含 {} 组重复切片位置，请核对重建内容",
-                    sorted.duplicate_position_groups
-                ));
-            }
-
-            let mut slots = parsed.into_iter().map(Some).collect::<Vec<_>>();
-            parsed = sorted
-                .order
-                .into_iter()
-                .map(|index| slots[index].take().expect("排序索引必须唯一且有效"))
-                .collect();
-        }
-
         let first = parsed.first().expect("已检查输入非空");
-        let patient = PatientStudyInfo {
-            patient_name: first.patient_name.clone(),
-            patient_id: first.patient_id.clone(),
-            study_date: first.study_date.clone(),
-            accession_number: first.accession_number.clone(),
-            modality: first.modality.clone(),
-            study_description: first.study_description.clone(),
-            series_description: first.series_description.clone(),
+        let identity = SeriesIdentity {
+            patient: PatientStudyInfo {
+                patient_name: first.patient_name.clone(),
+                patient_id: first.patient_id.clone(),
+                study_date: first.study_date.clone(),
+                accession_number: first.accession_number.clone(),
+                modality: first.modality.clone(),
+                study_description: first.study_description.clone(),
+                series_description: first.series_description.clone(),
+            },
+            study_uid: first.study_uid.clone(),
+            series_uid: first.series_uid.clone(),
         };
-        let study_uid = first.study_uid.clone();
-        let series_uid = first.series_uid.clone();
-
-        let mut loaded_frames = Vec::new();
-        let mut frame_metadata = Vec::new();
-        for (file_index, file) in parsed.into_iter().enumerate() {
-            for source_frame in 1..=file.frame_count {
-                let logical_index = u32::try_from(loaded_frames.len())
-                    .map_err(|_| ViewerError::Unsupported("序列帧数超过支持范围".to_owned()))?;
-                let frame_key = file.sop_uid.as_ref().map_or_else(
-                    || format!("local-{file_index}#{source_frame}"),
-                    |uid| format!("{uid}#{source_frame}"),
-                );
-                frame_metadata.push(FrameMetadata {
-                    logical_index,
-                    frame_key,
-                    sop_instance_uid: file.sop_uid.clone(),
-                    source_frame,
-                    instance_number: file.instance_number,
-                    rows: file.rows,
-                    cols: file.cols,
-                    bits_allocated: file.bits_allocated,
-                    window_presets: window_presets(&file.pipeline),
-                    spacing: spacing_info(file.spacing),
-                });
-                loaded_frames.push(LoadedFrame {
-                    path: file.path.clone(),
-                    source_frame,
-                    pipeline: file.pipeline.clone(),
-                    rows: file.rows,
-                    cols: file.cols,
-                    bits_allocated: file.bits_allocated,
-                });
-            }
-        }
+        let prepared_stacks = prepare_image_stacks(parsed)?;
+        let stack_count = prepared_stacks.len();
+        let image_stacks = prepared_stacks
+            .into_iter()
+            .enumerate()
+            .map(|(index, stack)| build_loaded_image_stack(stack, index, stack_count))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut inner = self.lock();
         let handle = inner.next_handle;
@@ -270,22 +255,28 @@ impl ViewerState {
             .next_handle
             .checked_add(1)
             .ok_or_else(|| ViewerError::Unsupported("打开的序列句柄已经耗尽".to_owned()))?;
-        inner.series.insert(
-            handle,
-            LoadedSeries {
-                frames: loaded_frames,
-                _temporary_directory: temporary_directory,
-            },
-        );
+        let loaded = LoadedSeries {
+            identity,
+            image_stacks,
+            _temporary_directory: temporary_directory,
+        };
+        let metadata = loaded.metadata(handle, 0)?;
+        inner.series.insert(handle, loaded);
 
-        Ok(SeriesMetadata {
-            handle,
-            patient,
-            study_uid,
-            series_uid,
-            frames: frame_metadata,
-            warnings,
-        })
+        Ok(metadata)
+    }
+
+    pub fn select_image_stack(
+        &self,
+        handle: SeriesHandle,
+        stack_index: u32,
+    ) -> Result<SeriesMetadata, ViewerError> {
+        let inner = self.lock();
+        inner
+            .series
+            .get(&handle)
+            .ok_or(ViewerError::UnknownHandle(handle))?
+            .metadata(handle, stack_index)
     }
 
     pub fn close(&self, handle: SeriesHandle) -> Result<(), ViewerError> {
@@ -301,9 +292,10 @@ impl ViewerState {
     pub fn get_frame_bytes(
         &self,
         handle: SeriesHandle,
+        stack_index: u32,
         logical_frame: u32,
     ) -> Result<Vec<u8>, ViewerError> {
-        let key = (handle, logical_frame);
+        let key = (handle, stack_index, logical_frame);
         {
             let mut inner = self.lock();
             if let Some(cached) = inner.frame_cache.get(&key) {
@@ -317,15 +309,19 @@ impl ViewerState {
                 .series
                 .get(&handle)
                 .ok_or(ViewerError::UnknownHandle(handle))?;
-            let requested = series
+            let image_stack = series
+                .image_stacks
+                .get(stack_index as usize)
+                .ok_or(ViewerError::UnknownImageStack { stack_index })?;
+            let requested = image_stack
                 .frames
                 .get(logical_frame as usize)
                 .ok_or(ViewerError::FrameOutOfBounds {
                     frame: logical_frame,
-                    total: series.frames.len() as u32,
+                    total: image_stack.frames.len() as u32,
                 })?
                 .clone();
-            let neighbours = series
+            let neighbours = image_stack
                 .frames
                 .iter()
                 .enumerate()
@@ -369,7 +365,9 @@ impl ViewerState {
             return Err(ViewerError::UnknownHandle(handle));
         }
         for (logical, bytes) in decoded {
-            inner.frame_cache.insert((handle, logical), bytes);
+            inner
+                .frame_cache
+                .insert((handle, stack_index, logical), bytes);
         }
         inner
             .frame_cache
@@ -381,6 +379,7 @@ impl ViewerState {
     pub fn build_lut(
         &self,
         handle: SeriesHandle,
+        stack_index: u32,
         logical_frame: u32,
         window_center: f64,
         window_width: f64,
@@ -396,14 +395,16 @@ impl ViewerState {
             .series
             .get(&handle)
             .ok_or(ViewerError::UnknownHandle(handle))?;
-        let frame =
-            series
-                .frames
-                .get(logical_frame as usize)
-                .ok_or(ViewerError::FrameOutOfBounds {
-                    frame: logical_frame,
-                    total: series.frames.len() as u32,
-                })?;
+        let image_stack = series
+            .image_stacks
+            .get(stack_index as usize)
+            .ok_or(ViewerError::UnknownImageStack { stack_index })?;
+        let frame = image_stack.frames.get(logical_frame as usize).ok_or(
+            ViewerError::FrameOutOfBounds {
+                frame: logical_frame,
+                total: image_stack.frames.len() as u32,
+            },
+        )?;
         let function = match voi_function.trim().to_ascii_uppercase().as_str() {
             "LINEAR" => VoiFunction::Linear,
             "LINEAR_EXACT" => VoiFunction::LinearExact,
@@ -425,6 +426,33 @@ impl ViewerState {
 impl Default for ViewerState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl LoadedSeries {
+    fn metadata(
+        &self,
+        handle: SeriesHandle,
+        stack_index: u32,
+    ) -> Result<SeriesMetadata, ViewerError> {
+        let image_stack = self
+            .image_stacks
+            .get(stack_index as usize)
+            .ok_or(ViewerError::UnknownImageStack { stack_index })?;
+        Ok(SeriesMetadata {
+            handle,
+            patient: self.identity.patient.clone(),
+            study_uid: self.identity.study_uid.clone(),
+            series_uid: self.identity.series_uid.clone(),
+            active_stack: stack_index,
+            image_stacks: self
+                .image_stacks
+                .iter()
+                .map(|stack| stack.summary.clone())
+                .collect(),
+            frames: image_stack.frame_metadata.clone(),
+            warnings: image_stack.warnings.clone(),
+        })
     }
 }
 
@@ -478,6 +506,186 @@ impl FrameCache {
         });
         self.access_queue.retain(|key| key.0 != handle);
     }
+}
+
+fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStack>, ViewerError> {
+    if parsed.len() == 1 {
+        return Ok(vec![PreparedImageStack {
+            files: parsed,
+            normal: None,
+            warnings: Vec::new(),
+        }]);
+    }
+
+    validate_multi_file_series(&parsed)?;
+    let mut plans = {
+        let slices = parsed
+            .iter()
+            .map(|file| SliceInput {
+                position: file.position.as_deref().unwrap_or(&[]),
+                orientation: file.orientation.as_deref().unwrap_or(&[]),
+            })
+            .collect::<Vec<_>>();
+        let orientation_groups = group_slices_by_orientation(&slices).map_err(geometry_error)?;
+        let mut dimension_groups = Vec::<Vec<usize>>::new();
+        for orientation_group in orientation_groups {
+            let mut compatible_dimensions = Vec::<Vec<usize>>::new();
+            for source_index in orientation_group {
+                let file = &parsed[source_index];
+                if let Some(group) = compatible_dimensions.iter_mut().find(|group| {
+                    let reference = &parsed[group[0]];
+                    reference.rows == file.rows
+                        && reference.cols == file.cols
+                        && reference.bits_allocated == file.bits_allocated
+                }) {
+                    group.push(source_index);
+                } else {
+                    compatible_dimensions.push(vec![source_index]);
+                }
+            }
+            dimension_groups.extend(compatible_dimensions);
+        }
+
+        dimension_groups
+            .into_iter()
+            .map(|indices| {
+                let group_slices = indices
+                    .iter()
+                    .map(|&source_index| slices[source_index])
+                    .collect::<Vec<_>>();
+                let sorted = sort_slices(&group_slices).map_err(geometry_error)?;
+                let mut warnings = Vec::new();
+                if sorted.duplicate_position_groups > 0 {
+                    warnings.push(format!(
+                        "当前图像组包含 {} 组重复切片位置，请核对重建内容",
+                        sorted.duplicate_position_groups
+                    ));
+                }
+                if !sorted.spacing_is_regular {
+                    warnings.push("当前图像组的切片间距不均匀，可能存在漏传切片".to_owned());
+                }
+                let order = sorted
+                    .order
+                    .into_iter()
+                    .map(|local_index| indices[local_index])
+                    .collect::<Vec<_>>();
+                Ok(ImageStackPlan {
+                    first_source_index: *indices.first().expect("图像组不为空"),
+                    order,
+                    normal: sorted.normal,
+                    warnings,
+                })
+            })
+            .collect::<Result<Vec<_>, ViewerError>>()?
+    };
+
+    plans.sort_by(|left, right| {
+        right
+            .order
+            .len()
+            .cmp(&left.order.len())
+            .then_with(|| left.first_source_index.cmp(&right.first_source_index))
+    });
+    let mut slots = parsed.into_iter().map(Some).collect::<Vec<_>>();
+    Ok(plans
+        .into_iter()
+        .map(|plan| PreparedImageStack {
+            files: plan
+                .order
+                .into_iter()
+                .map(|index| slots[index].take().expect("图像组索引必须唯一且有效"))
+                .collect(),
+            normal: Some(plan.normal),
+            warnings: plan.warnings,
+        })
+        .collect())
+}
+
+fn geometry_error(error: pacs_core::geometry::GeometryError) -> ViewerError {
+    ViewerError::InvalidSeries(format!(
+        "无法按 ImagePositionPatient/ImageOrientationPatient 安全排序: {error}"
+    ))
+}
+
+fn build_loaded_image_stack(
+    prepared: PreparedImageStack,
+    stack_index: usize,
+    stack_count: usize,
+) -> Result<LoadedImageStack, ViewerError> {
+    let rows = prepared.files[0].rows;
+    let cols = prepared.files[0].cols;
+    let mut frames = Vec::new();
+    let mut frame_metadata = Vec::new();
+    for (file_index, file) in prepared.files.into_iter().enumerate() {
+        for source_frame in 1..=file.frame_count {
+            let logical_index = u32::try_from(frames.len())
+                .map_err(|_| ViewerError::Unsupported("序列帧数超过支持范围".to_owned()))?;
+            let frame_key = file.sop_uid.as_ref().map_or_else(
+                || format!("local-{stack_index}-{file_index}#{source_frame}"),
+                |uid| format!("{uid}#{source_frame}"),
+            );
+            frame_metadata.push(FrameMetadata {
+                logical_index,
+                frame_key,
+                sop_instance_uid: file.sop_uid.clone(),
+                source_frame,
+                instance_number: file.instance_number,
+                rows: file.rows,
+                cols: file.cols,
+                bits_allocated: file.bits_allocated,
+                window_presets: window_presets(&file.pipeline),
+                spacing: spacing_info(file.spacing),
+            });
+            frames.push(LoadedFrame {
+                path: file.path.clone(),
+                source_frame,
+                pipeline: file.pipeline.clone(),
+                rows: file.rows,
+                cols: file.cols,
+                bits_allocated: file.bits_allocated,
+            });
+        }
+    }
+
+    let frame_count = u32::try_from(frames.len())
+        .map_err(|_| ViewerError::Unsupported("序列帧数超过支持范围".to_owned()))?;
+    let index = u32::try_from(stack_index)
+        .map_err(|_| ViewerError::Unsupported("图像组数量超过支持范围".to_owned()))?;
+    let label = image_stack_label(prepared.normal, frame_count);
+    let mut warnings = prepared.warnings;
+    if stack_count > 1 {
+        warnings.insert(
+            0,
+            format!("该 DICOM Series 含 {stack_count} 个不同朝向或尺寸的图像组，已分开显示"),
+        );
+    }
+
+    Ok(LoadedImageStack {
+        summary: ImageStackMetadata {
+            index,
+            label,
+            frame_count,
+            rows,
+            cols,
+        },
+        frames,
+        frame_metadata,
+        warnings,
+    })
+}
+
+fn image_stack_label(normal: Option<Vec3>, frame_count: u32) -> String {
+    let plane = normal.map_or("多帧影像", |normal| {
+        let (x, y, z) = (normal.x.abs(), normal.y.abs(), normal.z.abs());
+        if z >= x && z >= y {
+            "轴位"
+        } else if y >= x {
+            "冠状位"
+        } else {
+            "矢状位"
+        }
+    });
+    format!("{plane} · {frame_count} 帧")
 }
 
 fn parse_file(path: PathBuf) -> Result<ParsedFile, ViewerError> {
@@ -680,6 +888,43 @@ mod tests {
         (path, sop)
     }
 
+    fn write_oriented_slice(
+        directory: &tempfile::TempDir,
+        study: &str,
+        series: &str,
+        name: &str,
+        position: [f64; 3],
+        orientation: [f64; 6],
+    ) -> (PathBuf, String) {
+        let sop = unique_uid();
+        let mut object = ct_instance(study, series, &sop);
+        object.put(DataElement::new(
+            tags::IMAGE_POSITION_PATIENT,
+            VR::DS,
+            PrimitiveValue::Strs(
+                position
+                    .into_iter()
+                    .map(|value| value.to_string())
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+        ));
+        object.put(DataElement::new(
+            tags::IMAGE_ORIENTATION_PATIENT,
+            VR::DS,
+            PrimitiveValue::Strs(
+                orientation
+                    .into_iter()
+                    .map(|value| value.to_string())
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+        ));
+        let path = directory.path().join(format!("{name}.dcm"));
+        object.write_to_file(&path).expect("测试 DICOM 应能写出");
+        (path, sop)
+    }
+
     #[test]
     fn multi_file_series_is_sorted_by_geometry() {
         let directory = tempfile::tempdir().unwrap();
@@ -699,6 +944,122 @@ mod tests {
             metadata.frames[1].sop_instance_uid.as_deref(),
             Some(high_sop.as_str())
         );
+        assert_eq!(metadata.active_stack, 0);
+        assert_eq!(metadata.image_stacks.len(), 1);
+    }
+
+    #[test]
+    fn localizer_and_main_stack_are_split_and_selectable() {
+        let directory = tempfile::tempdir().unwrap();
+        let study = unique_uid();
+        let series = unique_uid();
+        let axial = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let sagittal = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0];
+        let (localizer, localizer_sop) = write_oriented_slice(
+            &directory,
+            &study,
+            &series,
+            "localizer",
+            [0.0, 0.0, 0.0],
+            sagittal,
+        );
+        let (high, _) = write_oriented_slice(
+            &directory,
+            &study,
+            &series,
+            "axial-high",
+            [0.0, 0.0, 20.0],
+            axial,
+        );
+        let (low, low_sop) = write_oriented_slice(
+            &directory,
+            &study,
+            &series,
+            "axial-low",
+            [0.0, 0.0, -10.0],
+            axial,
+        );
+
+        let state = ViewerState::new();
+        let metadata = state.open_series(vec![localizer, high, low]).unwrap();
+        assert_eq!(metadata.image_stacks.len(), 2);
+        assert_eq!(metadata.frames.len(), 2, "最大的主堆栈应默认打开");
+        assert_eq!(
+            metadata.frames[0].sop_instance_uid.as_deref(),
+            Some(low_sop.as_str())
+        );
+        assert!(metadata.warnings[0].contains("2 个不同朝向或尺寸"));
+
+        let localizer_metadata = state.select_image_stack(metadata.handle, 1).unwrap();
+        assert_eq!(localizer_metadata.active_stack, 1);
+        assert_eq!(localizer_metadata.frames.len(), 1);
+        assert_eq!(
+            localizer_metadata.frames[0].sop_instance_uid.as_deref(),
+            Some(localizer_sop.as_str())
+        );
+    }
+
+    #[test]
+    fn two_orthogonal_multi_slice_stacks_are_both_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let study = unique_uid();
+        let series = unique_uid();
+        let axial = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let coronal = [1.0, 0.0, 0.0, 0.0, 0.0, -1.0];
+        let mut paths = Vec::new();
+        for (name, position, orientation) in [
+            ("axial-1", [0.0, 0.0, 1.0], axial),
+            ("coronal-1", [0.0, 1.0, 0.0], coronal),
+            ("axial-2", [0.0, 0.0, 2.0], axial),
+            ("coronal-2", [0.0, 2.0, 0.0], coronal),
+        ] {
+            paths.push(
+                write_oriented_slice(&directory, &study, &series, name, position, orientation).0,
+            );
+        }
+
+        let state = ViewerState::new();
+        let metadata = state.open_series(paths).unwrap();
+        assert_eq!(metadata.image_stacks.len(), 2);
+        assert_eq!(metadata.image_stacks[0].frame_count, 2);
+        assert_eq!(metadata.image_stacks[1].frame_count, 2);
+        assert_eq!(
+            state
+                .select_image_stack(metadata.handle, 1)
+                .unwrap()
+                .frames
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn duplicate_positions_remain_a_warning_inside_their_stack() {
+        let directory = tempfile::tempdir().unwrap();
+        let study = unique_uid();
+        let series = unique_uid();
+        let axial = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let first = write_oriented_slice(
+            &directory,
+            &study,
+            &series,
+            "duplicate-a",
+            [0.0, 0.0, 5.0],
+            axial,
+        )
+        .0;
+        let second = write_oriented_slice(
+            &directory,
+            &study,
+            &series,
+            "duplicate-b",
+            [0.0, 0.0, 5.0],
+            axial,
+        )
+        .0;
+
+        let metadata = ViewerState::new().open_series(vec![first, second]).unwrap();
+        assert!(metadata.warnings[0].contains("重复切片位置"));
     }
 
     #[test]
@@ -728,12 +1089,22 @@ mod tests {
         assert_eq!(metadata.patient.patient_id.as_deref(), Some("PID-0001"));
         assert_eq!(metadata.frames[0].bits_allocated, 16);
         assert_eq!(
-            state.get_frame_bytes(metadata.handle, 0).unwrap().len(),
+            state
+                .get_frame_bytes(metadata.handle, metadata.active_stack, 0)
+                .unwrap()
+                .len(),
             4 * 4 * 2
         );
         assert_eq!(
             state
-                .build_lut(metadata.handle, 0, -600.0, 1500.0, "LINEAR")
+                .build_lut(
+                    metadata.handle,
+                    metadata.active_stack,
+                    0,
+                    -600.0,
+                    1500.0,
+                    "LINEAR",
+                )
                 .unwrap()
                 .len(),
             65_536
@@ -776,7 +1147,10 @@ mod tests {
         assert_eq!(metadata.frames.len(), 2);
         assert_eq!(metadata.frames[1].source_frame, 2);
         assert_eq!(
-            state.get_frame_bytes(metadata.handle, 1).unwrap().len(),
+            state
+                .get_frame_bytes(metadata.handle, metadata.active_stack, 1)
+                .unwrap()
+                .len(),
             4 * 4 * 2
         );
     }
@@ -812,12 +1186,22 @@ mod tests {
         let metadata = state.open_series(vec![path]).unwrap();
         assert_eq!(metadata.frames[0].bits_allocated, 8);
         assert_eq!(
-            state.get_frame_bytes(metadata.handle, 0).unwrap().len(),
+            state
+                .get_frame_bytes(metadata.handle, metadata.active_stack, 0)
+                .unwrap()
+                .len(),
             4 * 4
         );
         assert_eq!(
             state
-                .build_lut(metadata.handle, 0, 128.0, 256.0, "LINEAR")
+                .build_lut(
+                    metadata.handle,
+                    metadata.active_stack,
+                    0,
+                    128.0,
+                    256.0,
+                    "LINEAR",
+                )
                 .unwrap()
                 .len(),
             256
@@ -827,14 +1211,14 @@ mod tests {
     #[test]
     fn frame_cache_evicts_the_least_recently_used_entry() {
         let mut cache = FrameCache::new(8);
-        cache.insert((1, 0), vec![0; 4]);
-        cache.insert((1, 1), vec![1; 4]);
-        assert!(cache.get(&(1, 0)).is_some());
-        cache.insert((1, 2), vec![2; 4]);
+        cache.insert((1, 0, 0), vec![0; 4]);
+        cache.insert((1, 0, 1), vec![1; 4]);
+        assert!(cache.get(&(1, 0, 0)).is_some());
+        cache.insert((1, 0, 2), vec![2; 4]);
 
-        assert!(cache.get(&(1, 0)).is_some());
-        assert!(cache.get(&(1, 1)).is_none());
-        assert!(cache.get(&(1, 2)).is_some());
+        assert!(cache.get(&(1, 0, 0)).is_some());
+        assert!(cache.get(&(1, 0, 1)).is_none());
+        assert!(cache.get(&(1, 0, 2)).is_some());
         assert_eq!(cache.total_bytes, 8);
     }
 }

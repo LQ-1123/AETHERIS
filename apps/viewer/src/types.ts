@@ -16,8 +16,18 @@ export interface SeriesMetadata {
   patient: PatientStudyInfo;
   study_uid: string | null;
   series_uid: string | null;
+  active_stack: number;
+  image_stacks: ImageStackMetadata[];
   frames: FrameMetadata[];
   warnings: string[];
+}
+
+export interface ImageStackMetadata {
+  index: number;
+  label: string;
+  frame_count: number;
+  rows: number;
+  cols: number;
 }
 
 export interface FrameMetadata {

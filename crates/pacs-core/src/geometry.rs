@@ -210,6 +210,36 @@ pub fn sort_slices(slices: &[SliceInput<'_>]) -> Result<SortedSeries, GeometryEr
     })
 }
 
+/// 按兼容的 ImageOrientationPatient 将切片拆成独立图像堆栈。
+///
+/// 返回值中的下标指向原始输入，并保持各朝向首次出现的顺序。该函数只负责
+/// 拆分朝向，不负责空间排序；调用方应继续对每一组调用 [`sort_slices`]。
+/// 所有切片仍必须提供有效的位置和方向，避免把缺少几何信息的文件悄悄混入。
+pub fn group_slices_by_orientation(
+    slices: &[SliceInput<'_>],
+) -> Result<Vec<Vec<usize>>, GeometryError> {
+    if slices.is_empty() {
+        return Err(GeometryError::Empty);
+    }
+
+    let mut groups: Vec<(Orientation, Vec<usize>)> = Vec::new();
+    for (index, slice) in slices.iter().copied().enumerate() {
+        let orientation = orientation_of(slice, index)?;
+        Vec3::from_slice(slice.position).ok_or(GeometryError::MissingGeometry { index })?;
+
+        if let Some((_, indices)) = groups
+            .iter_mut()
+            .find(|(reference, _)| orientation.matches(reference))
+        {
+            indices.push(index);
+        } else {
+            groups.push((orientation, vec![index]));
+        }
+    }
+
+    Ok(groups.into_iter().map(|(_, indices)| indices).collect())
+}
+
 struct Orientation {
     row: Vec3,
     column: Vec3,
@@ -464,6 +494,55 @@ mod tests {
         assert_eq!(
             sort_slices(&slices),
             Err(GeometryError::InconsistentOrientation { index: 1 })
+        );
+    }
+
+    #[test]
+    fn mixed_orientations_can_be_split_before_sorting() {
+        let axial = AXIAL;
+        let sagittal = [0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+        let positions = [
+            [0.0, 0.0, 3.0],
+            [4.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [2.0, 0.0, 0.0],
+        ];
+        let slices = vec![
+            SliceInput {
+                position: &positions[0],
+                orientation: &axial,
+            },
+            SliceInput {
+                position: &positions[1],
+                orientation: &sagittal,
+            },
+            SliceInput {
+                position: &positions[2],
+                orientation: &axial,
+            },
+            SliceInput {
+                position: &positions[3],
+                orientation: &sagittal,
+            },
+        ];
+
+        assert_eq!(
+            group_slices_by_orientation(&slices).unwrap(),
+            vec![vec![0, 2], vec![1, 3]]
+        );
+    }
+
+    #[test]
+    fn orientation_grouping_still_rejects_missing_geometry() {
+        let missing_position: [f64; 0] = [];
+        let slices = [SliceInput {
+            position: &missing_position,
+            orientation: &AXIAL,
+        }];
+
+        assert_eq!(
+            group_slices_by_orientation(&slices),
+            Err(GeometryError::MissingGeometry { index: 0 })
         );
     }
 

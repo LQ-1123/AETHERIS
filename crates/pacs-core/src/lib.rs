@@ -14,7 +14,9 @@ pub mod spacing;
 pub mod uid;
 
 pub use extract::{ExtractError, extract_metadata};
-pub use geometry::{GeometryError, SliceInput, SortedSeries, Vec3, sort_slices};
+pub use geometry::{
+    GeometryError, SliceInput, SortedSeries, Vec3, group_slices_by_orientation, sort_slices,
+};
 pub use model::{
     InstanceMeta, InstanceMetadata, PatientMeta, SeriesMeta, StudyMeta, normalize_person_name,
 };

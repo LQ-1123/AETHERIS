@@ -50,6 +50,14 @@ export async function closeSeries(handle: number): Promise<void> {
   await invoke('close_series', { handle });
 }
 
+export async function selectImageStack(
+  handle: number,
+  stackIndex: number,
+): Promise<SeriesMetadata> {
+  const invoke = await getInvoke();
+  return invoke<SeriesMetadata>('select_image_stack', { handle, stackIndex });
+}
+
 export async function remoteLogin(
   serverUrl: string,
   caCertPath: string,
@@ -99,6 +107,7 @@ export async function cancelRemoteDownload(): Promise<void> {
 
 export async function buildLut(
   handle: number,
+  stackIndex: number,
   frameIndex: number,
   windowCenter: number,
   windowWidth: number,
@@ -107,6 +116,7 @@ export async function buildLut(
   const invoke = await getInvoke();
   const result = await invoke<ArrayBuffer | Uint8Array | number[]>('build_lut', {
     handle,
+    stackIndex,
     frameIndex,
     windowCenter,
     windowWidth,
@@ -117,16 +127,17 @@ export async function buildLut(
   return new Uint8Array(result);
 }
 
-export function getFrameUrl(handle: number, frame: number): string {
-  return `pacs-frame://localhost/${handle}/${frame}`;
+export function getFrameUrl(handle: number, stack: number, frame: number): string {
+  return `pacs-frame://localhost/${handle}/${stack}/${frame}`;
 }
 
 export async function loadFrame(
   handle: number,
+  stack: number,
   frame: number,
   signal?: AbortSignal,
 ): Promise<ArrayBuffer> {
-  const response = await fetch(getFrameUrl(handle, frame), { signal });
+  const response = await fetch(getFrameUrl(handle, stack, frame), { signal });
   if (!response.ok) {
     const detail = await response.text().catch(() => response.statusText);
     throw new Error(detail || `加载第 ${frame + 1} 帧失败`);
