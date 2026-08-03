@@ -45,6 +45,92 @@ input:disabled {
   display: none !important;
 }
 
+#login-screen {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #111416;
+}
+
+.login-panel {
+  display: grid;
+  width: min(100%, 390px);
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid #3c4245;
+  border-radius: 6px;
+  background: #1d2123;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 38%);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 6px;
+}
+
+.login-brand .brand-mark {
+  width: 38px;
+  height: 38px;
+  font-size: 12px;
+}
+
+.login-brand h1 {
+  margin: 0 0 3px;
+  color: #f2f4f5;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.login-brand span:not(.brand-mark) {
+  color: #8f989c;
+  font-size: 11px;
+}
+
+.login-panel > label {
+  display: grid;
+  gap: 6px;
+  color: #aeb5b8;
+  font-size: 11px;
+}
+
+.login-panel input,
+.search-control input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid #454b4e;
+  border-radius: 4px;
+  padding: 0 10px;
+  color: #eef0f1;
+  background: #15181a;
+}
+
+.path-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.path-control .icon-button {
+  height: 34px;
+}
+
+#login-error {
+  margin: -3px 0 0;
+  color: #f3a2a2;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.login-submit {
+  width: 100%;
+  margin-top: 2px;
+}
+
 #app-shell {
   display: grid;
   grid-template-rows: 48px auto minmax(0, 1fr) 0;
@@ -200,6 +286,15 @@ button svg {
   white-space: nowrap;
 }
 
+.current-user {
+  max-width: 110px;
+  overflow: hidden;
+  color: #aeb5b8;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-banner {
   grid-row: 2;
   z-index: 5;
@@ -230,12 +325,209 @@ button svg {
 #workspace {
   grid-row: 3;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 278px;
+  grid-template-columns: 330px minmax(0, 1fr) 278px;
   min-height: 0;
 }
 
 #workspace.details-hidden {
-  grid-template-columns: minmax(0, 1fr) 0;
+  grid-template-columns: 330px minmax(0, 1fr) 0;
+}
+
+#workspace.worklist-hidden {
+  grid-template-columns: 0 minmax(0, 1fr) 278px;
+}
+
+#workspace.worklist-hidden.details-hidden {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+#worklist-panel {
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid #34383b;
+  background: #1b1e20;
+}
+
+#worklist-panel.collapsed {
+  width: 0;
+  border-right: 0;
+}
+
+.worklist-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 330px;
+  height: 52px;
+  padding: 0 12px 0 14px;
+  border-bottom: 1px solid #34383b;
+}
+
+.worklist-heading h2 {
+  margin: 0 0 3px;
+  font-size: 12px;
+}
+
+.worklist-heading span {
+  color: #858e92;
+  font-size: 10px;
+}
+
+.search-control {
+  position: relative;
+  min-width: 330px;
+  padding: 10px 12px 8px;
+}
+
+.search-control svg {
+  position: absolute;
+  top: 19px;
+  left: 22px;
+  width: 15px;
+  height: 15px;
+  color: #778085;
+}
+
+.search-control input {
+  width: 100%;
+  padding-left: 32px;
+}
+
+.worklist-status {
+  min-width: 330px;
+  min-height: 20px;
+  padding: 0 14px 6px;
+  color: #929b9f;
+  font-size: 10px;
+}
+
+.patient-list {
+  min-width: 330px;
+  height: calc(100% - 164px);
+  overflow-y: auto;
+  border-top: 1px solid #2c3032;
+}
+
+.patient-item,
+.study-item {
+  border-bottom: 1px solid #2e3234;
+}
+
+.worklist-row {
+  display: grid;
+  width: 100%;
+  height: auto;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.worklist-row:hover:not(:disabled) {
+  border-color: transparent;
+  background: #252a2d;
+}
+
+.disclosure {
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  transform: rotate(-45deg);
+  border-right: 1px solid #90999d;
+  border-bottom: 1px solid #90999d;
+  transition: transform 100ms ease;
+}
+
+.worklist-row[aria-expanded="true"] .disclosure {
+  transform: rotate(45deg);
+}
+
+.worklist-row-content {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.worklist-row-content strong,
+.series-row strong {
+  overflow: hidden;
+  color: #e2e5e6;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklist-row-content span,
+.series-row span {
+  overflow: hidden;
+  color: #adb4b7;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worklist-row-content small {
+  color: #747d81;
+  font-size: 9px;
+}
+
+.study-list {
+  background: #171a1c;
+}
+
+.study-row {
+  padding-left: 28px;
+}
+
+.series-list {
+  padding: 4px 8px 8px 46px;
+}
+
+.series-row {
+  display: grid;
+  width: 100%;
+  height: auto;
+  justify-content: stretch;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 8px 9px;
+  border-color: #373c3f;
+  background: #222628;
+  text-align: left;
+}
+
+.empty-worklist-message {
+  margin: 0;
+  padding: 14px;
+  color: #7e878b;
+  font-size: 10px;
+  text-align: center;
+}
+
+.worklist-pagination {
+  display: flex;
+  min-width: 330px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-top: 1px solid #34383b;
+  color: #929a9e;
+  font-size: 10px;
+}
+
+.worklist-pagination .icon-button {
+  width: 26px;
+  height: 26px;
+}
+
+.spinning svg {
+  animation: spin 0.7s linear infinite;
 }
 
 #viewport {
@@ -342,6 +634,12 @@ body[data-tool="length"] #overlay-canvas {
   background: rgba(28, 31, 33, 0.94);
   color: #d7dbdd;
   font-size: 11px;
+}
+
+.loading-cancel {
+  min-height: 24px;
+  padding: 0 7px;
+  font-size: 10px;
 }
 
 .spinner {
@@ -496,5 +794,29 @@ body[data-tool="length"] #overlay-canvas {
 
   .preset-control select {
     width: 94px;
+  }
+}
+
+@media (max-width: 980px) {
+  #workspace,
+  #workspace.details-hidden {
+    grid-template-columns: 300px minmax(0, 1fr) 0;
+  }
+
+  #workspace.worklist-hidden,
+  #workspace.worklist-hidden.details-hidden {
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
+
+  #details-panel {
+    display: none;
+  }
+
+  .worklist-heading,
+  .search-control,
+  .worklist-status,
+  .patient-list,
+  .worklist-pagination {
+    min-width: 300px;
   }
 }

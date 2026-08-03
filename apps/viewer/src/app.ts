@@ -1,12 +1,32 @@
-import { buildLut, chooseDicomFiles, closeSeries, loadFrame, openSeries } from './api';
+import {
+  buildLut,
+  cancelRemoteDownload,
+  chooseCaCertificate,
+  chooseDicomFiles,
+  closeSeries,
+  listPatientStudies,
+  listPatients,
+  listStudySeries,
+  loadFrame,
+  openRemoteSeries,
+  openSeries,
+  remoteLogin,
+  remoteLogout,
+} from './api';
 import { clampToImage, pointToSegmentDistance, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import type {
   FrameMetadata,
+  DownloadProgress,
   LengthMeasurement,
+  PatientSummary,
   Point,
+  RemoteSeriesSummary,
+  RemoteUser,
+  SeriesMetadata,
+  StudySummary,
   ToolMode,
   ViewState,
   WindowPreset,
@@ -30,6 +50,7 @@ type DragState =
   | { kind: 'length'; pointerId: number };
 
 const FRONTEND_CACHE_BYTES = 128 * 1024 * 1024;
+const PATIENT_PAGE_SIZE = 30;
 
 export class App {
   private state: ViewState | null = null;
@@ -45,6 +66,16 @@ export class App {
   private windowFrameRequest: number | null = null;
   private wheelFrameDelta = 0;
   private busy = false;
+  private remoteDownloadActive = false;
+  private remoteUser: RemoteUser | null = null;
+  private patients: PatientSummary[] = [];
+  private patientPage = 0;
+  private hasNextPatientPage = false;
+  private expandedPatientId: number | null = null;
+  private expandedStudyUid: string | null = null;
+  private studies = new Map<number, StudySummary[]>();
+  private series = new Map<string, RemoteSeriesSummary[]>();
+  private worklistBusy = false;
 
   private viewport = requiredElement<HTMLElement>('viewport');
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
@@ -58,20 +89,35 @@ export class App {
       this.overlayCanvas,
     );
     this.setupEventListeners();
+    this.setupRemoteProgress();
     this.setupResizeObserver();
+    this.restoreConnectionFields();
     this.updateUi();
   }
 
   async openFiles(): Promise<void> {
+    try {
+      const paths = await chooseDicomFiles();
+      if (!paths?.length) return;
+      await this.activateSeries(() => openSeries(paths), '正在解析序列...');
+    } catch (error) {
+      this.showError(errorMessage(error));
+    }
+  }
+
+  private async activateSeries(
+    loader: () => Promise<SeriesMetadata>,
+    message: string,
+    remoteDownload = false,
+  ): Promise<void> {
     const previous = this.state;
     const previousMeasurements = this.measurements;
     const previousSelectedMeasurementId = this.selectedMeasurementId;
     let openedHandle: number | null = null;
+    this.remoteDownloadActive = remoteDownload;
     try {
-      const paths = await chooseDicomFiles();
-      if (!paths?.length) return;
-      this.setBusy(true, '正在解析序列...');
-      const metadata = await openSeries(paths);
+      this.setBusy(true, message, remoteDownload);
+      const metadata = await loader();
       openedHandle = metadata.handle;
       if (!metadata.frames.length) throw new Error('所选序列没有可显示的帧');
       const preset = metadata.frames[0].window_presets[0];
@@ -101,7 +147,6 @@ export class App {
       openedHandle = null;
       this.showSeriesWarning();
     } catch (error) {
-      const message = errorMessage(error);
       if (openedHandle != null) {
         await closeSeries(openedHandle).catch(console.error);
         this.state = previous;
@@ -115,8 +160,9 @@ export class App {
           this.renderer.clear();
         }
       }
-      this.showError(message);
+      throw error;
     } finally {
+      this.remoteDownloadActive = false;
       this.setBusy(false);
       this.updateUi();
     }
@@ -261,6 +307,44 @@ export class App {
   }
 
   private setupEventListeners(): void {
+    requiredElement<HTMLFormElement>('login-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.login();
+    });
+    requiredElement<HTMLButtonElement>('choose-ca-btn').addEventListener('click', () => {
+      void this.chooseCertificate();
+    });
+    requiredElement<HTMLButtonElement>('logout-btn').addEventListener('click', () => {
+      void this.logout();
+    });
+    requiredElement<HTMLButtonElement>('worklist-toggle').addEventListener('click', () => {
+      document.getElementById('worklist-panel')?.classList.toggle('collapsed');
+      document.getElementById('workspace')?.classList.toggle('worklist-hidden');
+      setTimeout(() => this.resizeViewport(), 0);
+    });
+    requiredElement<HTMLButtonElement>('refresh-worklist').addEventListener('click', () => {
+      void this.loadPatients();
+    });
+    requiredElement<HTMLFormElement>('patient-search').addEventListener('submit', (event) => {
+      event.preventDefault();
+      this.patientPage = 0;
+      void this.loadPatients();
+    });
+    requiredElement<HTMLButtonElement>('patients-previous').addEventListener('click', () => {
+      if (this.patientPage === 0) return;
+      this.patientPage -= 1;
+      void this.loadPatients();
+    });
+    requiredElement<HTMLButtonElement>('patients-next').addEventListener('click', () => {
+      if (!this.hasNextPatientPage) return;
+      this.patientPage += 1;
+      void this.loadPatients();
+    });
+    requiredElement<HTMLButtonElement>('cancel-download').addEventListener('click', () => {
+      void cancelRemoteDownload();
+      setText('loading-text', '正在取消下载...');
+      requiredElement<HTMLButtonElement>('cancel-download').disabled = true;
+    });
     requiredElement<HTMLButtonElement>('open-btn').addEventListener('click', () => void this.openFiles());
     requiredElement<HTMLButtonElement>('empty-open-btn').addEventListener('click', () => void this.openFiles());
     requiredElement<HTMLButtonElement>('reset-btn').addEventListener('click', () => this.resetView());
@@ -293,6 +377,241 @@ export class App {
     this.overlayCanvas.addEventListener('wheel', (event) => this.wheel(event), { passive: false });
 
     window.addEventListener('keydown', (event) => this.keyDown(event));
+  }
+
+  private restoreConnectionFields(): void {
+    const savedUrl = localStorage.getItem('remote-pacs.server-url');
+    const savedCa = localStorage.getItem('remote-pacs.ca-cert-path');
+    if (savedUrl) requiredElement<HTMLInputElement>('server-url').value = savedUrl;
+    if (savedCa) requiredElement<HTMLInputElement>('ca-cert-path').value = savedCa;
+  }
+
+  private async chooseCertificate(): Promise<void> {
+    const selected = await chooseCaCertificate();
+    if (selected) requiredElement<HTMLInputElement>('ca-cert-path').value = selected;
+  }
+
+  private async login(): Promise<void> {
+    const serverUrl = requiredElement<HTMLInputElement>('server-url').value.trim();
+    const caCertPath = requiredElement<HTMLInputElement>('ca-cert-path').value.trim();
+    const username = requiredElement<HTMLInputElement>('login-username').value.trim();
+    const passwordInput = requiredElement<HTMLInputElement>('login-password');
+    const loginButton = requiredElement<HTMLButtonElement>('login-btn');
+    const loginError = requiredElement<HTMLElement>('login-error');
+    loginButton.disabled = true;
+    loginError.hidden = true;
+    try {
+      const user = await remoteLogin(serverUrl, caCertPath, username, passwordInput.value);
+      this.remoteUser = user;
+      passwordInput.value = '';
+      localStorage.setItem('remote-pacs.server-url', serverUrl);
+      localStorage.setItem('remote-pacs.ca-cert-path', caCertPath);
+      setText('current-user', user.display_name?.trim() || user.username);
+      requiredElement<HTMLElement>('login-screen').hidden = true;
+      requiredElement<HTMLElement>('app-shell').removeAttribute('aria-hidden');
+      this.resizeViewport();
+      await this.loadPatients();
+    } catch (error) {
+      loginError.textContent = errorMessage(error);
+      loginError.hidden = false;
+    } finally {
+      loginButton.disabled = false;
+    }
+  }
+
+  private async logout(): Promise<void> {
+    try {
+      await remoteLogout();
+    } catch (error) {
+      this.showError(errorMessage(error));
+    } finally {
+      this.remoteUser = null;
+      this.patients = [];
+      this.studies.clear();
+      this.series.clear();
+      this.expandedPatientId = null;
+      this.expandedStudyUid = null;
+      setText('worklist-status', '');
+      this.renderPatients();
+      requiredElement<HTMLElement>('login-screen').hidden = false;
+      requiredElement<HTMLElement>('app-shell').setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  private setupRemoteProgress(): void {
+    void import('@tauri-apps/api/event').then(({ listen }) =>
+      listen<DownloadProgress>('remote-download-progress', ({ payload }) => {
+        if (!this.remoteDownloadActive) return;
+        setText('loading-text', `正在下载序列 ${payload.downloaded} / ${payload.total}`);
+      }),
+    );
+  }
+
+  private async loadPatients(): Promise<void> {
+    if (!this.remoteUser || this.worklistBusy) return;
+    this.setWorklistBusy(true, '正在加载病人...');
+    try {
+      const query = requiredElement<HTMLInputElement>('patient-query').value.trim();
+      const offset = this.patientPage * PATIENT_PAGE_SIZE;
+      const rows = await listPatients(query, PATIENT_PAGE_SIZE + 1, offset);
+      this.hasNextPatientPage = rows.length > PATIENT_PAGE_SIZE;
+      this.patients = rows.slice(0, PATIENT_PAGE_SIZE);
+      this.studies.clear();
+      this.series.clear();
+      this.expandedPatientId = null;
+      this.expandedStudyUid = null;
+      this.renderPatients();
+    } catch (error) {
+      setText('worklist-status', errorMessage(error));
+      this.showError(errorMessage(error));
+    } finally {
+      this.setWorklistBusy(false);
+    }
+  }
+
+  private async togglePatient(patientId: number): Promise<void> {
+    if (this.expandedPatientId === patientId) {
+      this.expandedPatientId = null;
+      this.expandedStudyUid = null;
+      this.renderPatients();
+      return;
+    }
+    this.expandedPatientId = patientId;
+    this.expandedStudyUid = null;
+    this.renderPatients();
+    if (this.studies.has(patientId)) return;
+    this.setWorklistBusy(true, '正在加载检查...');
+    try {
+      this.studies.set(patientId, await listPatientStudies(patientId));
+      setText('worklist-status', '');
+      this.renderPatients();
+    } catch (error) {
+      this.showError(errorMessage(error));
+    } finally {
+      this.setWorklistBusy(false);
+    }
+  }
+
+  private async toggleStudy(studyUid: string): Promise<void> {
+    if (this.expandedStudyUid === studyUid) {
+      this.expandedStudyUid = null;
+      this.renderPatients();
+      return;
+    }
+    this.expandedStudyUid = studyUid;
+    this.renderPatients();
+    if (this.series.has(studyUid)) return;
+    this.setWorklistBusy(true, '正在加载序列...');
+    try {
+      this.series.set(studyUid, await listStudySeries(studyUid));
+      setText('worklist-status', '');
+      this.renderPatients();
+    } catch (error) {
+      this.showError(errorMessage(error));
+    } finally {
+      this.setWorklistBusy(false);
+    }
+  }
+
+  private async openRemote(studyUid: string, seriesUid: string): Promise<void> {
+    try {
+      await this.activateSeries(
+        () => openRemoteSeries(studyUid, seriesUid),
+        '正在准备远程序列...',
+        true,
+      );
+    } catch (error) {
+      this.showError(errorMessage(error));
+    }
+  }
+
+  private renderPatients(): void {
+    const container = requiredElement<HTMLElement>('patient-list');
+    container.replaceChildren();
+    for (const patient of this.patients) {
+      const item = document.createElement('section');
+      item.className = 'patient-item';
+      const row = worklistRow(
+        formatPersonName(patient.name) || '未提供姓名',
+        patient.patient_id || '未提供 Patient ID',
+        `${formatApiDate(patient.latest_study_date) || '无日期'} · ${patient.study_count} 检查 · ${patient.instance_count} 实例`,
+        this.expandedPatientId === patient.id,
+      );
+      row.classList.add('patient-row');
+      row.addEventListener('click', () => void this.togglePatient(patient.id));
+      item.append(row);
+
+      if (this.expandedPatientId === patient.id) {
+        const studies = this.studies.get(patient.id);
+        const studyList = document.createElement('div');
+        studyList.className = 'study-list';
+        if (!studies) {
+          studyList.append(emptyWorklistMessage('正在读取检查...'));
+        } else if (!studies.length) {
+          studyList.append(emptyWorklistMessage('没有检查'));
+        } else {
+          for (const study of studies) {
+            const studyItem = document.createElement('div');
+            studyItem.className = 'study-item';
+            const modality = study.modalities.join(' / ') || '未知模态';
+            const studyRow = worklistRow(
+              study.description?.trim() || '未命名检查',
+              `${formatApiDate(study.study_date) || '无日期'} · ${modality}`,
+              `${study.series_count} 序列 · ${study.instance_count} 实例`,
+              this.expandedStudyUid === study.study_uid,
+            );
+            studyRow.classList.add('study-row');
+            studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
+            studyItem.append(studyRow);
+
+            if (this.expandedStudyUid === study.study_uid) {
+              const series = this.series.get(study.study_uid);
+              const seriesList = document.createElement('div');
+              seriesList.className = 'series-list';
+              if (!series) {
+                seriesList.append(emptyWorklistMessage('正在读取序列...'));
+              } else if (!series.length) {
+                seriesList.append(emptyWorklistMessage('没有序列'));
+              } else {
+                for (const entry of series) {
+                  const seriesButton = document.createElement('button');
+                  seriesButton.type = 'button';
+                  seriesButton.className = 'series-row';
+                  const title = document.createElement('strong');
+                  title.textContent = entry.description?.trim() || `序列 ${entry.series_number ?? '--'}`;
+                  const detail = document.createElement('span');
+                  detail.textContent = `${entry.modality || '未知'} · ${entry.instance_count} 实例`;
+                  seriesButton.append(title, detail);
+                  seriesButton.addEventListener('click', () => {
+                    void this.openRemote(study.study_uid, entry.series_uid);
+                  });
+                  seriesList.append(seriesButton);
+                }
+              }
+              studyItem.append(seriesList);
+            }
+            studyList.append(studyItem);
+          }
+        }
+        item.append(studyList);
+      }
+      container.append(item);
+    }
+    if (!this.patients.length && !this.worklistBusy) {
+      container.append(emptyWorklistMessage('没有匹配的病人'));
+    }
+    setText('worklist-count', `本页 ${this.patients.length} 位`);
+    setText('patient-page', `第 ${this.patientPage + 1} 页`);
+    requiredElement<HTMLButtonElement>('patients-previous').disabled = this.patientPage === 0;
+    requiredElement<HTMLButtonElement>('patients-next').disabled = !this.hasNextPatientPage;
+  }
+
+  private setWorklistBusy(busy: boolean, message = ''): void {
+    this.worklistBusy = busy;
+    if (busy) setText('worklist-status', message);
+    requiredElement<HTMLButtonElement>('refresh-worklist').disabled = busy;
+    requiredElement<HTMLInputElement>('patient-query').disabled = busy;
+    requiredElement<HTMLButtonElement>('refresh-worklist').classList.toggle('spinning', busy);
   }
 
   private pointerDown(event: PointerEvent): void {
@@ -579,11 +898,14 @@ export class App {
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
-  private setBusy(busy: boolean, message = ''): void {
+  private setBusy(busy: boolean, message = '', cancellable = false): void {
     this.busy = busy;
     const loading = requiredElement<HTMLElement>('loading');
     loading.hidden = !busy;
     setText('loading-text', message);
+    const cancel = requiredElement<HTMLButtonElement>('cancel-download');
+    cancel.hidden = !busy || !cancellable;
+    cancel.disabled = false;
   }
 
   private showError(message: string): void {
@@ -626,4 +948,42 @@ function formatPersonName(value: string | null): string {
 function formatDicomDate(value: string | null): string {
   if (!value || !/^\d{8}$/.test(value)) return value ?? '';
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
+}
+
+function formatApiDate(value: string | null): string {
+  if (!value) return '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : formatDicomDate(value);
+}
+
+function worklistRow(
+  title: string,
+  subtitle: string,
+  meta: string,
+  expanded: boolean,
+): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'worklist-row';
+  button.setAttribute('aria-expanded', String(expanded));
+  const disclosure = document.createElement('span');
+  disclosure.className = 'disclosure';
+  disclosure.setAttribute('aria-hidden', 'true');
+  const content = document.createElement('span');
+  content.className = 'worklist-row-content';
+  const heading = document.createElement('strong');
+  heading.textContent = title;
+  const sub = document.createElement('span');
+  sub.textContent = subtitle;
+  const metadata = document.createElement('small');
+  metadata.textContent = meta;
+  content.append(heading, sub, metadata);
+  button.append(disclosure, content);
+  return button;
+}
+
+function emptyWorklistMessage(message: string): HTMLElement {
+  const element = document.createElement('p');
+  element.className = 'empty-worklist-message';
+  element.textContent = message;
+  return element;
 }

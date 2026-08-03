@@ -15,6 +15,7 @@
 pub mod find;
 pub mod ingest;
 pub mod retrieve;
+pub mod worklist;
 
 use std::time::Duration;
 
@@ -22,9 +23,15 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use thiserror::Error;
 
-pub use find::{DEFAULT_LIMIT, FindResults, find};
+pub use find::{DEFAULT_LIMIT, FindResults, find, find_for_institution};
 pub use ingest::{Ingested, StorageRecord, ingest_instance};
-pub use retrieve::{StoredInstance, find_instance, list_series_instances};
+pub use retrieve::{
+    StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
+};
+pub use worklist::{
+    PatientSummary, SeriesSummary, StudySummary, list_patient_studies, list_patients,
+    list_study_series,
+};
 
 #[derive(Debug, Error)]
 pub enum DbError {

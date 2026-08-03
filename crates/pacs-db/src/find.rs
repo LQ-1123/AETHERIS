@@ -345,10 +345,33 @@ enum Bind {
     Date(NaiveDate),
     Time(NaiveTime),
     Int(i32),
+    BigInt(i64),
 }
 
 /// 执行一次 C-FIND 查询。
 pub async fn find(pool: &PgPool, query: &Query, limit: usize) -> Result<FindResults, DbError> {
+    find_inner(pool, query, limit, None).await
+}
+
+/// 执行一次限定机构的查询。
+///
+/// DIMSE C-FIND 仍使用 [`find`]，因为设备连接目前没有用户身份；所有经过
+/// HTTP 认证的 QIDO 请求必须走这个入口，机构 ID 来自已验签的 access token。
+pub async fn find_for_institution(
+    pool: &PgPool,
+    query: &Query,
+    limit: usize,
+    institution_id: i64,
+) -> Result<FindResults, DbError> {
+    find_inner(pool, query, limit, Some(institution_id)).await
+}
+
+async fn find_inner(
+    pool: &PgPool,
+    query: &Query,
+    limit: usize,
+    institution_id: Option<i64>,
+) -> Result<FindResults, DbError> {
     let level = query.level;
 
     // —— SELECT:请求的键 + 本层唯一键 ——
@@ -369,6 +392,13 @@ pub async fn find(pool: &PgPool, query: &Query, limit: usize) -> Result<FindResu
     // —— WHERE ——
     let mut conditions: Vec<String> = Vec::new();
     let mut binds: Vec<Bind> = Vec::new();
+    if let Some(institution_id) = institution_id {
+        binds.push(Bind::BigInt(institution_id));
+        conditions.push("p.institution_id = $1".to_owned());
+        if level.depth() >= QueryLevel::Study.depth() {
+            conditions.push("s.institution_id = $1".to_owned());
+        }
+    }
     for (tag, key) in query.filters() {
         let Some(column) = column_for(tag, level) else {
             continue; // 已记进 unsupported_keys
@@ -419,6 +449,7 @@ pub async fn find(pool: &PgPool, query: &Query, limit: usize) -> Result<FindResu
             Bind::Date(value) => statement.bind(value),
             Bind::Time(value) => statement.bind(value),
             Bind::Int(value) => statement.bind(value),
+            Bind::BigInt(value) => statement.bind(value),
         };
     }
 

@@ -75,3 +75,48 @@ export interface ViewState extends ViewTransform {
   lut: Uint8Array | null;
   tool: ToolMode;
 }
+
+export interface RemoteUser {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: string;
+  institution_id: number;
+}
+
+export interface PatientSummary {
+  id: number;
+  patient_id: string;
+  name: string | null;
+  birth_date: string | null;
+  sex: string | null;
+  study_count: number;
+  series_count: number;
+  instance_count: number;
+  latest_study_date: string | null;
+}
+
+export interface StudySummary {
+  study_uid: string;
+  study_date: string | null;
+  study_time: string | null;
+  accession_number: string | null;
+  description: string | null;
+  modalities: string[];
+  series_count: number;
+  instance_count: number;
+}
+
+export interface RemoteSeriesSummary {
+  series_uid: string;
+  series_number: number | null;
+  modality: string | null;
+  description: string | null;
+  body_part_examined: string | null;
+  instance_count: number;
+}
+
+export interface DownloadProgress {
+  downloaded: number;
+  total: number;
+}

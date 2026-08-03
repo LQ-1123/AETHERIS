@@ -25,10 +25,11 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use dicom::object::FileDicomObject;
+use pacs_auth::Identity;
 use pacs_codec::Frames;
 use pacs_core::Uid;
 use pacs_store::{Store, StoreError};
@@ -46,11 +47,12 @@ const BOUNDARY: &str = "pacs-frame-boundary-8f2a1c";
 /// 取回一个实例的原始 DICOM 文件。
 pub async fn retrieve_instance(
     State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
     Path((study, series, sop)): Path<(String, String, String)>,
 ) -> Result<Response, WadoError> {
     let (study, series, sop) = validate_uids(&study, &series, &sop)?;
     let store = state.store.as_ref().ok_or(WadoError::StorageUnavailable)?;
-    let instance = locate(&state, &study, &series, &sop).await?;
+    let instance = locate(&state, identity.institution_id, &study, &series, &sop).await?;
 
     let bytes = store
         .read(&instance.storage_path)
@@ -80,11 +82,12 @@ pub async fn retrieve_instance(
 /// 这个接口和取原始文件没区别,还多一次 JSON 编码。
 pub async fn retrieve_metadata(
     State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
     Path((study, series, sop)): Path<(String, String, String)>,
 ) -> Result<Response, WadoError> {
     let (study, series, sop) = validate_uids(&study, &series, &sop)?;
     let store = state.store.as_ref().ok_or(WadoError::StorageUnavailable)?;
-    let instance = locate(&state, &study, &series, &sop).await?;
+    let instance = locate(&state, identity.institution_id, &study, &series, &sop).await?;
     let path = store
         .resolve_for_read(&instance.storage_path)
         .await
@@ -137,12 +140,13 @@ pub async fn retrieve_metadata(
 /// 取回指定帧的未压缩像素。
 pub async fn retrieve_frames(
     State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
     Path((study, series, sop, frame_list)): Path<(String, String, String, String)>,
 ) -> Result<Response, WadoError> {
     let (study, series, sop) = validate_uids(&study, &series, &sop)?;
     let requested = parse_frame_list(&frame_list)?;
     let store = state.store.as_ref().ok_or(WadoError::StorageUnavailable)?;
-    let instance = locate(&state, &study, &series, &sop).await?;
+    let instance = locate(&state, identity.institution_id, &study, &series, &sop).await?;
     let path = store
         .resolve_for_read(&instance.storage_path)
         .await
@@ -261,17 +265,24 @@ fn parse_uid(raw: &str, field: &'static str) -> Result<Uid, WadoError> {
 
 async fn locate(
     state: &WebState,
+    institution_id: i64,
     study: &Uid,
     series: &Uid,
     sop: &Uid,
 ) -> Result<pacs_db::StoredInstance, WadoError> {
-    pacs_db::find_instance(&state.pool, study.as_str(), series.as_str(), sop.as_str())
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "取回查询失败");
-            WadoError::Internal
-        })?
-        .ok_or(WadoError::NotFound)
+    pacs_db::find_instance_for_institution(
+        &state.pool,
+        institution_id,
+        study.as_str(),
+        series.as_str(),
+        sop.as_str(),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "取回查询失败");
+        WadoError::Internal
+    })?
+    .ok_or(WadoError::NotFound)
 }
 
 /// 落盘错误分成「库与盘不一致」和「其他」。

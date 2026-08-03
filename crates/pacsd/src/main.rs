@@ -111,6 +111,10 @@ async fn main() -> Result<()> {
                 auth_service.clone(),
             ),
         )
+        .nest(
+            "/api",
+            pacs_web::worklist_routes(pacs_web::WebState::new(pool.clone()), auth_service.clone()),
+        )
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND });
 
     // DIMSE 监听

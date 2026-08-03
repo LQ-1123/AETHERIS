@@ -9,8 +9,10 @@
 
 mod commands;
 mod protocol;
+mod remote;
 mod state;
 
+use remote::RemoteState;
 use state::ViewerState;
 
 fn main() {
@@ -23,14 +25,23 @@ fn main() {
         .init();
 
     let state = ViewerState::new();
+    let remote = RemoteState::new();
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
+        .manage(remote)
         .invoke_handler(tauri::generate_handler![
             commands::open_series,
             commands::close_series,
             commands::build_lut,
+            commands::remote_login,
+            commands::remote_logout,
+            commands::list_patients,
+            commands::list_patient_studies,
+            commands::list_study_series,
+            commands::open_remote_series,
+            commands::cancel_remote_download,
         ]);
 
     // 注册自定义协议

@@ -22,19 +22,23 @@ apps/viewer/    Tauri 2 客户端(可脱离服务端打开本地 DICOM)
 ```
 
 进度：阶段 0–4 已完成；阶段 5 的 QIDO-RS/WADO-RS 读取侧已完成，STOW-RS 待做；
-阶段 6 的本地 Viewer MVP 已完成，远程服务端工作列表待做。
+阶段 6 的 Viewer 已支持本地文件和经过认证的远程病人工作列表。
 
 ## 试一试
 
-启动服务端后用 DCMTK 打一发：
+先创建 Viewer 账号并启动服务端，再用 DCMTK 模拟设备发送影像：
 
 ```sh
-cargo run -p pacsd                                   # 默认监听 127.0.0.1:11112
-echoscu   -aec REMOTE_PACS 127.0.0.1 11112           # C-ECHO
-storescu  -aec REMOTE_PACS 127.0.0.1 11112 x.dcm     # C-STORE
+cargo run -p pacsd -- admin --username viewer --password 'replace-with-a-strong-password'
+cargo run -p pacsd
+
+echoscu  -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112
+storescu -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112 x.dcm
 ```
 
-影像会落到 `PACS_STORAGE_ROOT` 下，索引进 Postgres。
+`echoscu` 成功表示关联和 C-ECHO 正常；`storescu` 返回 Success 后，影像已经持久化到
+`PACS_STORAGE_ROOT` 并完成 Postgres 分层索引。重复发送相同 SOP Instance UID 不会产生
+重复实例。
 
 ## 开发环境
 
@@ -46,7 +50,7 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-### 本地 Viewer
+### Viewer
 
 Viewer 支持单文件多帧和同一 Study/Series 的多文件灰度序列。多文件序列严格按
 `ImagePositionPatient`/`ImageOrientationPatient` 排序；缺少可靠几何时拒绝打开，
@@ -60,7 +64,12 @@ npm test
 npm run tauri dev
 ```
 
-当前工具包括窗宽窗位、光标锚定缩放、平移、序列滑条、窗预设和两点测距。
+登录时使用默认地址 `https://127.0.0.1:8443`，CA 证书选择
+`<PACS_STORAGE_ROOT>/tls/ca.crt`。登录成功后可以按姓名或 Patient ID 搜索，依次展开
+病人、检查和序列；点击序列会下载完整 DICOM 后进入阅片。列表在登录时自动加载，
+DCMTK 新发送影像后点击刷新即可看到。
+
+当前工具包括窗宽窗位、光标锚定缩放、平移、序列导航、窗预设和两点测距。
 普通滚轮切换帧，`Ctrl + 滚轮`缩放，中键拖动平移。
 测距会区分已标定毫米、探测器平面毫米和仅像素三种结果。
 
@@ -123,7 +132,8 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 
 ## 安全须知
 
-- DIMSE 协议本身无认证（AE Title 可伪造），DICOMweb 默认也没有鉴权。
-  服务端默认只绑 `127.0.0.1`，绑其他地址会在启动日志里告警。
-- 账号体系与 TLS 完成前（阶段 3），不要接入真实临床网络或公网。
+- DIMSE 协议本身无认证（AE Title 可伪造）；HTTP 读取接口使用 TLS、账号和权限控制。
+  服务端默认只绑 `127.0.0.1`，绑定其他地址会在启动日志里告警。
+- 当前自签证书只包含回环地址，本阶段不要直接改为局域网或公网监听。真实设备接入前
+  还需要配置正式证书 SAN、网络访问控制和设备白名单。
 - 真实病人数据涉及 HIPAA / GDPR /《个人信息保护法》合规要求。

@@ -58,6 +58,47 @@ pub async fn find_instance(
     ))
 }
 
+/// 按完整层级 UID 定位当前机构可访问的实例。
+pub async fn find_instance_for_institution(
+    pool: &PgPool,
+    institution_id: i64,
+    study_uid: &str,
+    series_uid: &str,
+    sop_uid: &str,
+) -> Result<Option<StoredInstance>, DbError> {
+    let row: Option<(String, i64, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT i.storage_path, i.file_size, i.sop_instance_uid,
+                i.sop_class_uid, i.transfer_syntax_uid
+         FROM instances i
+         JOIN series se ON i.series_fk = se.id
+         JOIN studies st ON se.study_fk = st.id
+         JOIN patients p ON st.patient_fk = p.id
+         WHERE p.institution_id = $1
+           AND st.institution_id = $1
+           AND st.study_instance_uid = $2
+           AND se.series_instance_uid = $3
+           AND i.sop_instance_uid = $4",
+    )
+    .bind(institution_id)
+    .bind(study_uid)
+    .bind(series_uid)
+    .bind(sop_uid)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(
+        |(storage_path, file_size, sop_instance_uid, sop_class_uid, transfer_syntax_uid)| {
+            StoredInstance {
+                storage_path,
+                file_size,
+                sop_instance_uid,
+                sop_class_uid,
+                transfer_syntax_uid,
+            }
+        },
+    ))
+}
+
 /// 列出一个序列下的全部实例,按 InstanceNumber 排序。
 ///
 /// 排序键是 `(instance_number, sop_instance_uid)`:InstanceNumber 可以为空、

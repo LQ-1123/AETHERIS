@@ -12,6 +12,8 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use dicom::core::{DataElement, VR};
+use dicom::dictionary_std::tags;
 use pacs_core::fixture::{ct_instance, unique_uid};
 
 const CALLED_AE: &str = "REMOTE_PACS";
@@ -125,11 +127,21 @@ fn start_server(database_url: &str, storage_root: &Path) -> (ServerGuard, u16, u
 }
 
 fn push_instance(dimse_port: u16, study: &str, series: &str, sop: &str) {
+    push_instance_for_patient(dimse_port, study, series, sop, "PID-0001");
+}
+
+fn push_instance_for_patient(
+    dimse_port: u16,
+    study: &str,
+    series: &str,
+    sop: &str,
+    patient_id: &str,
+) {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("instance.dcm");
-    ct_instance(study, series, sop)
-        .write_to_file(&file)
-        .unwrap();
+    let mut object = ct_instance(study, series, sop);
+    object.put(DataElement::new(tags::PATIENT_ID, VR::LO, patient_id));
+    object.write_to_file(&file).unwrap();
 
     let output = Command::new("storescu")
         .args([
@@ -245,6 +257,9 @@ async fn every_endpoint_rejects_unauthenticated_requests() {
         "/dicomweb/studies",
         &format!("/dicomweb/studies/{uid}/series"),
         &format!("/dicomweb/studies/{uid}/series/{uid}/instances"),
+        "/api/patients",
+        "/api/patients/1/studies",
+        &format!("/api/studies/{uid}/series"),
     ] {
         // 完全没有令牌
         let response = request(http, path, None);
@@ -264,6 +279,115 @@ async fn every_endpoint_rejects_unauthenticated_requests() {
         let forged = request(http, path, Some("not.a.real.token"));
         assert_eq!(forged.status, 401, "{path} 伪造令牌时应回 401");
     }
+}
+
+/// DCMTK 推送后，应用工作列表按病人 → 检查 → 序列返回，而不是每个检查重复一位病人。
+#[tokio::test]
+async fn worklist_groups_dcmtk_uploads_into_patient_study_series() {
+    let Some(database_url) = prerequisites() else {
+        return;
+    };
+    let storage = tempfile::tempdir().unwrap();
+    let (_server, dimse, http) = start_server(&database_url, storage.path());
+
+    let patient_id = format!("WORKLIST-{}", unique_uid());
+    let study_a = unique_uid();
+    let study_b = unique_uid();
+    let series_a = unique_uid();
+    let series_b = unique_uid();
+    push_instance_for_patient(dimse, &study_a, &series_a, &unique_uid(), &patient_id);
+    push_instance_for_patient(dimse, &study_b, &series_b, &unique_uid(), &patient_id);
+
+    let token = login(http);
+    let patients = request(
+        http,
+        &format!("/api/patients?query={patient_id}&limit=10&offset=0"),
+        Some(&token),
+    );
+    assert_eq!(patients.status, 200, "响应体:{}", patients.body);
+    let rows: serde_json::Value = serde_json::from_str(&patients.body).unwrap();
+    let rows = rows.as_array().expect("病人工作列表应为数组");
+    assert_eq!(rows.len(), 1, "同一病人不能按检查重复:{}", patients.body);
+    assert_eq!(rows[0]["patient_id"], patient_id);
+    assert_eq!(rows[0]["study_count"], 2);
+    let patient_db_id = rows[0]["id"].as_i64().expect("应返回病人数据库 ID");
+
+    let studies = request(
+        http,
+        &format!("/api/patients/{patient_db_id}/studies"),
+        Some(&token),
+    );
+    assert_eq!(studies.status, 200, "响应体:{}", studies.body);
+    assert!(studies.body.contains(&study_a));
+    assert!(studies.body.contains(&study_b));
+
+    let series = request(
+        http,
+        &format!("/api/studies/{study_a}/series"),
+        Some(&token),
+    );
+    assert_eq!(series.status, 200, "响应体:{}", series.body);
+    assert!(series.body.contains(&series_a));
+    assert!(!series.body.contains(&series_b));
+}
+
+/// 已认证用户不能通过任一读取接口探测或下载其他机构的数据。
+#[tokio::test]
+async fn qido_wado_and_worklist_enforce_institution_scope() {
+    let Some(database_url) = prerequisites() else {
+        return;
+    };
+    let storage = tempfile::tempdir().unwrap();
+    let (_server, dimse, http) = start_server(&database_url, storage.path());
+
+    let patient_id = format!("TENANT-{}", unique_uid());
+    let (study, series, sop) = (unique_uid(), unique_uid(), unique_uid());
+    push_instance_for_patient(dimse, &study, &series, &sop, &patient_id);
+
+    let pool = pacs_db::connect(&database_url).await.unwrap();
+    let institution_code = format!("tenant-{}", unique_uid());
+    let institution_id: i64 =
+        sqlx::query_scalar("INSERT INTO institutions (code, name) VALUES ($1, $2) RETURNING id")
+            .bind(&institution_code)
+            .bind(&institution_code)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE patients SET institution_id = $1 WHERE patient_id = $2")
+        .bind(institution_id)
+        .bind(&patient_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE studies SET institution_id = $1 WHERE study_instance_uid = $2")
+        .bind(institution_id)
+        .bind(&study)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let token = login(http);
+    let qido = request(
+        http,
+        &format!("/dicomweb/studies?StudyInstanceUID={study}"),
+        Some(&token),
+    );
+    assert_eq!(qido.status, 204, "跨机构 QIDO 不应返回检查:{}", qido.body);
+
+    let wado = request(
+        http,
+        &format!("/dicomweb/studies/{study}/series/{series}/instances/{sop}"),
+        Some(&token),
+    );
+    assert_eq!(wado.status, 404, "跨机构 WADO 应表现为未找到");
+
+    let worklist = request(
+        http,
+        &format!("/api/patients?query={patient_id}"),
+        Some(&token),
+    );
+    assert_eq!(worklist.status, 200);
+    assert_eq!(worklist.body.trim(), "[]", "跨机构病人不应出现在工作列表");
 }
 
 /// 带有效令牌能查到刚推进去的检查,响应是 DICOM JSON Model。

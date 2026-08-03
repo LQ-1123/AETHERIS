@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Query as UrlQuery, State};
+use axum::extract::{Extension, Path, Query as UrlQuery, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use dicom::core::{DataElement, PrimitiveValue, VR};
 use dicom::dictionary_std::tags;
 use dicom::object::InMemDicomObject;
-use pacs_auth::{AuthService, Permission};
+use pacs_auth::{AuthService, Identity, Permission};
 use pacs_core::Uid;
 use pacs_core::query::QueryLevel;
 use sqlx::PgPool;
@@ -91,20 +91,30 @@ pub fn dicomweb_routes(state: WebState, auth: Arc<AuthService>) -> Router {
 /// `GET /studies`
 async fn search_studies(
     State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
     UrlQuery(params): UrlQuery<Vec<(String, String)>>,
 ) -> Result<Response, ApiError> {
-    execute(&state, QueryLevel::Study, params, &[]).await
+    execute(
+        &state,
+        identity.institution_id,
+        QueryLevel::Study,
+        params,
+        &[],
+    )
+    .await
 }
 
 /// `GET /studies/{study_uid}/series`
 async fn search_series(
     State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
     Path(study_uid): Path<String>,
     UrlQuery(params): UrlQuery<Vec<(String, String)>>,
 ) -> Result<Response, ApiError> {
     let study = validated_uid(&study_uid, "StudyInstanceUID")?;
     execute(
         &state,
+        identity.institution_id,
         QueryLevel::Series,
         params,
         &[(tags::STUDY_INSTANCE_UID, study)],
@@ -115,6 +125,7 @@ async fn search_series(
 /// `GET /studies/{study_uid}/series/{series_uid}/instances`
 async fn search_instances(
     State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
     Path((study_uid, series_uid)): Path<(String, String)>,
     UrlQuery(params): UrlQuery<Vec<(String, String)>>,
 ) -> Result<Response, ApiError> {
@@ -122,6 +133,7 @@ async fn search_instances(
     let series = validated_uid(&series_uid, "SeriesInstanceUID")?;
     execute(
         &state,
+        identity.institution_id,
         QueryLevel::Image,
         params,
         &[
@@ -149,6 +161,7 @@ fn validated_uid(raw: &str, field: &'static str) -> Result<Uid, ApiError> {
 /// 永远查不到的矛盾条件,而调用方收到空结果却看不出哪里错了。
 async fn execute(
     state: &WebState,
+    institution_id: i64,
     level: QueryLevel,
     params: Vec<(String, String)>,
     path_constraints: &[(dicom::core::Tag, Uid)],
@@ -170,15 +183,16 @@ async fn execute(
     //     应当被截掉,不是让请求失败。
     // 把 `limit` 传给 `find` 当上限的话,`?limit=2` 在有三条结果时会回 413,
     // 分页就彻底失效了。
-    let results = pacs_db::find(&state.pool, &query, state.max_results)
-        .await
-        .map_err(|error| match error {
-            pacs_db::DbError::TooManyResults { limit } => ApiError::TooManyResults { limit },
-            other => {
-                tracing::error!(%other, "QIDO-RS 查询失败");
-                ApiError::Internal
-            }
-        })?;
+    let results =
+        pacs_db::find_for_institution(&state.pool, &query, state.max_results, institution_id)
+            .await
+            .map_err(|error| match error {
+                pacs_db::DbError::TooManyResults { limit } => ApiError::TooManyResults { limit },
+                other => {
+                    tracing::error!(%other, "QIDO-RS 查询失败");
+                    ApiError::Internal
+                }
+            })?;
 
     // 分页在本地切。`find` 没有 offset,而加上它会改动阶段 4 已验收的接口;
     // 结果集已被 max_results 封顶,内存是有界的。真到了这个切法成为瓶颈的时候

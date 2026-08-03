@@ -6,6 +6,44 @@
     <title>Remote PACS Viewer</title>
   </head>
   <body>
+    <section id="login-screen" aria-labelledby="login-title">
+      <form id="login-form" class="login-panel">
+        <div class="login-brand">
+          <span class="brand-mark">RP</span>
+          <div>
+            <h1 id="login-title">REMOTE PACS</h1>
+            <span>安全登录</span>
+          </div>
+        </div>
+        <label>
+          <span>服务器</span>
+          <input id="server-url" name="server" type="url" value="https://127.0.0.1:8443" required spellcheck="false" />
+        </label>
+        <label>
+          <span>CA 证书</span>
+          <span class="path-control">
+            <input id="ca-cert-path" name="certificate" type="text" required spellcheck="false" />
+            <button id="choose-ca-btn" class="icon-button" type="button" title="选择 CA 证书" aria-label="选择 CA 证书">
+              <i data-lucide="folder-open"></i>
+            </button>
+          </span>
+        </label>
+        <label>
+          <span>用户名</span>
+          <input id="login-username" name="username" autocomplete="username" required />
+        </label>
+        <label>
+          <span>密码</span>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <p id="login-error" role="alert" hidden></p>
+        <button id="login-btn" class="command-button login-submit" type="submit">
+          <i data-lucide="log-in"></i>
+          <span>登录</span>
+        </button>
+      </form>
+    </section>
+
     <main id="app-shell">
       <header id="toolbar">
         <div class="brand" aria-label="Remote PACS Viewer">
@@ -13,6 +51,9 @@
           <span class="brand-name">REMOTE PACS</span>
         </div>
         <div class="toolbar-divider"></div>
+        <button id="worklist-toggle" class="icon-button" type="button" title="病人列表" aria-label="显示或隐藏病人列表">
+          <i data-lucide="users"></i>
+        </button>
         <button id="open-btn" class="command-button" type="button" title="打开 DICOM 文件">
           <i data-lucide="folder-open"></i>
           <span>打开序列</span>
@@ -42,6 +83,10 @@
         <button id="panel-toggle" class="icon-button" type="button" title="检查信息" aria-label="显示或隐藏检查信息">
           <i data-lucide="panel-right-close"></i>
         </button>
+        <span id="current-user" class="current-user"></span>
+        <button id="logout-btn" class="icon-button" type="button" title="退出登录" aria-label="退出登录">
+          <i data-lucide="log-out"></i>
+        </button>
       </header>
 
       <div id="error-banner" class="status-banner" role="alert" hidden>
@@ -53,6 +98,33 @@
       </div>
 
       <section id="workspace">
+        <aside id="worklist-panel" aria-label="病人列表">
+          <div class="worklist-heading">
+            <div>
+              <h2>病人列表</h2>
+              <span id="worklist-count">本页 0 位</span>
+            </div>
+            <button id="refresh-worklist" class="icon-button" type="button" title="刷新病人列表" aria-label="刷新病人列表">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          <form id="patient-search" class="search-control" role="search">
+            <i data-lucide="search"></i>
+            <input id="patient-query" type="search" placeholder="姓名或 Patient ID" aria-label="搜索病人" />
+          </form>
+          <div id="worklist-status" class="worklist-status" aria-live="polite"></div>
+          <div id="patient-list" class="patient-list"></div>
+          <div class="worklist-pagination">
+            <button id="patients-previous" class="icon-button" type="button" title="上一页" aria-label="上一页">
+              <i data-lucide="chevron-left"></i>
+            </button>
+            <span id="patient-page">第 1 页</span>
+            <button id="patients-next" class="icon-button" type="button" title="下一页" aria-label="下一页">
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+        </aside>
+
         <div id="viewport">
           <canvas id="image-canvas"></canvas>
           <canvas id="overlay-canvas"></canvas>
@@ -67,6 +139,7 @@
           <div id="loading" class="loading-state" hidden>
             <span class="spinner"></span>
             <span id="loading-text"></span>
+            <button id="cancel-download" class="loading-cancel" type="button" hidden>取消</button>
           </div>
           <div class="viewport-overlay top-left" data-series-overlay aria-live="polite" hidden>
             <strong id="patient-name">未加载</strong>

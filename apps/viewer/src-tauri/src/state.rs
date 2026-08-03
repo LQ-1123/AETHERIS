@@ -31,6 +31,8 @@ struct ViewerStateInner {
 
 struct LoadedSeries {
     frames: Vec<LoadedFrame>,
+    /// 远程序列的下载目录。句柄关闭时随 `LoadedSeries` 一起删除。
+    _temporary_directory: Option<tempfile::TempDir>,
 }
 
 #[derive(Clone)]
@@ -161,6 +163,22 @@ impl ViewerState {
     }
 
     pub fn open_series(&self, paths: Vec<PathBuf>) -> Result<SeriesMetadata, ViewerError> {
+        self.open_series_with_owner(paths, None)
+    }
+
+    pub fn open_temporary_series(
+        &self,
+        paths: Vec<PathBuf>,
+        directory: tempfile::TempDir,
+    ) -> Result<SeriesMetadata, ViewerError> {
+        self.open_series_with_owner(paths, Some(directory))
+    }
+
+    fn open_series_with_owner(
+        &self,
+        paths: Vec<PathBuf>,
+        temporary_directory: Option<tempfile::TempDir>,
+    ) -> Result<SeriesMetadata, ViewerError> {
         if paths.is_empty() {
             return Err(ViewerError::EmptySelection);
         }
@@ -256,6 +274,7 @@ impl ViewerState {
             handle,
             LoadedSeries {
                 frames: loaded_frames,
+                _temporary_directory: temporary_directory,
             },
         );
 
