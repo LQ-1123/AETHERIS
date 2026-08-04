@@ -379,9 +379,7 @@ fn full_range_window(
 }
 
 fn text(object: &DefaultDicomObject, tag: Tag) -> Option<String> {
-    let raw = object.get(tag)?.to_str().ok()?;
-    let trimmed = raw.trim_matches(|c: char| c == '\0' || c.is_whitespace());
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    pacs_core::utf8_text(object, tag)
 }
 
 fn float(object: &DefaultDicomObject, tag: Tag) -> Option<f64> {

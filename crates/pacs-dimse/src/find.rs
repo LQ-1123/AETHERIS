@@ -127,17 +127,20 @@ where
         }
         (Some(bytes), Some(ts)) => {
             match InMemDicomObject::read_dataset_with_ts(bytes, ts) {
-                Ok(object) => match Query::from_identifier(&object) {
-                    Ok(query) => match validate_level(&sop_class_uid, query.level) {
-                        Ok(()) => Ok(query),
-                        Err(status) => Err(status),
-                    },
-                    Err(error) => {
-                        tracing::warn!(%error, calling_ae_title, "标识符无法解析成查询");
-                        // 层级缺失/非法属于「标识符和 SOP Class 对不上」
-                        Err(Status::IDENTIFIER_DOES_NOT_MATCH_SOP_CLASS)
+                Ok(mut object) => {
+                    pacs_core::normalize_dataset_text(&mut object);
+                    match Query::from_identifier(&object) {
+                        Ok(query) => match validate_level(&sop_class_uid, query.level) {
+                            Ok(()) => Ok(query),
+                            Err(status) => Err(status),
+                        },
+                        Err(error) => {
+                            tracing::warn!(%error, calling_ae_title, "标识符无法解析成查询");
+                            // 层级缺失/非法属于「标识符和 SOP Class 对不上」
+                            Err(Status::IDENTIFIER_DOES_NOT_MATCH_SOP_CLASS)
+                        }
                     }
-                },
+                }
                 Err(error) => {
                     tracing::warn!(%error, calling_ae_title, "标识符数据集解析失败");
                     Err(Status::UNABLE_TO_PROCESS)

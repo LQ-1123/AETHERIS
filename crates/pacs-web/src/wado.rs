@@ -101,6 +101,7 @@ pub async fn retrieve_metadata(
         })?;
 
         let mut dataset = object.into_inner();
+        pacs_core::normalize_dataset_text(&mut dataset);
         // PixelData 和它的伴随元素不进元数据响应
         for tag in [
             dicom::dictionary_std::tags::PIXEL_DATA,

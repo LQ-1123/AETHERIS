@@ -353,7 +353,9 @@ impl ViewerState {
             (requested, neighbours)
         };
 
-        let object = open_file(&requested.path).map_err(|e| ViewerError::Dicom(e.to_string()))?;
+        let mut object =
+            open_file(&requested.path).map_err(|e| ViewerError::Dicom(e.to_string()))?;
+        pacs_core::normalize_file_text(&mut object);
         let frames = Frames::decode(&object).map_err(|e| ViewerError::Dicom(e.to_string()))?;
         let mut decoded = Vec::with_capacity(neighbours.len());
         for (logical, source, rows, cols, bits_allocated) in neighbours {
@@ -821,8 +823,9 @@ fn image_stack_label(normal: Option<Vec3>, frame_count: u32) -> String {
 }
 
 fn parse_file(path: PathBuf) -> Result<ParsedFile, ViewerError> {
-    let object = open_file(&path)
+    let mut object = open_file(&path)
         .map_err(|error| ViewerError::Dicom(format!("{}: {error}", path.display())))?;
+    pacs_core::normalize_file_text(&mut object);
     let pipeline = Pipeline::from_object(&object);
     if pipeline.photometric == Photometric::NotMonochrome {
         return Err(ViewerError::Unsupported(format!(
@@ -969,10 +972,7 @@ fn source_name(source: Source) -> &'static str {
 }
 
 fn text(object: &DefaultDicomObject, tag: Tag) -> Option<String> {
-    let raw = object.get(tag)?.to_str().ok()?;
-    let trimmed =
-        raw.trim_matches(|character: char| character == '\0' || character.is_whitespace());
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    pacs_core::utf8_text(object, tag)
 }
 
 fn integer_u16(object: &DefaultDicomObject, tag: Tag) -> Option<u16> {

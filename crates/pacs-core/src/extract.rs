@@ -22,6 +22,7 @@ use crate::attributes;
 use crate::model::{
     InstanceMeta, InstanceMetadata, PatientMeta, SeriesMeta, StudyMeta, normalize_person_name,
 };
+use crate::text::{normalized_text_element, utf8_text};
 use crate::uid::{Uid, UidError};
 
 /// 元数据提取失败。只在缺少入库必需项时产生。
@@ -144,9 +145,7 @@ fn optional_uid(obj: &DefaultDicomObject, tag: Tag) -> Option<Uid> {
 
 /// 读一个字符串属性。缺失、无法转字符串、或值为空白一律当作没有。
 fn text(obj: &DefaultDicomObject, tag: Tag) -> Option<String> {
-    let raw = obj.get(tag)?.to_str().ok()?;
-    let trimmed = raw.trim_matches(|c: char| c == '\0' || c.is_whitespace());
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    utf8_text(obj, tag)
 }
 
 fn int(obj: &DefaultDicomObject, tag: Tag) -> Option<i32> {
@@ -190,7 +189,8 @@ fn subset(obj: &DefaultDicomObject, tags: &[Tag]) -> Value {
     let elements: Vec<_> = tags
         .iter()
         .filter_map(|tag| obj.get(*tag))
-        .map(|element| trim_padding(element).unwrap_or_else(|| element.clone()))
+        .map(|element| normalized_text_element(obj, element))
+        .map(|element| trim_padding(&element).unwrap_or(element))
         .collect();
     let subset = InMemDicomObject::from_element_iter(elements);
     dicom_json::to_value(subset).unwrap_or_else(|error| {

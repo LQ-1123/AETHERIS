@@ -116,10 +116,11 @@ impl Query {
     /// 无法解析的键一律降级为 [`MatchKey::Single`](MatchKey::Single) 或直接跳过,
     /// 不让整个查询失败 —— 一个畸形的可选键不该把整次查询打回错误。
     pub fn from_identifier(identifier: &InMemDicomObject) -> Result<Self, QueryError> {
-        let raw_level = identifier
-            .get(dicom::dictionary_std::tags::QUERY_RETRIEVE_LEVEL)
-            .and_then(|element| element.to_str().ok())
-            .ok_or(QueryError::MissingLevel)?;
+        let raw_level = crate::utf8_text(
+            identifier,
+            dicom::dictionary_std::tags::QUERY_RETRIEVE_LEVEL,
+        )
+        .ok_or(QueryError::MissingLevel)?;
         let level = QueryLevel::parse(&raw_level).ok_or_else(|| QueryError::UnknownLevel {
             raw: raw_level.trim().to_owned(),
         })?;
@@ -142,7 +143,7 @@ impl Query {
                 continue;
             }
 
-            let raw = element.to_str().unwrap_or_default();
+            let raw = crate::utf8_text(identifier, tag).unwrap_or_default();
             keys.insert(tag, classify(&raw, element.vr()));
         }
 

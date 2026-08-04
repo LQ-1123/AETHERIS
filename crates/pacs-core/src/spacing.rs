@@ -355,9 +355,7 @@ fn aspect_ratio(object: &DefaultDicomObject) -> AspectRatio {
 }
 
 fn text(object: &DefaultDicomObject, tag: Tag) -> Option<String> {
-    let raw = object.get(tag)?.to_str().ok()?;
-    let trimmed = raw.trim_matches(|c: char| c == '\0' || c.is_whitespace());
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    crate::utf8_text(object, tag)
 }
 
 /// 一次测距的结果。

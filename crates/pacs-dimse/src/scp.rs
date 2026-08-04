@@ -167,13 +167,14 @@ where
         return Status::PROCESSING_FAILURE;
     };
 
-    let object = match InMemDicomObject::read_dataset_with_ts(dataset_bytes, transfer_syntax) {
+    let mut object = match InMemDicomObject::read_dataset_with_ts(dataset_bytes, transfer_syntax) {
         Ok(object) => object,
         Err(error) => {
             tracing::warn!(%error, calling_ae_title, "数据集解析失败");
             return Status::CANNOT_UNDERSTAND;
         }
     };
+    pacs_core::normalize_dataset_text(&mut object);
 
     let meta = match FileMetaTableBuilder::new()
         .transfer_syntax(&transfer_syntax_uid)

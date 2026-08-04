@@ -11,6 +11,7 @@ pub mod geometry;
 pub mod model;
 pub mod query;
 pub mod spacing;
+pub mod text;
 pub mod uid;
 
 pub use extract::{ExtractError, extract_metadata};
@@ -22,6 +23,10 @@ pub use model::{
 };
 pub use query::{MatchKey, Query, QueryError, QueryLevel};
 pub use spacing::{Confidence, Measurement, PixelSpacing, Spacing, distance, resolve};
+pub use text::{
+    TextNormalizationReport, normalize_dataset_text, normalize_file_text, normalized_text_element,
+    utf8_text,
+};
 pub use uid::{Uid, UidError};
 
 /// crate 版本,用于服务端启动日志与客户端 About 信息。
