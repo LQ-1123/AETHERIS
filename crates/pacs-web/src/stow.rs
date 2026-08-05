@@ -87,7 +87,14 @@ async fn store_instances(
         }
         let bytes = field.bytes().await.map_err(StowError::Multipart)?;
         results.push(PartResult::from(
-            crate::ingest::ingest_dicom(store, &state.pool, institution_id, &bytes).await,
+            crate::ingest::ingest_dicom_from(
+                store,
+                &state.pool,
+                institution_id,
+                &bytes,
+                Some("STOW-RS"),
+            )
+            .await,
         ));
     }
 

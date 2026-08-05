@@ -383,6 +383,29 @@ async fn openapi_document() -> Json<serde_json::Value> {
                 "get": {"security": [{"userAccessToken": []}], "responses": {"200": {"description": "Service account list"}}},
                 "post": {"security": [{"userAccessToken": []}], "responses": {"201": {"description": "Account and one-time API key"}}}
             },
+            "/api/v1/router/destinations": {
+                "get": {"summary": "List DICOM route destinations", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Destination list and connection state"}}},
+                "post": {"summary": "Create a DIMSE or STOW-RS destination", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Destination created"}}}
+            },
+            "/api/v1/router/destinations/{id}/test": {
+                "post": {"summary": "Run C-ECHO or STOW connectivity test", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Updated connection state"}}}
+            },
+            "/api/v1/router/peers": {
+                "get": {"summary": "List inbound DIMSE peers observed by Calling AE and source IP", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Observed inbound device list"}}}
+            },
+            "/api/v1/router/rules": {
+                "get": {"summary": "List automatic route rules", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Rule list"}}},
+                "post": {"summary": "Create an automatic route rule", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Rule created"}}}
+            },
+            "/api/v1/router/send": {
+                "post": {"summary": "Queue a Study or Series for routing", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"202": {"description": "Per-instance deliveries queued"}}}
+            },
+            "/api/v1/router/deliveries": {
+                "get": {"summary": "List route delivery state and dead letters", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Delivery list"}}}
+            },
+            "/api/v1/router/deliveries/{id}/replay": {
+                "post": {"summary": "Replay a dead-letter delivery", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"202": {"description": "Replay queued"}}}
+            },
             "/dicomweb/studies": {
                 "post": {
                     "summary": "STOW-RS Store Instances",

@@ -6,7 +6,8 @@
 
 > **2026-08-05 实施更新：阶段一已完成。** 已落地通用后台任务与明细、
 > PostgreSQL 租约/重试/取消/幂等机制、服务账号与 scoped API Key、API 限流、
-> OpenAPI、全局请求 ID，以及支持 JWT/API Key 的 STOW-RS。阶段二已完成，下一步从阶段三开始。
+> OpenAPI、全局请求 ID，以及支持 JWT/API Key 的 STOW-RS。阶段二、阶段三已完成，
+> 下一步从阶段四开始。
 
 ## 开发顺序
 
@@ -138,7 +139,7 @@
 - [x] 计划确认并写入项目文档。
 - [x] 阶段一：后台任务与开放 API 基础。
 - [x] 阶段二：批量导入、去重与 ZIP 导出。
-- [ ] 阶段三：DICOM 路由引擎。
+- [x] 阶段三：DICOM 路由引擎。
 - [ ] 阶段四：DICOM 生命周期策略。
 - [ ] 阶段五：Mask 标注与高级查询。
 - [ ] 阶段六：Viewer 多模态与 3D。
@@ -174,3 +175,23 @@
   QIDO、WADO、归档安全和导出 manifest/hash 测试。
 - 本机没有 RAR 创建工具，未动态生成 RAR/加密 RAR 夹具；RAR 代码路径由已安装的
   libarchive 3.8.9 提供，部署与 CI 必须安装 libarchive，并应补充固定 RAR 夹具回归。
+
+### 阶段三验收记录（2026-08-05）
+
+- 新增迁移 `0012_dicom_router.sql`，在真实 PostgreSQL 验证目标设备、规则和投递记录
+  的机构隔离、规则匹配，以及“目标设备 + 不可变实例版本”的幂等投递。
+- Router 支持 DIMSE AE 与 DICOMweb STOW-RS 目标；可配置 AE Title、主机、端口、
+  TLS/CA、STOW URL、Bearer Token，并记录连接状态、延迟、最近成功时间和错误。
+- DIMSE SCU 已使用真实 DCMTK `storescp` 验证 C-ECHO 与 C-STORE；发送时按原始
+  SOP Class 和 Transfer Syntax 协商并传输 Dataset，接收文件的 SOPInstanceUID 一致。
+- STOW-RS 发送端的 `multipart/related`、Bearer 鉴权和自定义 CA 已通过测试。
+- DIMSE C-STORE、STOW-RS 和文件/ZIP/RAR 导入均在新增实例成功入库后触发自动路由；
+  重复实例不重复投递，路由失败不回滚或阻塞本地入库。
+- `/api/v1/router` 支持目标与规则管理、连接测试、Study/Series 手工发送、投递查询、
+  死信重放，并支持管理员 JWT 或具有 `route` scope 的 API Key；OpenAPI 已同步更新。
+- Viewer 已提供设备在线/离线状态、延迟和错误展示，以及目标配置、规则管理、
+  Study/Series 手工发送、投递监控和死信重放界面。
+- DIMSE 入站 Association 会按 Calling AE 和来源 IP 自动登记设备，记录当前连接数、
+  首次/最后活动时间和累计关联次数；Viewer 将入站设备与可回传目的地分区展示。
+- 根 workspace 全 target 测试、格式检查和严格 Clippy 通过；Viewer 20 项 TypeScript
+  测试、生产构建、17 项 Tauri Rust 测试和严格 Clippy 通过。

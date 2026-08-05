@@ -52,6 +52,16 @@ pub async fn ingest_dicom(
     institution_id: i64,
     bytes: &[u8],
 ) -> IngestOutcome {
+    ingest_dicom_from(store, pool, institution_id, bytes, None).await
+}
+
+pub async fn ingest_dicom_from(
+    store: &pacs_store::Store,
+    pool: &sqlx::PgPool,
+    institution_id: i64,
+    bytes: &[u8],
+    source_ae_title: Option<&str>,
+) -> IngestOutcome {
     let mut object = match dicom::object::from_reader(Cursor::new(bytes)) {
         Ok(object) => object,
         Err(error) => {
@@ -134,7 +144,7 @@ pub async fn ingest_dicom(
             error: Some(error.to_string()),
         };
     }
-    IngestOutcome {
+    let outcome = IngestOutcome {
         disposition: if duplicate {
             IngestDisposition::Duplicate
         } else {
@@ -145,5 +155,14 @@ pub async fn ingest_dicom(
         sop_class_uid: class,
         sop_instance_uid: Some(sop),
         error: None,
+    };
+    if matches!(outcome.disposition, IngestDisposition::Created)
+        && let Some(sop_uid) = outcome.sop_instance_uid.as_deref()
+        && let Err(error) =
+            crate::router::enqueue_for_instance(pool, institution_id, sop_uid, source_ae_title)
+                .await
+    {
+        tracing::error!(%error, %sop_uid, "影像已入库，但创建路由投递失败");
     }
+    outcome
 }

@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use dicom_ul::association::Association;
 use dicom_ul::association::server::ServerAssociationOptions;
 use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
@@ -99,7 +100,8 @@ impl DimseServer {
             let handler = Arc::clone(&handler);
             // 一个连接出问题不能影响其他连接,各自独立成任务
             tokio::spawn(async move {
-                if let Err(error) = serve_connection(socket, &config, handler.as_ref()).await {
+                if let Err(error) = serve_connection(socket, peer, &config, handler.as_ref()).await
+                {
                     tracing::warn!(%peer, %error, "association 异常结束");
                 }
             });
@@ -109,6 +111,7 @@ impl DimseServer {
 
 async fn serve_connection<H>(
     socket: TcpStream,
+    peer: SocketAddr,
     config: &ServerConfig,
     handler: &H,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
@@ -134,6 +137,13 @@ where
     }
 
     let association = options.establish_async(socket).await?;
-    scp::serve(association, handler, config.max_dataset_bytes).await?;
+    let observed = scp::IncomingAssociation {
+        calling_ae_title: association.peer_ae_title().trim().to_owned(),
+        remote_addr: peer,
+    };
+    handler.association_opened(&observed).await;
+    let result = scp::serve(association, handler, config.max_dataset_bytes).await;
+    handler.association_closed(&observed).await;
+    result?;
     Ok(())
 }

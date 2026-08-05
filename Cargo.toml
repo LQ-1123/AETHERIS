@@ -37,20 +37,21 @@ dicom = "0.10"
 dicom-json = "0.10"
 # sop-class:开启 SOP Class 字典,用来校验我们接受的抽象语法清单
 dicom-dictionary-std = { version = "0.10", features = ["sop-class"] }
-dicom-ul = { version = "0.10", features = ["async"] }
+dicom-ul = { version = "0.10", features = ["async-tls"] }
 dicom-pixeldata = { version = "0.10", features = ["openjp2", "image"] }
 
 # 异步运行时与 Web
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 mime = "0.3"
 multer = "3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # TLS
-rustls = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 

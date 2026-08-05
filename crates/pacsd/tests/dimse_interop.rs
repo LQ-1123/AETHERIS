@@ -105,8 +105,8 @@ fn run(program: &str, args: &[&str]) -> (bool, String) {
 }
 
 /// C-ECHO:最小的「我在」握手,协议栈通不通全看它。
-#[test]
-fn echoscu_verifies_the_server() {
+#[tokio::test]
+async fn echoscu_verifies_the_server_and_records_the_peer() {
     let Some(database_url) = prerequisites() else {
         return;
     };
@@ -126,6 +126,17 @@ fn echoscu_verifies_the_server() {
         ],
     );
     assert!(ok, "echoscu 应成功,实际输出:\n{output}");
+
+    let pool = pacs_db::connect(&database_url).await.unwrap();
+    let peers = pacs_db::list_observed_dicom_peers(&pool, 1, 500)
+        .await
+        .unwrap();
+    assert!(
+        peers
+            .iter()
+            .any(|peer| { peer.calling_ae_title == CALLING_AE && peer.remote_host == "127.0.0.1" }),
+        "成功建立 Association 后应记录 Calling AE 和来源 IP"
+    );
 }
 
 /// Called AE Title 不匹配时必须拒绝关联。

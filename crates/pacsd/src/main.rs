@@ -65,6 +65,10 @@ async fn main() -> Result<()> {
         }
     }
 
+    pacs_db::reset_observed_dicom_associations(&pool)
+        .await
+        .context("重置 DIMSE 入站连接状态失败")?;
+
     for addr in config.binds_beyond_loopback() {
         tracing::warn!(
             %addr,
@@ -109,6 +113,7 @@ async fn main() -> Result<()> {
     let transform_state = api_state.clone();
     let _transform_worker = pacs_web::start_transform_worker(transform_state.clone());
     let _transfer_worker = pacs_web::start_transfer_worker(transform_state.clone());
+    let _router_worker = pacs_web::start_router_worker(transform_state.clone());
     let api_routes = pacs_web::worklist_routes(api_state.clone(), auth_service.clone())
         .merge(pacs_web::annotation_routes(
             api_state.clone(),
@@ -128,6 +133,10 @@ async fn main() -> Result<()> {
                 ))
                 .merge(pacs_auth::service_accounts::documentation_routes())
                 .merge(pacs_web::transfer_routes(
+                    transform_state.clone(),
+                    auth_service.clone(),
+                ))
+                .merge(pacs_web::router_routes(
                     transform_state,
                     auth_service.clone(),
                 )),

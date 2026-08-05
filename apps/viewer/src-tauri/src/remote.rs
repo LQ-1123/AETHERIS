@@ -549,6 +549,27 @@ impl RemoteState {
             .map_err(request_error)
     }
 
+    pub async fn router_get(&self, path: &str) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url(&format!("api/v1/router/{path}")).await?;
+        self.get_json(url).await
+    }
+
+    pub async fn router_write(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url(&format!("api/v1/router/{path}")).await?;
+        self.authorized_json(method, url, body).await
+    }
+
+    pub async fn router_delete(&self, path: &str) -> Result<(), RemoteError> {
+        let url = self.session_url(&format!("api/v1/router/{path}")).await?;
+        self.authorized_request(Method::DELETE, url, None).await?;
+        Ok(())
+    }
+
     pub async fn begin_transfer(&self, job: Uuid) {
         *self.transfer_job.lock().await = Some(job);
     }

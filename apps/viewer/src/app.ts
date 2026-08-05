@@ -49,6 +49,7 @@ import { clampToImage, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
+import { RouterPanel } from './router-panel';
 import { importConflictMessage, importSummary } from './transfer-report';
 import type {
   Annotation,
@@ -261,6 +262,7 @@ export class App {
   private revisions: DicomRevision[] = [];
   private selectedRollbackRevision: DicomRevision | null = null;
   private rollbackPreview: TransformPreviewResponse | null = null;
+  private routerPanel: RouterPanel;
 
   private viewport = requiredElement<HTMLElement>('viewport');
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
@@ -274,6 +276,7 @@ export class App {
   private revisionHistoryDialog = requiredElement<HTMLDialogElement>('revision-history-dialog');
 
   constructor() {
+    this.routerPanel = new RouterPanel((message) => this.showError(message));
     this.renderer = new Renderer(
       requiredElement<HTMLCanvasElement>('image-canvas'),
       this.overlayCanvas,
@@ -1064,6 +1067,7 @@ export class App {
       localStorage.setItem('remote-pacs.server-url', serverUrl);
       localStorage.setItem('remote-pacs.ca-cert-path', caCertPath);
       setText('current-user', user.display_name?.trim() || user.username);
+      this.routerPanel.setAvailable(user.role === 'admin');
       requiredElement<HTMLElement>('login-screen').hidden = true;
       requiredElement<HTMLElement>('app-shell').removeAttribute('aria-hidden');
       await this.initializeTransformTools();
@@ -1098,6 +1102,7 @@ export class App {
       this.closeTagEditor();
       this.closeTransformTasks();
       this.closeRevisionHistory();
+      this.routerPanel.setAvailable(false);
       requiredElement<HTMLButtonElement>('transform-tasks-btn').hidden = true;
       setText('worklist-status', '');
       this.renderPatients();

@@ -481,8 +481,14 @@ async fn run_import(
             )
             .await?;
             pacs_db::start_background_job_item(&state.pool, job.id, &item_key).await?;
-            let outcome =
-                crate::ingest::ingest_dicom(store, &state.pool, job.institution_id, &bytes).await;
+            let outcome = crate::ingest::ingest_dicom_from(
+                store,
+                &state.pool,
+                job.institution_id,
+                &bytes,
+                Some("FILE_IMPORT"),
+            )
+            .await;
             let status = match outcome.disposition {
                 crate::ingest::IngestDisposition::Created
                 | crate::ingest::IngestDisposition::Duplicate => JobItemStatus::Succeeded,

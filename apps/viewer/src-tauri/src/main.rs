@@ -62,6 +62,9 @@ fn main() {
             commands::import_to_pacs,
             commands::export_from_pacs,
             commands::cancel_transfer,
+            commands::router_get,
+            commands::router_write,
+            commands::router_delete,
         ]);
 
     // 注册自定义协议

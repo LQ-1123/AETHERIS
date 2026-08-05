@@ -17,8 +17,8 @@
 
 use pacs_db::{StorageRecord, ingest_instance};
 use pacs_dimse::{
-    FindFailure, FindHandler, FindRequest, FindResponse, IncomingInstance, StoreFailure,
-    StoreHandler,
+    FindFailure, FindHandler, FindRequest, FindResponse, IncomingAssociation, IncomingInstance,
+    StoreFailure, StoreHandler,
 };
 use pacs_store::{InstanceKey, Store};
 use sqlx::PgPool;
@@ -41,6 +41,32 @@ impl PacsStoreHandler {
 }
 
 impl StoreHandler for PacsStoreHandler {
+    async fn association_opened(&self, association: &IncomingAssociation) {
+        if let Err(error) = pacs_db::observe_dicom_association_opened(
+            &self.pool,
+            1,
+            &association.calling_ae_title,
+            &association.remote_addr.ip().to_string(),
+        )
+        .await
+        {
+            tracing::error!(%error, calling_ae_title=%association.calling_ae_title, remote_addr=%association.remote_addr, "记录 DIMSE 入站设备失败");
+        }
+    }
+
+    async fn association_closed(&self, association: &IncomingAssociation) {
+        if let Err(error) = pacs_db::observe_dicom_association_closed(
+            &self.pool,
+            1,
+            &association.calling_ae_title,
+            &association.remote_addr.ip().to_string(),
+        )
+        .await
+        {
+            tracing::error!(%error, calling_ae_title=%association.calling_ae_title, remote_addr=%association.remote_addr, "更新 DIMSE 入站设备断开状态失败");
+        }
+    }
+
     async fn store(&self, instance: IncomingInstance<'_>) -> Result<(), StoreFailure> {
         // 元数据在关联线程里就已经解析好了(`pacs-dimse` 收完数据集时提取),
         // 这里不再重新读盘解析一遍 —— 那既慢又可能与已落盘的字节不一致。
@@ -59,7 +85,7 @@ impl StoreHandler for PacsStoreHandler {
             .await
             .map_err(|error| classify(&error))?;
 
-        ingest_instance(
+        let ingested = ingest_instance(
             &self.pool,
             metadata,
             StorageRecord {
@@ -77,6 +103,20 @@ impl StoreHandler for PacsStoreHandler {
             );
             StoreFailure::Processing(error.to_string())
         })?;
+
+        if ingested.instance_created
+            && let Err(error) = pacs_web::router::enqueue_for_instance(
+                &self.pool,
+                1,
+                metadata.instance.uid.as_str(),
+                Some(instance.calling_ae_title),
+            )
+            .await
+        {
+            // Routing is post-commit. A remote destination failure must never turn a durable
+            // local C-STORE into a failed C-STORE response.
+            tracing::error!(%error, sop_instance_uid=%metadata.instance.uid, "影像已入库，但创建路由投递失败");
+        }
 
         tracing::debug!(
             calling_ae_title = instance.calling_ae_title,

@@ -549,6 +549,43 @@ pub async fn cancel_transfer(kind: String, state: State<'_, RemoteState>) -> Res
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn router_get(
+    path: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .router_get(&path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn router_write(
+    method: String,
+    path: String,
+    body: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| "Router HTTP 方法无效".to_owned())?;
+    if !matches!(method, reqwest::Method::POST | reqwest::Method::PUT) {
+        return Err("Router 只允许 POST 或 PUT".to_owned());
+    }
+    state
+        .router_write(method, &path, Some(body))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn router_delete(path: String, state: State<'_, RemoteState>) -> Result<(), String> {
+    state
+        .router_delete(&path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 async fn poll_transfer(
     state: &RemoteState,
     kind: &str,

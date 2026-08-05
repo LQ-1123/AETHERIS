@@ -209,6 +209,102 @@ export interface RemoteUser {
   institution_id: number;
 }
 
+export type RouteProtocol = 'dimse' | 'stow';
+export type RouteConnectionStatus = 'unknown' | 'online' | 'offline';
+
+export interface ObservedDicomPeer {
+  id: number;
+  institution_id: number;
+  calling_ae_title: string;
+  remote_host: string;
+  status: 'connected' | 'recent' | 'offline';
+  active_associations: number;
+  association_count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_disconnected_at: string | null;
+}
+
+export interface RouteDestination {
+  id: string;
+  institution_id: number;
+  name: string;
+  protocol: RouteProtocol;
+  enabled: boolean;
+  host: string | null;
+  port: number | null;
+  called_ae_title: string | null;
+  calling_ae_title: string | null;
+  use_tls: boolean;
+  stow_url: string | null;
+  has_auth_token: boolean;
+  has_ca_certificate: boolean;
+  status: RouteConnectionStatus;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_latency_ms: number | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RouteDestinationInput {
+  name: string;
+  protocol: RouteProtocol;
+  enabled: boolean;
+  host?: string;
+  port?: number;
+  called_ae_title?: string;
+  calling_ae_title?: string;
+  use_tls?: boolean;
+  stow_url?: string;
+  auth_token?: string;
+  ca_pem?: string;
+}
+
+export interface RouteRule {
+  id: string;
+  destination_id: string;
+  destination_name: string;
+  name: string;
+  priority: number;
+  enabled: boolean;
+  source_ae_title: string | null;
+  modality: string | null;
+  body_part_examined: string | null;
+  study_description: string | null;
+  series_description: string | null;
+  tag_matches: Record<string, unknown>;
+}
+
+export interface RouteRuleInput {
+  destination_id: string;
+  name: string;
+  priority: number;
+  enabled: boolean;
+  source_ae_title?: string;
+  modality?: string;
+  body_part_examined?: string;
+  study_description?: string;
+  series_description?: string;
+  tag_matches: Record<string, unknown>;
+}
+
+export interface RouteDelivery {
+  id: string;
+  destination_id: string;
+  destination_name: string;
+  rule_id: string | null;
+  sop_instance_uid: string;
+  job_id: string | null;
+  status: 'queued' | 'running' | 'succeeded' | 'dead_letter';
+  attempts: number;
+  last_error: string | null;
+  delivered_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PatientSummary {
   id: number;
   patient_id: string;

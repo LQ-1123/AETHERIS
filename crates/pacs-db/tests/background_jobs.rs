@@ -140,6 +140,12 @@ async fn item_details_are_idempotent_and_track_terminal_results() {
 #[tokio::test]
 async fn retry_and_cancellation_are_durable() {
     let Some(pool) = pool().await else { return };
+    // This suite uses a persistent developer test database. Remove only stale jobs created by
+    // this exact test shape so an interrupted previous run cannot be claimed before this job.
+    sqlx::query("DELETE FROM background_jobs WHERE kind='route' AND payload='null'::jsonb")
+        .execute(&pool)
+        .await
+        .unwrap();
     let job = create_background_job(&pool, new_job(Uuid::new_v4(), JobKind::Route, None, 2))
         .await
         .unwrap();

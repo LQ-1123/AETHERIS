@@ -7,6 +7,12 @@ import type {
   RoiStatistics,
   RemoteSeriesSummary,
   RemoteUser,
+  ObservedDicomPeer,
+  RouteDelivery,
+  RouteDestination,
+  RouteDestinationInput,
+  RouteRule,
+  RouteRuleInput,
   SeriesMetadata,
   SharedAnnotationRecord,
   StudySummary,
@@ -71,6 +77,46 @@ export async function exportFromPacs(studyUid: string, seriesUid?: string): Prom
 export async function cancelTransfer(kind: 'imports' | 'exports'): Promise<void> {
   const invoke = await getInvoke(); await invoke('cancel_transfer', { kind });
 }
+
+async function routerGet<T>(path: string): Promise<T> {
+  const invoke = await getInvoke();
+  return invoke<T>('router_get', { path });
+}
+
+async function routerWrite<T>(method: 'POST' | 'PUT', path: string, body: unknown): Promise<T> {
+  const invoke = await getInvoke();
+  return invoke<T>('router_write', { method, path, body });
+}
+
+async function routerDelete(path: string): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('router_delete', { path });
+}
+
+export const listRouteDestinations = (): Promise<RouteDestination[]> => routerGet('destinations');
+export const listObservedDicomPeers = (): Promise<ObservedDicomPeer[]> => routerGet('peers?limit=200');
+export const saveRouteDestination = (input: RouteDestinationInput, id?: string): Promise<RouteDestination> =>
+  routerWrite(id ? 'PUT' : 'POST', id ? `destinations/${id}` : 'destinations', input);
+export const deleteRouteDestination = (id: string): Promise<void> => routerDelete(`destinations/${id}`);
+export const testRouteDestination = (id: string): Promise<RouteDestination> =>
+  routerWrite('POST', `destinations/${id}/test`, {});
+export const listRouteRules = (): Promise<RouteRule[]> => routerGet('rules');
+export const saveRouteRule = (input: RouteRuleInput, id?: string): Promise<RouteRule> =>
+  routerWrite(id ? 'PUT' : 'POST', id ? `rules/${id}` : 'rules', input);
+export const deleteRouteRule = (id: string): Promise<void> => routerDelete(`rules/${id}`);
+export const listRouteDeliveries = (): Promise<RouteDelivery[]> => routerGet('deliveries?limit=200');
+export const replayRouteDelivery = (id: string): Promise<{ job_id: string }> =>
+  routerWrite('POST', `deliveries/${id}/replay`, {});
+export const sendRouteScope = (
+  destinationId: string,
+  studyInstanceUid: string,
+  seriesInstanceUid?: string,
+): Promise<{ queued: number; skipped_as_duplicate: number; job_ids: string[] }> =>
+  routerWrite('POST', 'send', {
+    destination_id: destinationId,
+    study_instance_uid: studyInstanceUid,
+    series_instance_uid: seriesInstanceUid || null,
+  });
 
 export async function chooseCaCertificate(): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog');

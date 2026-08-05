@@ -1,6 +1,7 @@
 //! C-ECHO、C-STORE 与 C-FIND 的服务提供方(SCP)。
 
 use std::future::Future;
+use std::net::SocketAddr;
 
 use dicom::encoding::TransferSyntaxIndex;
 use dicom::object::{FileMetaTableBuilder, InMemDicomObject};
@@ -29,6 +30,12 @@ pub struct IncomingInstance<'a> {
     pub calling_ae_title: &'a str,
 }
 
+#[derive(Debug, Clone)]
+pub struct IncomingAssociation {
+    pub calling_ae_title: String,
+    pub remote_addr: SocketAddr,
+}
+
 /// 落盘入库失败的原因,决定回给发送方的状态码。
 #[derive(Debug, Error)]
 pub enum StoreFailure {
@@ -51,6 +58,20 @@ impl StoreFailure {
 
 /// 收到影像后做什么。由 `pacsd` 实现:落盘 + 入库。
 pub trait StoreHandler: Send + Sync {
+    fn association_opened(
+        &self,
+        _association: &IncomingAssociation,
+    ) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+
+    fn association_closed(
+        &self,
+        _association: &IncomingAssociation,
+    ) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+
     fn store(
         &self,
         instance: IncomingInstance<'_>,

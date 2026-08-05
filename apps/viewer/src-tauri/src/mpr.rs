@@ -376,7 +376,10 @@ impl Volume {
             .find(|candidate| candidate.plane == plane)
             .expect("三个标准切面总是存在");
         if slice_index >= metadata.slice_count {
-            return Err(format!("MPR 切面越界: {slice_index} >= {}", metadata.slice_count));
+            return Err(format!(
+                "MPR 切面越界: {slice_index} >= {}",
+                metadata.slice_count
+            ));
         }
         let samples = self.resampled_slice(plane, slice_index, metadata);
         statistics_for_region(
@@ -524,7 +527,11 @@ pub fn statistics_for_region(
     if cols == 0 || rows == 0 || samples.len() != cols * rows {
         return Err("像素缓冲区尺寸无效".to_owned());
     }
-    if !start.iter().chain(end.iter()).all(|value| value.is_finite()) {
+    if !start
+        .iter()
+        .chain(end.iter())
+        .all(|value| value.is_finite())
+    {
         return Err("测量坐标必须是有限数值".to_owned());
     }
     let mut values = Vec::new();
@@ -555,8 +562,7 @@ pub fn statistics_for_region(
                 let included = match shape {
                     RoiShape::Rectangle => x >= left && x <= right && y >= top && y <= bottom,
                     RoiShape::Ellipse if radius_x > 0.0 && radius_y > 0.0 => {
-                        ((x - center_x) / radius_x).powi(2)
-                            + ((y - center_y) / radius_y).powi(2)
+                        ((x - center_x) / radius_x).powi(2) + ((y - center_y) / radius_y).powi(2)
                             <= 1.0
                     }
                     _ => false,
@@ -576,12 +582,15 @@ pub fn statistics_for_region(
     }
     let count = values.len();
     let mean = values.iter().sum::<f64>() / count as f64;
-    let variance = values.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / count as f64;
+    let variance = values
+        .iter()
+        .map(|value| (value - mean).powi(2))
+        .sum::<f64>()
+        / count as f64;
     let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
     let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let area = (!matches!(shape, RoiShape::Point)).then(|| {
-        pixel_area.map_or(count as f64, |value| value * count as f64)
-    });
+    let area = (!matches!(shape, RoiShape::Point))
+        .then(|| pixel_area.map_or(count as f64, |value| value * count as f64));
     Ok(PixelStatistics {
         count,
         mean,
@@ -878,46 +887,46 @@ mod tests {
         assert!(irregular.contains("间距不均匀"));
     }
 }
-    #[test]
-    fn roi_statistics_apply_modality_rescale_and_area() {
-        let samples = [0.0, 100.0, 200.0, 300.0];
-        let stats = statistics_for_region(
-            &samples,
-            2,
-            2,
-            RoiShape::Rectangle,
-            [0.0, 0.0],
-            [2.0, 2.0],
-            1.0,
-            -100.0,
-            Some("HU"),
-            Some(0.25),
-        )
-        .unwrap();
-        assert_eq!(stats.count, 4);
-        assert!((stats.mean - 50.0).abs() < 1e-9);
-        assert!((stats.minimum + 100.0).abs() < 1e-9);
-        assert!((stats.maximum - 200.0).abs() < 1e-9);
-        assert_eq!(stats.area, Some(1.0));
-        assert_eq!(stats.area_unit, Some("mm2"));
-        assert_eq!(stats.unit, Some("HU"));
-    }
+#[test]
+fn roi_statistics_apply_modality_rescale_and_area() {
+    let samples = [0.0, 100.0, 200.0, 300.0];
+    let stats = statistics_for_region(
+        &samples,
+        2,
+        2,
+        RoiShape::Rectangle,
+        [0.0, 0.0],
+        [2.0, 2.0],
+        1.0,
+        -100.0,
+        Some("HU"),
+        Some(0.25),
+    )
+    .unwrap();
+    assert_eq!(stats.count, 4);
+    assert!((stats.mean - 50.0).abs() < 1e-9);
+    assert!((stats.minimum + 100.0).abs() < 1e-9);
+    assert!((stats.maximum - 200.0).abs() < 1e-9);
+    assert_eq!(stats.area, Some(1.0));
+    assert_eq!(stats.area_unit, Some("mm2"));
+    assert_eq!(stats.unit, Some("HU"));
+}
 
-    #[test]
-    fn point_probe_ignores_invalid_mpr_samples() {
-        let samples = [f32::NAN, 42.0];
-        let error = statistics_for_region(
-            &samples,
-            2,
-            1,
-            RoiShape::Point,
-            [0.0, 0.0],
-            [0.0, 0.0],
-            1.0,
-            0.0,
-            None,
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("没有有效像素"));
-    }
+#[test]
+fn point_probe_ignores_invalid_mpr_samples() {
+    let samples = [f32::NAN, 42.0];
+    let error = statistics_for_region(
+        &samples,
+        2,
+        1,
+        RoiShape::Point,
+        [0.0, 0.0],
+        [0.0, 0.0],
+        1.0,
+        0.0,
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("没有有效像素"));
+}
