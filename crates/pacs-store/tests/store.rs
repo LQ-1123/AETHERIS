@@ -81,35 +81,82 @@ async fn identical_retransmission_is_idempotent() {
     assert_eq!(first.sha256, second.sha256);
 }
 
-/// 同一个 UID 送来不同内容是发送方的 bug,覆盖但要如实报告,好让上层告警。
+/// 同一个 UID 送来不同内容是发送方的 bug，不能覆盖不可变原始文件。
 #[tokio::test]
-async fn conflicting_content_is_reported_as_replaced() {
+async fn conflicting_content_is_rejected_and_original_is_preserved() {
     let f = Fixture::new().await;
 
-    f.store.store(f.key(), b"first-version").await.unwrap();
-    let second = f
+    let first = f.store.store(f.key(), b"first-version").await.unwrap();
+    let error = f
         .store
         .store(f.key(), b"second-version-longer")
         .await
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!(second.outcome, StoreOutcome::Replaced);
-    let absolute = f.store.resolve(&second.relative_path).unwrap();
-    assert_eq!(
-        tokio::fs::read(&absolute).await.unwrap(),
-        b"second-version-longer"
-    );
+    assert!(matches!(error, StoreError::ContentConflict { .. }));
+    let absolute = f.store.resolve(&first.relative_path).unwrap();
+    assert_eq!(tokio::fs::read(&absolute).await.unwrap(), b"first-version");
 }
 
-/// 长度相同但内容不同 —— 只比文件大小会漏掉,必须真的比内容。
+/// 长度相同但内容不同也必须拒绝，只比文件大小会漏掉冲突。
 #[tokio::test]
-async fn same_length_different_content_is_replaced() {
+async fn same_length_different_content_is_rejected() {
     let f = Fixture::new().await;
 
     f.store.store(f.key(), b"AAAA").await.unwrap();
-    let second = f.store.store(f.key(), b"BBBB").await.unwrap();
+    let error = f.store.store(f.key(), b"BBBB").await.unwrap_err();
 
-    assert_eq!(second.outcome, StoreOutcome::Replaced);
+    assert!(matches!(error, StoreError::ContentConflict { .. }));
+}
+
+#[tokio::test]
+async fn derived_file_is_invisible_until_activated() {
+    let f = Fixture::new().await;
+    let job = uuid::Uuid::new_v4();
+    let staged = f
+        .store
+        .stage_derived(job, f.key(), b"derived")
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store.resolve_for_read(&staged.relative_path).await,
+        Err(StoreError::NotFound { .. })
+    ));
+    let stored = f.store.activate_staged(staged).await.unwrap();
+    assert!(stored.relative_path.starts_with(&format!("derived/{job}/")));
+    assert_eq!(
+        f.store.read(&stored.relative_path).await.unwrap(),
+        b"derived"
+    );
+}
+
+#[tokio::test]
+async fn failed_activation_cleanup_only_removes_derived_files() {
+    let f = Fixture::new().await;
+    let original = f.store.store(f.key(), b"original").await.unwrap();
+    let staged = f
+        .store
+        .stage_derived(uuid::Uuid::new_v4(), f.key(), b"derived")
+        .await
+        .unwrap();
+    let derived = f.store.activate_staged(staged).await.unwrap();
+
+    f.store
+        .remove_derived(&derived.relative_path)
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store.read(&derived.relative_path).await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert!(matches!(
+        f.store.remove_derived(&original.relative_path).await,
+        Err(StoreError::PathEscape { .. })
+    ));
+    assert_eq!(
+        f.store.read(&original.relative_path).await.unwrap(),
+        b"original"
+    );
 }
 
 /// 成功返回后不该有临时文件残留 —— 有的话说明 rename 那步没走完。

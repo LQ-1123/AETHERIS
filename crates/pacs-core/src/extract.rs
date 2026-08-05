@@ -74,6 +74,7 @@ pub fn extract_metadata(obj: &DefaultDicomObject) -> Result<InstanceMetadata, Ex
         modality: text(obj, tags::MODALITY),
         description: text(obj, tags::SERIES_DESCRIPTION),
         body_part_examined: text(obj, tags::BODY_PART_EXAMINED),
+        protocol_name: text(obj, tags::PROTOCOL_NAME),
         date: date(obj, tags::SERIES_DATE),
         time: time(obj, tags::SERIES_TIME),
         attributes: subset(obj, attributes::SERIES),

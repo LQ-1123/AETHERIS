@@ -46,6 +46,12 @@ fn main() {
             commands::list_patients,
             commands::list_patient_studies,
             commands::list_study_series,
+            commands::transform_schema,
+            commands::preview_clinical_transform,
+            commands::confirm_transform,
+            commands::transform_jobs,
+            commands::instance_revisions_by_sop,
+            commands::preview_rollback,
             commands::open_remote_series,
             commands::cancel_remote_download,
         ]);

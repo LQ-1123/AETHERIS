@@ -39,11 +39,51 @@ pub async fn ingest_instance(
 ) -> Result<Ingested, DbError> {
     let mut tx = pool.begin().await?;
 
-    let patient_id = upsert_patient(&mut tx, metadata).await?;
-    let study_id = upsert_study(&mut tx, metadata, patient_id).await?;
-    let series_id = upsert_series(&mut tx, metadata, study_id).await?;
+    // A sender may retransmit an original SOP after the clinical projection has advanced to a
+    // derived UID. Match every immutable version, not just the current projection, so the
+    // retransmission remains idempotent and cannot create a second logical instance.
+    if let Some((patient_id, study_id, series_id, instance_id, archived_sha)) =
+        find_instance_by_version_uid(&mut tx, metadata.instance.uid.as_str()).await?
+    {
+        if archived_sha.as_slice() != storage.sha256 {
+            return Err(DbError::Conflict(format!(
+                "SOPInstanceUID {} 已归档为不同内容",
+                metadata.instance.uid
+            )));
+        }
+        tx.commit().await?;
+        return Ok(Ingested {
+            patient_id,
+            study_id,
+            series_id,
+            instance_id,
+            instance_created: false,
+        });
+    }
+
+    // Study/Series UIDs are remapped by immutable revisions. If a modality continues a Study
+    // under one of its archived UIDs, attach the new SOP to the stable hierarchy without reverting
+    // the current clinical projection to a historical UID.
+    let historical_study = find_study_by_version_uid(&mut tx, metadata.study.uid.as_str()).await?;
+    let (patient_id, study_id) = if let Some(ids) = historical_study {
+        ids
+    } else {
+        let patient_id = upsert_patient(&mut tx, metadata).await?;
+        let study_id = upsert_study(&mut tx, metadata, patient_id).await?;
+        (patient_id, study_id)
+    };
+    let series_id = if historical_study.is_some() {
+        match find_series_by_version_uid(&mut tx, study_id, metadata.series.uid.as_str()).await? {
+            Some(series_id) => series_id,
+            None => upsert_series(&mut tx, metadata, study_id).await?,
+        }
+    } else {
+        upsert_series(&mut tx, metadata, study_id).await?
+    };
     let (instance_id, instance_created) =
         upsert_instance(&mut tx, metadata, series_id, storage).await?;
+
+    ensure_original_version(&mut tx, metadata, instance_id, storage).await?;
 
     refresh_counts(&mut tx, study_id, series_id).await?;
 
@@ -56,6 +96,132 @@ pub async fn ingest_instance(
         instance_id,
         instance_created,
     })
+}
+
+async fn find_instance_by_version_uid(
+    tx: &mut Transaction<'_, Postgres>,
+    sop_instance_uid: &str,
+) -> Result<Option<(i64, i64, i64, i64, Vec<u8>)>, DbError> {
+    Ok(sqlx::query_as(
+        r#"
+        SELECT p.id, st.id, se.id, i.id, v.file_sha256
+        FROM dicom_instance_versions v
+        JOIN instances i ON i.id = v.instance_fk
+        JOIN series se ON se.id = i.series_fk
+        JOIN studies st ON st.id = se.study_fk
+        JOIN patients p ON p.id = st.patient_fk
+        WHERE v.sop_instance_uid = $1
+        ORDER BY v.version_number DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(sop_instance_uid)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+async fn find_study_by_version_uid(
+    tx: &mut Transaction<'_, Postgres>,
+    study_instance_uid: &str,
+) -> Result<Option<(i64, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        r#"
+        SELECT p.id, st.id
+        FROM dicom_instance_versions v
+        JOIN instances i ON i.id = v.instance_fk
+        JOIN series se ON se.id = i.series_fk
+        JOIN studies st ON st.id = se.study_fk
+        JOIN patients p ON p.id = st.patient_fk
+        WHERE v.study_instance_uid = $1 AND st.study_instance_uid <> $1
+        ORDER BY v.version_number DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(study_instance_uid)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+async fn find_series_by_version_uid(
+    tx: &mut Transaction<'_, Postgres>,
+    study_id: i64,
+    series_instance_uid: &str,
+) -> Result<Option<i64>, DbError> {
+    Ok(sqlx::query_scalar(
+        r#"
+        SELECT se.id
+        FROM dicom_instance_versions v
+        JOIN instances i ON i.id = v.instance_fk
+        JOIN series se ON se.id = i.series_fk
+        WHERE se.study_fk = $1 AND v.series_instance_uid = $2
+          AND se.series_instance_uid <> $2
+        ORDER BY v.version_number DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(study_id)
+    .bind(series_instance_uid)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// Register a newly received file as immutable version 1.
+///
+/// `instances.current_version_id` is nullable only to break the insert cycle between the
+/// projection row and its first version. This function fills it in before the ingest transaction
+/// commits. Existing/retransmitted instances already have a current version and are left alone.
+async fn ensure_original_version(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+    instance_id: i64,
+    storage: StorageRecord<'_>,
+) -> Result<(), DbError> {
+    let current: Option<i64> =
+        sqlx::query_scalar("SELECT current_version_id FROM instances WHERE id = $1")
+            .bind(instance_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if current.is_some() {
+        return Ok(());
+    }
+
+    let snapshot = serde_json::to_value(metadata).unwrap_or_else(|error| {
+        tracing::error!(%error, "入库元数据快照序列化失败");
+        serde_json::Value::Object(Default::default())
+    });
+    let version_id = sqlx::query_scalar::<_, i64>(
+        r#"
+        INSERT INTO dicom_instance_versions (
+            logical_instance_id, instance_fk, version_number, derivation_kind,
+            study_instance_uid, series_instance_uid, sop_instance_uid,
+            transfer_syntax_uid, storage_path, file_size, file_sha256,
+            metadata_snapshot, reason
+        )
+        SELECT logical_instance_id, id, 1, 'original',
+               $2, $3, $4, $5, $6, $7, $8, $9, 'received by C-STORE'
+        FROM instances
+        WHERE id = $1
+        RETURNING id
+        "#,
+    )
+    .bind(instance_id)
+    .bind(metadata.study.uid.as_str())
+    .bind(metadata.series.uid.as_str())
+    .bind(metadata.instance.uid.as_str())
+    .bind(metadata.instance.transfer_syntax_uid.as_str())
+    .bind(storage.relative_path)
+    .bind(i64::try_from(storage.size).unwrap_or(i64::MAX))
+    .bind(storage.sha256)
+    .bind(snapshot)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    sqlx::query("UPDATE instances SET current_version_id = $2 WHERE id = $1")
+        .bind(instance_id)
+        .bind(version_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 /// 各层的 upsert 都用 `COALESCE(EXCLUDED.x, 原值)` 合并。
@@ -145,14 +311,16 @@ async fn upsert_series(
         r#"
         INSERT INTO series (
             study_fk, series_instance_uid, series_number, modality,
-            description, body_part_examined, series_date, series_time, attributes
+            description, body_part_examined, protocol_name,
+            series_date, series_time, attributes
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (series_instance_uid) DO UPDATE SET
             series_number      = COALESCE(EXCLUDED.series_number, series.series_number),
             modality           = COALESCE(EXCLUDED.modality, series.modality),
             description        = COALESCE(EXCLUDED.description, series.description),
             body_part_examined = COALESCE(EXCLUDED.body_part_examined, series.body_part_examined),
+            protocol_name      = COALESCE(EXCLUDED.protocol_name, series.protocol_name),
             series_date        = COALESCE(EXCLUDED.series_date, series.series_date),
             series_time        = COALESCE(EXCLUDED.series_time, series.series_time),
             attributes         = series.attributes || EXCLUDED.attributes
@@ -165,6 +333,7 @@ async fn upsert_series(
     .bind(&series.modality)
     .bind(&series.description)
     .bind(&series.body_part_examined)
+    .bind(&series.protocol_name)
     .bind(series.date)
     .bind(series.time)
     .bind(&series.attributes)
@@ -185,15 +354,16 @@ async fn upsert_instance(
     storage: StorageRecord<'_>,
 ) -> Result<(i64, bool), DbError> {
     let instance = &metadata.instance;
+    let logical_instance_id = uuid::Uuid::new_v4();
     let row = sqlx::query_as::<_, (i64, bool)>(
         r#"
         INSERT INTO instances (
-            series_fk, sop_instance_uid, sop_class_uid, instance_number,
+            series_fk, logical_instance_id, sop_instance_uid, sop_class_uid, instance_number,
             transfer_syntax_uid, image_rows, image_columns, number_of_frames,
             image_position_patient, image_orientation_patient,
             storage_path, file_size, file_sha256, attributes
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (sop_instance_uid) DO UPDATE SET
             series_fk                 = EXCLUDED.series_fk,
             sop_class_uid             = EXCLUDED.sop_class_uid,
@@ -212,6 +382,7 @@ async fn upsert_instance(
         "#,
     )
     .bind(series_id)
+    .bind(logical_instance_id)
     .bind(instance.uid.as_str())
     .bind(instance.sop_class_uid.as_ref().map(|uid| uid.as_str()))
     .bind(instance.number)

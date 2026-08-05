@@ -183,6 +183,72 @@ pub async fn list_study_series(
 }
 
 #[tauri::command]
+pub async fn transform_schema(state: State<'_, RemoteState>) -> Result<serde_json::Value, String> {
+    state
+        .transform_schema()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn preview_clinical_transform(
+    target_type: String,
+    target_key: String,
+    rules: serde_json::Value,
+    reason: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .preview_clinical_transform(&target_type, &target_key, rules, &reason)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn confirm_transform(
+    job_id: String,
+    confirmation_token: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .confirm_transform(&job_id, &confirmation_token)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn transform_jobs(state: State<'_, RemoteState>) -> Result<serde_json::Value, String> {
+    state
+        .transform_jobs()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn instance_revisions_by_sop(
+    sop_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .instance_revisions_by_sop(&sop_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn preview_rollback(
+    logical_id: String,
+    version_id: i64,
+    reason: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .preview_rollback(&logical_id, version_id, &reason)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn open_remote_series(
     study_uid: String,
     series_uid: String,

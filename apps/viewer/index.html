@@ -94,6 +94,12 @@
         <button id="panel-toggle" class="icon-button" type="button" title="检查信息" aria-label="显示或隐藏检查信息">
           <i data-lucide="panel-right-close"></i>
         </button>
+        <button id="transform-tasks-btn" class="icon-button" type="button" title="DICOM 转换任务" aria-label="DICOM 转换任务" hidden>
+          <i data-lucide="list-checks"></i>
+        </button>
+        <button id="revision-history-btn" class="icon-button" type="button" title="当前实例修订历史" aria-label="当前实例修订历史" hidden>
+          <i data-lucide="history"></i>
+        </button>
         <span id="current-user" class="current-user"></span>
         <button id="logout-btn" class="icon-button" type="button" title="退出登录" aria-label="退出登录">
           <i data-lucide="log-out"></i>
@@ -226,6 +232,88 @@
         <span id="frame-counter">0 / 0</span>
       </footer>
     </main>
+
+    <dialog id="tag-editor-dialog" class="operational-dialog" aria-labelledby="tag-editor-title">
+      <form id="tag-editor-form">
+        <header class="dialog-heading">
+          <div>
+            <h2 id="tag-editor-title">编辑 DICOM 标签</h2>
+            <span id="tag-editor-target"></span>
+          </div>
+          <button id="tag-editor-close" class="icon-button" type="button" title="关闭" aria-label="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+        <div id="tag-editor-fields" class="tag-editor-fields"></div>
+        <label class="reason-field">
+          <span>变更原因</span>
+          <textarea id="tag-editor-reason" rows="2" maxlength="1024" required></textarea>
+        </label>
+        <p id="tag-editor-error" class="dialog-error" role="alert" hidden></p>
+        <section id="tag-preview" class="tag-preview" hidden>
+          <div id="tag-preview-summary" class="tag-preview-summary"></div>
+          <div id="tag-preview-diffs" class="tag-preview-diffs"></div>
+        </section>
+        <footer class="dialog-actions">
+          <button id="tag-editor-cancel" type="button">取消</button>
+          <button id="tag-preview-btn" class="command-button" type="submit">
+            <i data-lucide="scan-search"></i><span>预览</span>
+          </button>
+          <button id="tag-confirm-btn" class="command-button" type="button" hidden>
+            <i data-lucide="check"></i><span>确认修订</span>
+          </button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="transform-tasks-dialog" class="operational-dialog tasks-dialog" aria-labelledby="transform-tasks-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="transform-tasks-title">DICOM 转换任务</h2>
+          <span id="transform-tasks-status"></span>
+        </div>
+        <div class="dialog-heading-actions">
+          <button id="transform-tasks-refresh" class="icon-button" type="button" title="刷新任务" aria-label="刷新任务">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <button id="transform-tasks-close" class="icon-button" type="button" title="关闭" aria-label="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </header>
+      <div id="transform-task-list" class="transform-task-list"></div>
+    </dialog>
+
+    <dialog id="revision-history-dialog" class="operational-dialog revision-dialog" aria-labelledby="revision-history-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="revision-history-title">实例修订历史</h2>
+          <span id="revision-history-target"></span>
+        </div>
+        <button id="revision-history-close" class="icon-button" type="button" title="关闭" aria-label="关闭">
+          <i data-lucide="x"></i>
+        </button>
+      </header>
+      <div id="revision-history-list" class="revision-history-list"></div>
+      <section id="rollback-panel" class="rollback-panel" hidden>
+        <strong id="rollback-target"></strong>
+        <label class="reason-field">
+          <span>回滚原因</span>
+          <textarea id="rollback-reason" rows="2" maxlength="1024" required></textarea>
+        </label>
+        <p id="rollback-error" class="dialog-error" role="alert" hidden></p>
+        <div id="rollback-preview-summary" class="tag-preview-summary" hidden></div>
+        <footer class="dialog-actions">
+          <button id="rollback-cancel" type="button">取消</button>
+          <button id="rollback-preview-btn" class="command-button" type="button">
+            <i data-lucide="scan-search"></i><span>预览回滚</span>
+          </button>
+          <button id="rollback-confirm-btn" class="command-button" type="button" hidden>
+            <i data-lucide="rotate-ccw"></i><span>确认回滚</span>
+          </button>
+        </footer>
+      </section>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

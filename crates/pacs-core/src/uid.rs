@@ -70,6 +70,12 @@ impl Uid {
     pub fn into_string(self) -> String {
         self.0
     }
+
+    /// Generate a globally unique DICOM UID using the UUID-derived `2.25` root.
+    pub fn generate() -> Self {
+        // PS3.5 B.2 defines `2.25.<UUID as an unsigned decimal integer>`.
+        Self(format!("2.25.{}", uuid::Uuid::new_v4().as_u128()))
+    }
 }
 
 impl fmt::Display for Uid {
@@ -124,6 +130,15 @@ mod tests {
         ] {
             assert!(Uid::parse(raw).is_ok(), "应接受 {raw:?}");
         }
+    }
+
+    #[test]
+    fn generated_uid_is_valid_and_unique() {
+        let first = Uid::generate();
+        let second = Uid::generate();
+        assert_ne!(first, second);
+        assert!(first.as_str().starts_with("2.25."));
+        assert!(Uid::parse(first.as_str()).is_ok());
     }
 
     #[test]

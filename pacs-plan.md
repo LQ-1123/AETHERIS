@@ -313,3 +313,117 @@ C-MOVE/C-GET SCP(要反向做 SCU 连目的地 AE,最复杂的状态机);AE Titl
 
 未做:多区域超声(同屏 B 超 + 多普勒频谱)每个区域标定不同,目前退回像素。
 阶段 6 查看器有了测量点坐标之后,可以按点落在哪个区域来选标定。
+
+  storescu -v \
+    -aet TEST_SCU \
+    -aec REMOTE_PACS \
+    -xs\
+    +sd +r +sp '*.dcm' \
+    127.0.0.1 11112 \
+    "dicom_data/导出的检查影像(DICOM)_冯俊峰"
+
+## 阶段 9 - DICOM 标签修订与回滚
+
+> **范围修订日期：2026-08-04。** 本阶段只保留临床标签修订、不可变版本、任务历史和
+> 回滚。创建脱敏副本与 Calling AE 自动规范化已从产品、API、执行器和数据库中删除。
+
+### 目标与边界
+
+支持按病人、检查或序列批量修改白名单内的 DICOM 标签，用于患者信息纠错和检查信息
+规范录入。所有修改先预览、填写原因并确认，再由持久化后台任务生成不可变的新修订。
+
+本阶段明确不做：
+
+- 不创建脱敏 DICOM 副本，不提供 ZIP、manifest、伪名项目或下载接口；
+- 不按 Calling AE、设备或模板自动修改接收后的 DICOM；
+- 不修改 PixelData，不擦除图像像素中的文字；
+- 不做病人合并/拆分；
+- 不允许修改 SOP Class、Transfer Syntax 或像素解释字段；
+- 不原地覆盖已经归档的原始文件。
+
+字符集容错属于接收和解析基础能力，不属于 Calling AE 自动规范化。系统继续在元数据
+字符集声明错误或缺失时执行可靠的文本解码兜底，并将派生修订统一写为 UTF-8。
+
+### 产品约束
+
+1. 原始 DICOM 永久不可变，修改和回滚都生成新文件与新版本。
+2. QIDO、WADO、C-FIND 和工作列表只读取当前版本，历史版本只从修订历史访问。
+3. 每次派生重映射 Study、Series、SOP Instance UID，并更新对象内引用 UID。
+4. PixelData 的语义哈希在转换前后必须一致。
+5. 技术员与管理员可修改白名单标签；放射科医生只能查看修订历史；viewer 为只读。
+6. PatientID 变更必须先检查机构内冲突，禁止隐式合并病人。
+7. 预览锁定基础版本，确认时基础版本变化则拒绝执行并要求重新预览。
+8. 版本激活、当前投影更新和审计写入必须在同一个数据库事务内完成。
+9. 回滚不是切换旧指针，而是从指定历史版本生成新的当前修订。
+10. 所有查询、任务和审计必须按机构隔离。
+
+### 临床标签白名单
+
+| 层级 | 允许修改的标签 |
+|---|---|
+| Patient | PatientName、PatientID、IssuerOfPatientID、PatientBirthDate、PatientSex |
+| Study | AccessionNumber、StudyID、StudyDescription、ReferringPhysicianName |
+| Series | SeriesDescription、SeriesNumber、BodyPartExamined、ProtocolName |
+
+允许的动作只有 `replace`、`empty` 和 `remove`。服务端按 DICOM VR/VM 校验全部输入；
+前端校验只用于即时反馈，不能代替服务端校验。
+
+### 数据模型
+
+- `dicom_instance_versions`：逻辑实例、版本号、来源版本、派生 UID、存储路径、SHA-256、
+  元数据快照、创建人、原因和时间；
+- `instances.logical_instance_id` 与 `instances.current_version_id`：稳定身份和当前版本；
+- `dicom_transform_jobs`：仅允许 `clinical_correction`、`rollback` 两种模式；
+- `dicom_transform_items`：每个任务的来源版本、输出版本、文件和状态；
+- `series.protocol_name`：补齐手工修订白名单需要的当前投影字段。
+
+迁移 `0006_remove_deidentification_and_normalization.sql` 清理旧的脱敏项目、伪名映射、
+转换模板、Calling AE 策略、归档字段以及自动重试/串行化字段。迁移 `0003` 至 `0005`
+不改写，以保证已经部署的数据库迁移历史稳定。
+
+### 执行流程
+
+1. 预览目标实例，校验规则，生成任务级 UID 图、逐标签差异和确认 token。
+2. 确认时校验用户、机构、token 有效期和所有基础版本。
+3. 后台任务把全部输出写入 staging，重新解析并校验 UID 与 PixelData 哈希。
+4. 全部文件成功后移动到不可变 `derived/<job-id>/...` 路径。
+5. 单个数据库事务创建版本、更新当前投影、完成任务项并写审计。
+6. 数据库激活失败时只清理该任务的未引用派生文件，绝不删除原始归档。
+7. 任一实例失败都不能出现部分激活。
+
+### HTTP 与 Viewer
+
+保留的 API：
+
+- `GET /api/dicom/schema`
+- `POST /api/dicom/transformations/preview`
+- `POST/GET /api/dicom/transformations`
+- `GET /api/dicom/transformations/{id}`
+- `GET /api/dicom/instances/by-sop/{sop_uid}/revisions`
+- `GET /api/dicom/instances/{logical_id}/revisions`
+- `POST /api/dicom/instances/{logical_id}/rollback`
+
+Viewer 保留编辑标签、差异确认、任务中心、修订历史和回滚入口。不存在脱敏按钮、下载
+动作、Calling AE 设置或模板管理入口。
+
+### 验收与故障注入
+
+- 单元测试覆盖白名单、VR/VM、UID 引用图、PixelData 哈希和像素风险分类；
+- 数据库/API 测试覆盖 backfill、当前版本唯一性、并发冲突、PatientID 冲突、机构隔离、
+  权限矩阵、回滚生成新版本以及审计事务性；
+- 在写文件、移动文件和数据库提交阶段注入失败，验证没有部分激活；
+- 用 DCMTK 对派生文件执行 `dcmdump` 和 `storescu`/`storescp` 往返验证；
+- 验证所有原始文件 SHA-256 不变，当前投影与 WADO 返回标签一致。
+
+### 与 Orthanc 的差距及后续迭代
+
+1. **协议完整性**：STOW-RS、C-MOVE/C-GET、Storage Commitment、更多 Transfer Syntax
+   转码和更完整的 DICOMweb 批量能力；
+2. **运维可靠性**：在线备份恢复、对象存储、配额、生命周期、主从/高可用、监控告警、
+   存储一致性巡检和灾难恢复演练；
+3. **生态扩展**：Orthanc 插件体系、Lua/回调、路由转发、外部工作列表、LDAP/OIDC；
+4. **查询与管理**：管理后台、重复检查处理、病人合并/拆分和数据导入导出队列；
+5. **临床 Viewer**：MPR/MIP、PET/CT 融合、SEG/RT/SR、挂片协议、报告工作流和校准显示。
+
+后续优先级建议仍是“备份恢复、Storage Commitment、STOW-RS/C-MOVE”，再扩展高级
+Viewer。标签修订不能代替归档完整性、灾备和协议互操作能力。

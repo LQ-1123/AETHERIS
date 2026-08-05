@@ -47,7 +47,11 @@ impl GrayLut {
     /// `bits_allocated` 取自 (0028,0100),决定表长。传 `None` 时按管线里的
     /// `bits_stored` 向上取到 8 或 16 —— 帧缓冲的元素宽度是 `BitsAllocated`
     /// 而不是 `BitsStored`(12 位存储也占 16 位),索引范围必须按前者。
-    pub fn build(pipeline: &Pipeline, window: Option<&Window>, bits_allocated: Option<u16>) -> Self {
+    pub fn build(
+        pipeline: &Pipeline,
+        window: Option<&Window>,
+        bits_allocated: Option<u16>,
+    ) -> Self {
         let bits = bits_allocated
             .unwrap_or(if pipeline.bits_stored <= 8 { 8 } else { 16 })
             .clamp(1, MAX_LUT_BITS);
@@ -151,7 +155,9 @@ mod tests {
         let lut = GrayLut::build(&pipeline, None, Some(16));
 
         // 全表逐项比对代价太大,抽样覆盖各区间的边界
-        for raw in [0_u16, 1, 100, 424, 1024, 2048, 4095, 4096, 32767, 32768, 65535] {
+        for raw in [
+            0_u16, 1, 100, 424, 1024, 2048, 4095, 4096, 32767, 32768, 65535,
+        ] {
             let direct = pipeline.apply(f64::from(raw), None);
             assert_eq!(
                 lut.lookup(raw),

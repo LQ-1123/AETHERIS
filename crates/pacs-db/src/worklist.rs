@@ -13,6 +13,7 @@ type PatientRow = (
     i64,
     String,
     Option<String>,
+    Option<String>,
     Option<NaiveDate>,
     Option<String>,
     i64,
@@ -26,6 +27,8 @@ type StudyRow = (
     Option<NaiveTime>,
     Option<String>,
     Option<String>,
+    Option<String>,
+    Option<String>,
     Vec<String>,
     i32,
     i32,
@@ -36,6 +39,7 @@ type SeriesRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
     i32,
 );
 
@@ -43,6 +47,7 @@ type SeriesRow = (
 pub struct PatientSummary {
     pub id: i64,
     pub patient_id: String,
+    pub issuer_of_patient_id: Option<String>,
     pub name: Option<String>,
     pub birth_date: Option<NaiveDate>,
     pub sex: Option<String>,
@@ -58,7 +63,9 @@ pub struct StudySummary {
     pub study_date: Option<NaiveDate>,
     pub study_time: Option<NaiveTime>,
     pub accession_number: Option<String>,
+    pub study_id: Option<String>,
     pub description: Option<String>,
+    pub referring_physician: Option<String>,
     pub modalities: Vec<String>,
     pub series_count: i32,
     pub instance_count: i32,
@@ -71,6 +78,7 @@ pub struct SeriesSummary {
     pub modality: Option<String>,
     pub description: Option<String>,
     pub body_part_examined: Option<String>,
+    pub protocol_name: Option<String>,
     pub instance_count: i32,
 }
 
@@ -86,7 +94,7 @@ pub async fn list_patients(
     let id_pattern = contains_pattern(query);
     let name_pattern = contains_pattern(&normalized);
     let rows: Vec<PatientRow> = sqlx::query_as(
-        "SELECT p.id, p.patient_id, p.name, p.birth_date, p.sex,
+        "SELECT p.id, p.patient_id, p.issuer_of_patient_id, p.name, p.birth_date, p.sex,
                 COUNT(st.id)::BIGINT,
                 COALESCE(SUM(st.number_of_series), 0)::BIGINT,
                 COALESCE(SUM(st.number_of_instances), 0)::BIGINT,
@@ -115,6 +123,7 @@ pub async fn list_patients(
             |(
                 id,
                 patient_id,
+                issuer_of_patient_id,
                 name,
                 birth_date,
                 sex,
@@ -125,6 +134,7 @@ pub async fn list_patients(
             )| PatientSummary {
                 id,
                 patient_id,
+                issuer_of_patient_id,
                 name,
                 birth_date,
                 sex,
@@ -144,7 +154,8 @@ pub async fn list_patient_studies(
 ) -> Result<Vec<StudySummary>, DbError> {
     let rows: Vec<StudyRow> = sqlx::query_as(
         "SELECT st.study_instance_uid, st.study_date, st.study_time,
-                st.accession_number, st.description, st.modalities,
+                st.accession_number, st.study_id, st.description,
+                st.referring_physician, st.modalities,
                 st.number_of_series, st.number_of_instances
          FROM studies st
          JOIN patients p ON st.patient_fk = p.id
@@ -168,7 +179,9 @@ pub async fn list_patient_studies(
                 study_date,
                 study_time,
                 accession_number,
+                study_id,
                 description,
+                referring_physician,
                 modalities,
                 series_count,
                 instance_count,
@@ -177,7 +190,9 @@ pub async fn list_patient_studies(
                 study_date,
                 study_time,
                 accession_number,
+                study_id,
                 description,
+                referring_physician,
                 modalities,
                 series_count,
                 instance_count,
@@ -193,7 +208,8 @@ pub async fn list_study_series(
 ) -> Result<Vec<SeriesSummary>, DbError> {
     let rows: Vec<SeriesRow> = sqlx::query_as(
         "SELECT se.series_instance_uid, se.series_number, se.modality,
-                se.description, se.body_part_examined, se.number_of_instances
+                se.description, se.body_part_examined, se.protocol_name,
+                se.number_of_instances
          FROM series se
          JOIN studies st ON se.study_fk = st.id
          JOIN patients p ON st.patient_fk = p.id
@@ -216,6 +232,7 @@ pub async fn list_study_series(
                 modality,
                 description,
                 body_part_examined,
+                protocol_name,
                 instance_count,
             )| SeriesSummary {
                 series_uid,
@@ -223,6 +240,7 @@ pub async fn list_study_series(
                 modality,
                 description,
                 body_part_examined,
+                protocol_name,
                 instance_count,
             },
         )

@@ -138,6 +138,7 @@ export interface RemoteUser {
 export interface PatientSummary {
   id: number;
   patient_id: string;
+  issuer_of_patient_id: string | null;
   name: string | null;
   birth_date: string | null;
   sex: string | null;
@@ -152,7 +153,9 @@ export interface StudySummary {
   study_date: string | null;
   study_time: string | null;
   accession_number: string | null;
+  study_id: string | null;
   description: string | null;
+  referring_physician: string | null;
   modalities: string[];
   series_count: number;
   instance_count: number;
@@ -164,10 +167,93 @@ export interface RemoteSeriesSummary {
   modality: string | null;
   description: string | null;
   body_part_examined: string | null;
+  protocol_name: string | null;
   instance_count: number;
 }
 
 export interface DownloadProgress {
   downloaded: number;
   total: number;
+}
+
+export type TransformTargetType = 'patient' | 'study' | 'series' | 'instance';
+export type TransformScope = 'patient' | 'study' | 'series';
+
+export interface ManualTagSpec {
+  keyword: string;
+  tag: string;
+  vr: string;
+  scope: TransformScope;
+  actions: Array<'replace' | 'empty' | 'remove'>;
+}
+
+export interface TransformSchema {
+  manual_tags: ManualTagSpec[];
+}
+
+export interface TagRuleInput {
+  tag: string;
+  action: 'replace' | 'empty' | 'remove';
+  value?: string;
+  recursive: false;
+}
+
+export interface TransformDiff {
+  tag: string;
+  keyword: string;
+  old_value: string | null;
+  new_value: string | null;
+  action: string;
+  affected_instances: number;
+}
+
+export interface TransformPreviewSummary {
+  affected_instances: number;
+  rule_target_instances: number;
+  affected_studies: number;
+  affected_series: number;
+  uid_remaps: { studies: number; series: number; instances: number };
+  changes: TransformDiff[];
+  pixel_risk: 'safe' | 'review_required' | 'blocking' | 'unknown';
+  pixel_risk_reasons: string[];
+}
+
+export interface TransformPreviewResponse {
+  job_id: string;
+  confirmation_token: string;
+  confirmation_expires_at: string;
+  preview: TransformPreviewSummary;
+}
+
+export interface TransformJob {
+  id: string;
+  mode: 'clinical_correction' | 'rollback';
+  target: { target_type: TransformTargetType; key: string };
+  status: 'previewed' | 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'expired';
+  reason: string;
+  progress_completed: number;
+  progress_total: number;
+  pixel_risk: string;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface DicomRevision {
+  id: number;
+  logical_instance_id: string;
+  version_number: number;
+  source_version_id: number | null;
+  job_id: string | null;
+  derivation_kind: 'original' | 'clinical_correction' | 'rollback';
+  study_instance_uid: string;
+  series_instance_uid: string;
+  sop_instance_uid: string;
+  storage_path: string;
+  file_size: number;
+  file_sha256_hex: string;
+  metadata_snapshot: unknown;
+  reason: string;
+  created_at: string;
+  is_current: boolean;
 }

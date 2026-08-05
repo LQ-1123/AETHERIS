@@ -303,6 +303,10 @@ fn classify_store_error(error: StoreError, relative: &str) -> WadoError {
             // resolve_for_read 已经打了 error 级日志,这里不重复
             WadoError::NotFound
         }
+        StoreError::ContentConflict { .. } | StoreError::DestinationExists { .. } => {
+            tracing::error!(%error, "读取路径意外遇到写入冲突错误");
+            WadoError::Internal
+        }
         StoreError::Io { path, source } => {
             tracing::error!(%source, path = %path.display(), "读取影像文件失败");
             WadoError::Internal

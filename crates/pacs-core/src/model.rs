@@ -62,6 +62,8 @@ pub struct SeriesMeta {
     pub description: Option<String>,
     /// (0018,0015) BodyPartExamined
     pub body_part_examined: Option<String>,
+    /// (0018,1030) ProtocolName
+    pub protocol_name: Option<String>,
     /// (0008,0021) SeriesDate
     pub date: Option<NaiveDate>,
     /// (0008,0031) SeriesTime

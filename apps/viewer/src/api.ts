@@ -1,4 +1,5 @@
 import type {
+  DicomRevision,
   PatientSummary,
   MprMetadata,
   MprPlane,
@@ -6,6 +7,11 @@ import type {
   RemoteUser,
   SeriesMetadata,
   StudySummary,
+  TagRuleInput,
+  TransformJob,
+  TransformPreviewResponse,
+  TransformSchema,
+  TransformTargetType,
   VoiFunction,
 } from './types';
 
@@ -92,6 +98,57 @@ export async function listPatientStudies(patientId: number): Promise<StudySummar
 export async function listStudySeries(studyUid: string): Promise<RemoteSeriesSummary[]> {
   const invoke = await getInvoke();
   return invoke<RemoteSeriesSummary[]>('list_study_series', { studyUid });
+}
+
+export async function getTransformSchema(): Promise<TransformSchema> {
+  const invoke = await getInvoke();
+  return invoke<TransformSchema>('transform_schema');
+}
+
+export async function previewClinicalTransform(
+  targetType: TransformTargetType,
+  targetKey: string,
+  rules: TagRuleInput[],
+  reason: string,
+): Promise<TransformPreviewResponse> {
+  const invoke = await getInvoke();
+  return invoke<TransformPreviewResponse>('preview_clinical_transform', {
+    targetType,
+    targetKey,
+    rules,
+    reason,
+  });
+}
+
+export async function confirmTransform(
+  jobId: string,
+  confirmationToken: string,
+): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('confirm_transform', { jobId, confirmationToken });
+}
+
+export async function listTransformJobs(): Promise<TransformJob[]> {
+  const invoke = await getInvoke();
+  return invoke<TransformJob[]>('transform_jobs');
+}
+
+export async function listInstanceRevisionsBySop(sopUid: string): Promise<DicomRevision[]> {
+  const invoke = await getInvoke();
+  return invoke<DicomRevision[]>('instance_revisions_by_sop', { sopUid });
+}
+
+export async function previewRollback(
+  logicalId: string,
+  versionId: number,
+  reason: string,
+): Promise<TransformPreviewResponse> {
+  const invoke = await getInvoke();
+  return invoke<TransformPreviewResponse>('preview_rollback', {
+    logicalId,
+    versionId,
+    reason,
+  });
 }
 
 export async function openRemoteSeries(

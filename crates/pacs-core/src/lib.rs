@@ -12,6 +12,7 @@ pub mod model;
 pub mod query;
 pub mod spacing;
 pub mod text;
+pub mod transform;
 pub mod uid;
 
 pub use extract::{ExtractError, extract_metadata};
@@ -26,6 +27,11 @@ pub use spacing::{Confidence, Measurement, PixelSpacing, Spacing, distance, reso
 pub use text::{
     TextNormalizationReport, normalize_dataset_text, normalize_file_text, normalized_text_element,
     utf8_text,
+};
+pub use transform::{
+    PixelRisk, PixelRiskLevel, RuleAction, TagDiff, TagRule, TagScope, TransformContext,
+    TransformError, TransformOutcome, apply_transform, classify_pixel_risk, manual_tag_specs,
+    pixel_data_sha256, validate_manual_rules,
 };
 pub use uid::{Uid, UidError};
 

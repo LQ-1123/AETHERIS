@@ -2,6 +2,7 @@
 
 use pacs_core::Uid;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 /// 一个实例的三级 UID 定位。
 ///
@@ -32,6 +33,16 @@ pub fn relative_path(key: InstanceKey<'_>) -> String {
     format!(
         "{:02x}/{:02x}/{}/{}/{}.dcm",
         digest[0], digest[1], key.study, key.series, key.sop
+    )
+}
+
+/// Immutable path for a derived revision.
+///
+/// The task UUID separates revisions even when a rollback derives the same logical values again.
+pub fn derived_relative_path(job_id: Uuid, key: InstanceKey<'_>) -> String {
+    format!(
+        "derived/{job_id}/{}/{}/{}.dcm",
+        key.study, key.series, key.sop
     )
 }
 
@@ -127,6 +138,23 @@ mod tests {
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir)),
             "不该出现 `..`"
+        );
+    }
+
+    #[test]
+    fn derived_paths_are_namespaced_by_job() {
+        let job = Uuid::parse_str("018f0000-0000-7000-8000-000000000001").unwrap();
+        let (study, series, sop) = (uid("1.2.3"), uid("1.2.4"), uid("1.2.5"));
+        assert_eq!(
+            derived_relative_path(
+                job,
+                InstanceKey {
+                    study: &study,
+                    series: &series,
+                    sop: &sop
+                }
+            ),
+            "derived/018f0000-0000-7000-8000-000000000001/1.2.3/1.2.4/1.2.5.dcm"
         );
     }
 }

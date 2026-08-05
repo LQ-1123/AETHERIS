@@ -15,9 +15,11 @@
 
 pub mod qido;
 pub mod routes;
+pub mod transformations;
 pub mod wado;
 pub mod worklist;
 
 pub use routes::{WebState, dicomweb_routes};
+pub use transformations::{dicom_transformation_routes, start_transform_worker};
 pub use wado::WadoError;
 pub use worklist::worklist_routes;

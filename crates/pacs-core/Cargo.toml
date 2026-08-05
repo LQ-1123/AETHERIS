@@ -11,7 +11,7 @@ workspace = true
 
 [features]
 # 合成 DICOM 测试对象,供本 crate 与下游 crate 的测试使用
-fixtures = ["dep:uuid"]
+fixtures = []
 
 [dependencies]
 dicom.workspace = true
@@ -21,7 +21,8 @@ serde_json.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-uuid = { workspace = true, optional = true }
+uuid.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 # 自依赖以打开 fixtures feature:测试能用合成 DICOM 对象,发布构建不带这些代码

@@ -62,10 +62,12 @@ fn free_port() -> u16 {
 }
 
 fn start_pacsd(database_url: &str, storage_root: &Path, port: u16) -> ServerGuard {
+    let http_port = free_port();
     let child = Command::new(env!("CARGO_BIN_EXE_pacsd"))
         .env("DATABASE_URL", database_url)
         .env("PACS_STORAGE_ROOT", storage_root)
         .env("PACS_DIMSE_BIND", format!("127.0.0.1:{port}"))
+        .env("PACS_HTTP_BIND", format!("127.0.0.1:{http_port}"))
         .env("PACS_AE_TITLE", CALLED_AE)
         .env("RUST_LOG", "info,pacsd=debug,pacs_dimse=debug")
         .stdout(Stdio::null())

@@ -37,6 +37,10 @@ pub enum Permission {
     ViewAuditLog,
     /// 删除影像。
     DeleteImages,
+    /// 修改临床白名单内的 DICOM 标签。
+    EditDicomTags,
+    /// 查看 DICOM 修订历史。
+    ViewDicomRevisions,
 }
 
 impl Role {
@@ -76,9 +80,14 @@ impl Role {
             Self::Admin => true,
             // 医师读片写报告,但不管账号、不删影像。删除是不可逆的,
             // 且删影像属于数据生命周期管理,不是临床工作的一部分。
-            Self::Radiologist => matches!(permission, ViewImages | WriteReport),
+            Self::Radiologist => {
+                matches!(permission, ViewImages | WriteReport | ViewDicomRevisions)
+            }
             // 技师负责把设备产出的影像送进来,不参与诊断
-            Self::Technician => matches!(permission, ViewImages | UploadImages),
+            Self::Technician => matches!(
+                permission,
+                ViewImages | UploadImages | EditDicomTags | ViewDicomRevisions
+            ),
             Self::Viewer => matches!(permission, ViewImages),
         }
     }
@@ -181,6 +190,8 @@ mod tests {
             Permission::ManageUsers,
             Permission::ViewAuditLog,
             Permission::DeleteImages,
+            Permission::EditDicomTags,
+            Permission::ViewDicomRevisions,
         ] {
             assert!(Role::Admin.can(permission));
         }
@@ -212,6 +223,19 @@ mod tests {
         assert!(Role::Admin.can(Permission::UploadImages));
         assert!(!Role::Radiologist.can(Permission::UploadImages));
         assert!(!Role::Viewer.can(Permission::UploadImages));
+    }
+
+    #[test]
+    fn dicom_revision_permissions_match_the_clinical_roles() {
+        assert!(Role::Admin.can(Permission::EditDicomTags));
+        assert!(Role::Technician.can(Permission::EditDicomTags));
+        assert!(!Role::Radiologist.can(Permission::EditDicomTags));
+        assert!(!Role::Viewer.can(Permission::EditDicomTags));
+
+        assert!(Role::Admin.can(Permission::ViewDicomRevisions));
+        assert!(Role::Technician.can(Permission::ViewDicomRevisions));
+        assert!(Role::Radiologist.can(Permission::ViewDicomRevisions));
+        assert!(!Role::Viewer.can(Permission::ViewDicomRevisions));
     }
 
     #[test]

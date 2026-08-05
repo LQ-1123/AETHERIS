@@ -2601,6 +2601,7 @@ dependencies = [
  "pacs-core",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.19",
  "tracing",
  "uuid",
@@ -2659,6 +2660,7 @@ name = "pacs-web"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "dicom",
  "dicom-json",
  "pacs-auth",
@@ -2668,10 +2670,12 @@ dependencies = [
  "pacs-store",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

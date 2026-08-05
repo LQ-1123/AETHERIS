@@ -6,23 +6,31 @@ import {
   chooseDicomFiles,
   closeSeries,
   closeMpr,
+  confirmTransform,
+  getTransformSchema,
+  listInstanceRevisionsBySop,
   listPatientStudies,
   listPatients,
   listStudySeries,
+  listTransformJobs,
   loadFrame,
   openRemoteSeries,
   openSeries,
   prepareMpr,
+  previewClinicalTransform,
+  previewRollback,
   remoteLogin,
   remoteLogout,
   renderMprSlice,
   selectImageStack,
 } from './api';
+import { Edit3, createIcons } from 'lucide';
 import { clampToImage, pointToSegmentDistance, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import type {
+  DicomRevision,
   FrameMetadata,
   DownloadProgress,
   LengthMeasurement,
@@ -38,7 +46,13 @@ import type {
   RemoteUser,
   SeriesMetadata,
   StudySummary,
+  TagRuleInput,
   ToolMode,
+  TransformJob,
+  TransformPreviewResponse,
+  TransformSchema,
+  TransformScope,
+  TransformTargetType,
   ViewerMode,
   ViewState,
   WindowPreset,
@@ -88,10 +102,33 @@ interface MprSession {
   viewports: Record<MprPlane, MprViewportState>;
 }
 
+interface TagEditorContext {
+  targetType: TransformTargetType;
+  targetKey: string;
+  scope: TransformScope;
+  title: string;
+  values: Record<string, string | number | null | undefined>;
+}
+
 const FRONTEND_CACHE_BYTES = 128 * 1024 * 1024;
 const PATIENT_PAGE_SIZE = 30;
 const MPR_PLANES: readonly MprPlane[] = ['axial', 'coronal', 'sagittal'];
 const MPR_WHEEL_THRESHOLD = 30;
+const TAG_LABELS: Record<string, string> = {
+  PatientName: '患者姓名',
+  PatientID: '患者 ID',
+  IssuerOfPatientID: '患者 ID 发放机构',
+  PatientBirthDate: '出生日期',
+  PatientSex: '性别',
+  AccessionNumber: '检查号',
+  StudyID: '检查 ID',
+  StudyDescription: '检查描述',
+  ReferringPhysicianName: '申请医师',
+  SeriesDescription: '序列描述',
+  SeriesNumber: '序列号',
+  BodyPartExamined: '检查部位',
+  ProtocolName: '扫描协议',
+};
 
 export interface MprWheelAccumulator {
   x: number;
@@ -141,6 +178,7 @@ export class App {
   private wheelFrameDelta = 0;
   private busy = false;
   private remoteDownloadActive = false;
+  private remoteSeriesOpen = false;
   private remoteUser: RemoteUser | null = null;
   private patients: PatientSummary[] = [];
   private patientPage = 0;
@@ -150,6 +188,14 @@ export class App {
   private studies = new Map<number, StudySummary[]>();
   private series = new Map<string, RemoteSeriesSummary[]>();
   private worklistBusy = false;
+  private transformSchema: TransformSchema | null = null;
+  private tagEditorContext: TagEditorContext | null = null;
+  private transformPreview: TransformPreviewResponse | null = null;
+  private transformTaskTimer: number | null = null;
+  private observedCompletedTransformJobs = new Set<string>();
+  private revisions: DicomRevision[] = [];
+  private selectedRollbackRevision: DicomRevision | null = null;
+  private rollbackPreview: TransformPreviewResponse | null = null;
 
   private viewport = requiredElement<HTMLElement>('viewport');
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
@@ -158,6 +204,9 @@ export class App {
   private imageStackSelect = requiredElement<HTMLSelectElement>('image-stack-select');
   private mprSourceSelect = requiredElement<HTMLSelectElement>('mpr-source-select');
   private errorBanner = requiredElement<HTMLElement>('error-banner');
+  private tagEditorDialog = requiredElement<HTMLDialogElement>('tag-editor-dialog');
+  private transformTasksDialog = requiredElement<HTMLDialogElement>('transform-tasks-dialog');
+  private revisionHistoryDialog = requiredElement<HTMLDialogElement>('revision-history-dialog');
 
   constructor() {
     this.renderer = new Renderer(
@@ -206,6 +255,7 @@ export class App {
     const previousMode = this.viewerMode;
     const previousMpr = this.mpr;
     const previousMprMeasurements = this.mprMeasurements;
+    const previousRemoteSeriesOpen = this.remoteSeriesOpen;
     let openedHandle: number | null = null;
     this.remoteDownloadActive = remoteDownload;
     try {
@@ -240,6 +290,7 @@ export class App {
         lut: null,
         tool: 'window',
       };
+      this.remoteSeriesOpen = remoteDownload;
       await this.loadCurrentFrame();
       if (previous) void closeSeries(previous.metadata.handle).catch(console.error);
       openedHandle = null;
@@ -253,6 +304,7 @@ export class App {
         this.selectedMeasurementId = previousSelectedMeasurementId;
         this.viewerMode = previousMode;
         this.mpr = previousMpr;
+        this.remoteSeriesOpen = previousRemoteSeriesOpen;
         this.frameCache.clear();
         this.pendingFrames.clear();
         if (previous) {
@@ -733,6 +785,43 @@ export class App {
       this.patientPage += 1;
       void this.loadPatients();
     });
+    requiredElement<HTMLFormElement>('tag-editor-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.previewTagEdit();
+    });
+    for (const id of ['tag-editor-close', 'tag-editor-cancel']) {
+      requiredElement<HTMLButtonElement>(id).addEventListener('click', () => {
+        this.closeTagEditor();
+      });
+    }
+    requiredElement<HTMLButtonElement>('tag-confirm-btn').addEventListener('click', () => {
+      void this.confirmTagEdit();
+    });
+    requiredElement<HTMLButtonElement>('transform-tasks-btn').addEventListener('click', () => {
+      void this.openTransformTasks();
+    });
+    requiredElement<HTMLButtonElement>('transform-tasks-refresh').addEventListener('click', () => {
+      void this.loadTransformTasks();
+    });
+    requiredElement<HTMLButtonElement>('transform-tasks-close').addEventListener('click', () => {
+      this.closeTransformTasks();
+    });
+    this.transformTasksDialog.addEventListener('close', () => this.stopTransformTaskPolling());
+    requiredElement<HTMLButtonElement>('revision-history-btn').addEventListener('click', () => {
+      void this.openRevisionHistory();
+    });
+    requiredElement<HTMLButtonElement>('revision-history-close').addEventListener('click', () => {
+      this.closeRevisionHistory();
+    });
+    requiredElement<HTMLButtonElement>('rollback-cancel').addEventListener('click', () => {
+      this.cancelRollback();
+    });
+    requiredElement<HTMLButtonElement>('rollback-preview-btn').addEventListener('click', () => {
+      void this.previewSelectedRollback();
+    });
+    requiredElement<HTMLButtonElement>('rollback-confirm-btn').addEventListener('click', () => {
+      void this.confirmSelectedRollback();
+    });
     requiredElement<HTMLButtonElement>('cancel-download').addEventListener('click', () => {
       if (this.mprBuildActive) void cancelMprBuild();
       else void cancelRemoteDownload();
@@ -832,6 +921,7 @@ export class App {
       setText('current-user', user.display_name?.trim() || user.username);
       requiredElement<HTMLElement>('login-screen').hidden = true;
       requiredElement<HTMLElement>('app-shell').removeAttribute('aria-hidden');
+      await this.initializeTransformTools();
       this.resizeViewport();
       await this.loadPatients();
     } catch (error) {
@@ -849,11 +939,20 @@ export class App {
       this.showError(errorMessage(error));
     } finally {
       this.remoteUser = null;
+      this.remoteSeriesOpen = false;
       this.patients = [];
       this.studies.clear();
       this.series.clear();
       this.expandedPatientId = null;
       this.expandedStudyUid = null;
+      this.transformSchema = null;
+      this.tagEditorContext = null;
+      this.transformPreview = null;
+      this.observedCompletedTransformJobs.clear();
+      this.closeTagEditor();
+      this.closeTransformTasks();
+      this.closeRevisionHistory();
+      requiredElement<HTMLButtonElement>('transform-tasks-btn').hidden = true;
       setText('worklist-status', '');
       this.renderPatients();
       requiredElement<HTMLElement>('login-screen').hidden = false;
@@ -954,6 +1053,455 @@ export class App {
     }
   }
 
+  private canEditDicomTags(): boolean {
+    return this.remoteUser?.role === 'admin' || this.remoteUser?.role === 'technician';
+  }
+
+  private async initializeTransformTools(): Promise<void> {
+    const available = this.canEditDicomTags();
+    requiredElement<HTMLButtonElement>('transform-tasks-btn').hidden = !available;
+    if (!available) return;
+    try {
+      this.transformSchema = await getTransformSchema();
+    } catch (error) {
+      this.showError(errorMessage(error));
+    }
+  }
+
+  private async openTagEditor(context: TagEditorContext): Promise<void> {
+    if (!this.canEditDicomTags()) return;
+    try {
+      this.transformSchema ??= await getTransformSchema();
+    } catch (error) {
+      this.showError(errorMessage(error));
+      return;
+    }
+    this.tagEditorContext = context;
+    this.transformPreview = null;
+    setText('tag-editor-title', `编辑${scopeLabel(context.scope)}标签`);
+    setText('tag-editor-target', context.title);
+    const fields = requiredElement<HTMLElement>('tag-editor-fields');
+    fields.replaceChildren();
+    for (const spec of this.transformSchema.manual_tags.filter((tag) => tag.scope === context.scope)) {
+      const label = document.createElement('label');
+      const caption = document.createElement('span');
+      caption.textContent = TAG_LABELS[spec.keyword] ?? spec.keyword;
+      const original = dicomInputValue(spec.keyword, context.values[spec.keyword]);
+      let input: HTMLInputElement | HTMLSelectElement;
+      if (spec.keyword === 'PatientSex') {
+        const select = document.createElement('select');
+        for (const [value, text] of [['', '未指定'], ['M', '男'], ['F', '女'], ['O', '其他']]) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = text;
+          select.append(option);
+        }
+        input = select;
+      } else {
+        const text = document.createElement('input');
+        text.type = spec.keyword === 'PatientBirthDate'
+          ? 'date'
+          : spec.keyword === 'SeriesNumber'
+            ? 'number'
+            : 'text';
+        if (spec.keyword === 'SeriesNumber') text.step = '1';
+        input = text;
+      }
+      input.dataset.tagKeyword = spec.keyword;
+      input.dataset.original = original;
+      input.value = editorInputValue(spec.keyword, original);
+      input.addEventListener('input', () => this.invalidateTagPreview());
+      label.append(caption, input);
+      fields.append(label);
+    }
+    requiredElement<HTMLTextAreaElement>('tag-editor-reason').value = '';
+    requiredElement<HTMLElement>('tag-editor-error').hidden = true;
+    requiredElement<HTMLElement>('tag-preview').hidden = true;
+    requiredElement<HTMLButtonElement>('tag-confirm-btn').hidden = true;
+    requiredElement<HTMLButtonElement>('tag-preview-btn').hidden = false;
+    if (!this.tagEditorDialog.open) this.tagEditorDialog.showModal();
+  }
+
+  private invalidateTagPreview(): void {
+    this.transformPreview = null;
+    requiredElement<HTMLElement>('tag-preview').hidden = true;
+    requiredElement<HTMLButtonElement>('tag-confirm-btn').hidden = true;
+    requiredElement<HTMLButtonElement>('tag-preview-btn').hidden = false;
+  }
+
+  private closeTagEditor(): void {
+    this.tagEditorContext = null;
+    this.transformPreview = null;
+    if (this.tagEditorDialog.open) this.tagEditorDialog.close();
+  }
+
+  private collectTagRules(): TagRuleInput[] {
+    const rules: TagRuleInput[] = [];
+    for (const input of document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      '#tag-editor-fields [data-tag-keyword]',
+    )) {
+      const keyword = input.dataset.tagKeyword;
+      if (!keyword) continue;
+      const original = input.dataset.original ?? '';
+      const value = dicomInputValue(keyword, input.value);
+      if (value === original) continue;
+      rules.push(value === ''
+        ? { tag: keyword, action: 'empty', recursive: false }
+        : { tag: keyword, action: 'replace', value, recursive: false });
+    }
+    return rules;
+  }
+
+  private async previewTagEdit(): Promise<void> {
+    const context = this.tagEditorContext;
+    if (!context) return;
+    const errorElement = requiredElement<HTMLElement>('tag-editor-error');
+    errorElement.hidden = true;
+    const rules = this.collectTagRules();
+    const reason = requiredElement<HTMLTextAreaElement>('tag-editor-reason').value.trim();
+    if (!rules.length) {
+      errorElement.textContent = '没有发生标签变化';
+      errorElement.hidden = false;
+      return;
+    }
+    if (reason.length < 3) {
+      errorElement.textContent = '变更原因至少 3 个字符';
+      errorElement.hidden = false;
+      return;
+    }
+    this.setTagEditorBusy(true);
+    try {
+      this.transformPreview = await previewClinicalTransform(
+        context.targetType,
+        context.targetKey,
+        rules,
+        reason,
+      );
+      this.renderTagPreview(this.transformPreview);
+    } catch (error) {
+      errorElement.textContent = errorMessage(error);
+      errorElement.hidden = false;
+    } finally {
+      this.setTagEditorBusy(false);
+    }
+  }
+
+  private renderTagPreview(response: TransformPreviewResponse): void {
+    const preview = response.preview;
+    const summary = requiredElement<HTMLElement>('tag-preview-summary');
+    summary.replaceChildren();
+    for (const text of [
+      `${preview.affected_instances} 实例`,
+      `${preview.affected_studies} 检查`,
+      `${preview.affected_series} 序列`,
+      `${preview.uid_remaps.instances} UID 重映射`,
+    ]) {
+      const item = document.createElement('span');
+      item.textContent = text;
+      summary.append(item);
+    }
+    const diffs = requiredElement<HTMLElement>('tag-preview-diffs');
+    diffs.replaceChildren();
+    for (const diff of preview.changes) {
+      const row = document.createElement('div');
+      row.className = 'tag-diff-row';
+      const keyword = document.createElement('strong');
+      keyword.textContent = TAG_LABELS[diff.keyword] ?? diff.keyword;
+      const oldValue = document.createElement('span');
+      oldValue.className = 'tag-diff-old';
+      oldValue.textContent = displayTagValue(diff.old_value);
+      const arrow = document.createElement('span');
+      arrow.className = 'tag-diff-arrow';
+      arrow.textContent = '→';
+      const newValue = document.createElement('span');
+      newValue.className = 'tag-diff-new';
+      newValue.textContent = displayTagValue(diff.new_value);
+      const count = document.createElement('span');
+      count.className = 'tag-diff-count';
+      count.textContent = `${diff.affected_instances} 项`;
+      row.append(keyword, oldValue, arrow, newValue, count);
+      diffs.append(row);
+    }
+    requiredElement<HTMLElement>('tag-preview').hidden = false;
+    requiredElement<HTMLButtonElement>('tag-preview-btn').hidden = true;
+    requiredElement<HTMLButtonElement>('tag-confirm-btn').hidden = false;
+  }
+
+  private setTagEditorBusy(busy: boolean): void {
+    requiredElement<HTMLButtonElement>('tag-preview-btn').disabled = busy;
+    requiredElement<HTMLButtonElement>('tag-confirm-btn').disabled = busy;
+    requiredElement<HTMLButtonElement>('tag-editor-cancel').disabled = busy;
+    requiredElement<HTMLButtonElement>('tag-editor-close').disabled = busy;
+  }
+
+  private async confirmTagEdit(): Promise<void> {
+    const preview = this.transformPreview;
+    if (!preview) return;
+    const errorElement = requiredElement<HTMLElement>('tag-editor-error');
+    this.setTagEditorBusy(true);
+    try {
+      await confirmTransform(preview.job_id, preview.confirmation_token);
+      this.closeTagEditor();
+      await this.openTransformTasks();
+    } catch (error) {
+      errorElement.textContent = errorMessage(error);
+      errorElement.hidden = false;
+    } finally {
+      this.setTagEditorBusy(false);
+    }
+  }
+
+  private async openTransformTasks(): Promise<void> {
+    if (!this.canEditDicomTags()) return;
+    if (!this.transformTasksDialog.open) this.transformTasksDialog.showModal();
+    await this.loadTransformTasks();
+  }
+
+  private closeTransformTasks(): void {
+    this.stopTransformTaskPolling();
+    if (this.transformTasksDialog.open) this.transformTasksDialog.close();
+  }
+
+  private canViewDicomRevisions(): boolean {
+    return ['admin', 'technician', 'radiologist'].includes(this.remoteUser?.role ?? '');
+  }
+
+  private async openRevisionHistory(): Promise<void> {
+    if (!this.canViewDicomRevisions() || !this.remoteSeriesOpen || !this.state) return;
+    const sopUid = this.currentFrame().sop_instance_uid;
+    if (!sopUid) {
+      this.showError('当前帧没有 SOP Instance UID');
+      return;
+    }
+    this.revisionHistoryDialog.showModal();
+    setText('revision-history-target', sopUid);
+    const list = requiredElement<HTMLElement>('revision-history-list');
+    list.replaceChildren(emptyWorklistMessage('正在读取修订历史...'));
+    this.cancelRollback();
+    try {
+      this.revisions = await listInstanceRevisionsBySop(sopUid);
+      this.renderRevisionHistory();
+    } catch (error) {
+      list.replaceChildren(emptyWorklistMessage(errorMessage(error)));
+    }
+  }
+
+  private closeRevisionHistory(): void {
+    this.revisions = [];
+    this.cancelRollback();
+    if (this.revisionHistoryDialog.open) this.revisionHistoryDialog.close();
+  }
+
+  private renderRevisionHistory(): void {
+    const list = requiredElement<HTMLElement>('revision-history-list');
+    list.replaceChildren();
+    for (const revision of this.revisions) {
+      const row = document.createElement('section');
+      row.className = 'revision-row';
+      const version = document.createElement('div');
+      version.className = 'revision-version';
+      const versionLabel = document.createElement('strong');
+      versionLabel.textContent = `版本 ${revision.version_number}`;
+      version.append(versionLabel);
+      if (revision.is_current) {
+        const current = document.createElement('small');
+        current.textContent = '当前';
+        version.append(current);
+      }
+      const detail = document.createElement('div');
+      detail.className = 'revision-detail';
+      const kind = document.createElement('span');
+      kind.textContent = `${revisionKindLabel(revision.derivation_kind)} · ${revision.reason}`;
+      const created = document.createElement('small');
+      created.textContent = `${new Date(revision.created_at).toLocaleString('zh-CN')} · ${revision.file_sha256_hex.slice(0, 12)}`;
+      detail.append(kind, created);
+      row.append(version, detail);
+      if (this.canEditDicomTags() && !revision.is_current) {
+        const rollback = document.createElement('button');
+        rollback.type = 'button';
+        rollback.textContent = '回滚到此版本';
+        rollback.addEventListener('click', () => this.selectRollbackRevision(revision));
+        row.append(rollback);
+      }
+      list.append(row);
+    }
+    if (!this.revisions.length) list.append(emptyWorklistMessage('没有修订记录'));
+  }
+
+  private selectRollbackRevision(revision: DicomRevision): void {
+    this.selectedRollbackRevision = revision;
+    this.rollbackPreview = null;
+    setText('rollback-target', `从版本 ${this.revisions.find((item) => item.is_current)?.version_number ?? '--'} 回滚到版本 ${revision.version_number}`);
+    requiredElement<HTMLTextAreaElement>('rollback-reason').value = '';
+    requiredElement<HTMLElement>('rollback-error').hidden = true;
+    requiredElement<HTMLElement>('rollback-preview-summary').hidden = true;
+    requiredElement<HTMLButtonElement>('rollback-preview-btn').hidden = false;
+    requiredElement<HTMLButtonElement>('rollback-confirm-btn').hidden = true;
+    requiredElement<HTMLElement>('rollback-panel').hidden = false;
+  }
+
+  private cancelRollback(): void {
+    this.selectedRollbackRevision = null;
+    this.rollbackPreview = null;
+    requiredElement<HTMLElement>('rollback-panel').hidden = true;
+  }
+
+  private async previewSelectedRollback(): Promise<void> {
+    const revision = this.selectedRollbackRevision;
+    if (!revision) return;
+    const reason = requiredElement<HTMLTextAreaElement>('rollback-reason').value.trim();
+    const error = requiredElement<HTMLElement>('rollback-error');
+    error.hidden = true;
+    if (reason.length < 3) {
+      error.textContent = '回滚原因至少 3 个字符';
+      error.hidden = false;
+      return;
+    }
+    this.setRollbackBusy(true);
+    try {
+      this.rollbackPreview = await previewRollback(
+        revision.logical_instance_id,
+        revision.id,
+        reason,
+      );
+      const preview = this.rollbackPreview.preview;
+      const summary = requiredElement<HTMLElement>('rollback-preview-summary');
+      summary.replaceChildren();
+      for (const text of [
+        `${preview.affected_instances} 实例`,
+        `${preview.affected_studies} 检查`,
+        `${preview.affected_series} 序列`,
+        `${preview.uid_remaps.instances} UID 重映射`,
+      ]) {
+        const item = document.createElement('span');
+        item.textContent = text;
+        summary.append(item);
+      }
+      summary.hidden = false;
+      requiredElement<HTMLButtonElement>('rollback-preview-btn').hidden = true;
+      requiredElement<HTMLButtonElement>('rollback-confirm-btn').hidden = false;
+    } catch (cause) {
+      error.textContent = errorMessage(cause);
+      error.hidden = false;
+    } finally {
+      this.setRollbackBusy(false);
+    }
+  }
+
+  private setRollbackBusy(busy: boolean): void {
+    requiredElement<HTMLButtonElement>('rollback-preview-btn').disabled = busy;
+    requiredElement<HTMLButtonElement>('rollback-confirm-btn').disabled = busy;
+    requiredElement<HTMLButtonElement>('rollback-cancel').disabled = busy;
+    requiredElement<HTMLButtonElement>('revision-history-close').disabled = busy;
+  }
+
+  private async confirmSelectedRollback(): Promise<void> {
+    const preview = this.rollbackPreview;
+    if (!preview) return;
+    const error = requiredElement<HTMLElement>('rollback-error');
+    this.setRollbackBusy(true);
+    try {
+      await confirmTransform(preview.job_id, preview.confirmation_token);
+      this.closeRevisionHistory();
+      await this.openTransformTasks();
+    } catch (cause) {
+      error.textContent = errorMessage(cause);
+      error.hidden = false;
+    } finally {
+      this.setRollbackBusy(false);
+    }
+  }
+
+  private stopTransformTaskPolling(): void {
+    if (this.transformTaskTimer !== null) {
+      window.clearTimeout(this.transformTaskTimer);
+      this.transformTaskTimer = null;
+    }
+  }
+
+  private async loadTransformTasks(): Promise<void> {
+    this.stopTransformTaskPolling();
+    const status = requiredElement<HTMLElement>('transform-tasks-status');
+    status.textContent = '正在刷新';
+    try {
+      const jobs = await listTransformJobs();
+      this.renderTransformTasks(jobs);
+      const active = jobs.some((job) => job.status === 'queued' || job.status === 'running');
+      const newlyCompleted = jobs.filter(
+        (job) => job.status === 'succeeded' &&
+          !this.observedCompletedTransformJobs.has(job.id),
+      );
+      for (const job of jobs) {
+        if (job.status === 'succeeded') this.observedCompletedTransformJobs.add(job.id);
+      }
+      status.textContent = `${jobs.length} 项`;
+      if (active && this.transformTasksDialog.open) {
+        this.transformTaskTimer = window.setTimeout(() => void this.loadTransformTasks(), 1500);
+      }
+      if (newlyCompleted.length > 0) {
+        this.studies.clear();
+        this.series.clear();
+        this.expandedStudyUid = null;
+        await this.loadPatients();
+      }
+    } catch (error) {
+      status.textContent = errorMessage(error);
+    }
+  }
+
+  private renderTransformTasks(jobs: TransformJob[]): void {
+    const container = requiredElement<HTMLElement>('transform-task-list');
+    container.replaceChildren();
+    if (!jobs.length) {
+      container.append(emptyWorklistMessage('没有 DICOM 转换任务'));
+      return;
+    }
+    for (const job of jobs) {
+      const row = document.createElement('section');
+      row.className = 'transform-task-row';
+      row.dataset.status = job.status;
+      const mode = document.createElement('strong');
+      mode.textContent = transformModeLabel(job.mode);
+      const detail = document.createElement('div');
+      detail.className = 'transform-task-detail';
+      const reason = document.createElement('span');
+      reason.textContent = job.reason;
+      const time = document.createElement('small');
+      time.textContent = new Date(job.created_at).toLocaleString('zh-CN');
+      detail.append(reason, time);
+      if (job.error_message) {
+        const failure = document.createElement('small');
+        failure.textContent = job.error_message;
+        detail.append(failure);
+      }
+      const state = document.createElement('div');
+      state.className = 'transform-task-state';
+      const stateLabel = document.createElement('span');
+      stateLabel.textContent = transformStatusLabel(job.status);
+      const progress = document.createElement('progress');
+      progress.max = Math.max(1, job.progress_total);
+      progress.value = Math.min(job.progress_completed, progress.max);
+      state.append(stateLabel, progress);
+      row.append(mode, detail, state);
+      container.append(row);
+    }
+  }
+
+  private appendTagEditButton(container: HTMLElement, context: TagEditorContext): void {
+    if (!this.canEditDicomTags()) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'worklist-edit-button';
+    button.title = `编辑${scopeLabel(context.scope)}标签`;
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = '<i data-lucide="edit-3"></i>';
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void this.openTagEditor(context);
+    });
+    container.append(button);
+  }
+
   private renderPatients(): void {
     const container = requiredElement<HTMLElement>('patient-list');
     container.replaceChildren();
@@ -969,7 +1517,19 @@ export class App {
       row.classList.add('patient-row');
       row.addEventListener('click', () => void this.togglePatient(patient.id));
       item.append(row);
-
+      this.appendTagEditButton(item, {
+        targetType: 'patient',
+        targetKey: String(patient.id),
+        scope: 'patient',
+        title: `${formatPersonName(patient.name) || '未提供姓名'} · ${patient.patient_id}`,
+        values: {
+          PatientName: patient.name,
+          PatientID: patient.patient_id,
+          IssuerOfPatientID: patient.issuer_of_patient_id,
+          PatientBirthDate: patient.birth_date,
+          PatientSex: patient.sex,
+        },
+      });
       if (this.expandedPatientId === patient.id) {
         const studies = this.studies.get(patient.id);
         const studyList = document.createElement('div');
@@ -992,7 +1552,18 @@ export class App {
             studyRow.classList.add('study-row');
             studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
             studyItem.append(studyRow);
-
+            this.appendTagEditButton(studyItem, {
+              targetType: 'study',
+              targetKey: study.study_uid,
+              scope: 'study',
+              title: `${study.description?.trim() || '未命名检查'} · ${study.study_uid}`,
+              values: {
+                AccessionNumber: study.accession_number,
+                StudyID: study.study_id,
+                StudyDescription: study.description,
+                ReferringPhysicianName: study.referring_physician,
+              },
+            });
             if (this.expandedStudyUid === study.study_uid) {
               const series = this.series.get(study.study_uid);
               const seriesList = document.createElement('div');
@@ -1004,6 +1575,8 @@ export class App {
               } else {
                 const recommendedUid = recommendMprSeries(series)?.series_uid;
                 for (const entry of series) {
+                  const seriesEntry = document.createElement('div');
+                  seriesEntry.className = 'series-entry';
                   const seriesButton = document.createElement('button');
                   seriesButton.type = 'button';
                   seriesButton.className = 'series-row';
@@ -1022,7 +1595,20 @@ export class App {
                   seriesButton.addEventListener('click', () => {
                     void this.openRemote(study.study_uid, entry.series_uid);
                   });
-                  seriesList.append(seriesButton);
+                  seriesEntry.append(seriesButton);
+                  this.appendTagEditButton(seriesEntry, {
+                    targetType: 'series',
+                    targetKey: entry.series_uid,
+                    scope: 'series',
+                    title: `${entry.description?.trim() || `序列 ${entry.series_number ?? '--'}`} · ${entry.series_uid}`,
+                    values: {
+                      SeriesDescription: entry.description,
+                      SeriesNumber: entry.series_number,
+                      BodyPartExamined: entry.body_part_examined,
+                      ProtocolName: entry.protocol_name,
+                    },
+                  });
+                  seriesList.append(seriesEntry);
                 }
               }
               studyItem.append(seriesList);
@@ -1041,6 +1627,7 @@ export class App {
     setText('patient-page', `第 ${this.patientPage + 1} 页`);
     requiredElement<HTMLButtonElement>('patients-previous').disabled = this.patientPage === 0;
     requiredElement<HTMLButtonElement>('patients-next').disabled = !this.hasNextPatientPage;
+    createIcons({ icons: { Edit3 } });
   }
 
   private setWorklistBusy(busy: boolean, message = ''): void {
@@ -1561,6 +2148,9 @@ export class App {
     for (const control of document.querySelectorAll<HTMLElement>('[data-mpr-tool]')) {
       control.hidden = this.viewerMode !== 'mpr';
     }
+    requiredElement<HTMLButtonElement>('revision-history-btn').hidden = !(
+      hasSeries && this.remoteSeriesOpen && this.canViewDicomRevisions()
+    );
     this.updateMprLayout();
     if (!this.state) return;
 
@@ -1755,6 +2345,54 @@ function setText(id: string, value: string): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function scopeLabel(scope: TransformScope): string {
+  if (scope === 'patient') return '患者';
+  if (scope === 'study') return '检查';
+  return '序列';
+}
+
+function dicomInputValue(
+  keyword: string,
+  value: string | number | null | undefined,
+): string {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  if (keyword === 'PatientBirthDate') return text.replace(/-/g, '');
+  return text;
+}
+
+function editorInputValue(keyword: string, value: string): string {
+  return keyword === 'PatientBirthDate' ? formatDicomDate(value) : value;
+}
+
+function displayTagValue(value: string | null): string {
+  return value?.trim() ? value : '（空）';
+}
+
+function transformModeLabel(mode: TransformJob['mode']): string {
+  if (mode === 'clinical_correction') return '临床修订';
+  return '版本回滚';
+}
+
+function transformStatusLabel(status: TransformJob['status']): string {
+  const labels: Record<TransformJob['status'], string> = {
+    previewed: '等待确认',
+    queued: '等待处理',
+    running: '处理中',
+    succeeded: '已完成',
+    failed: '失败',
+    blocked: '已阻止',
+    expired: '已过期',
+  };
+  return labels[status];
+}
+
+function revisionKindLabel(kind: DicomRevision['derivation_kind']): string {
+  if (kind === 'original') return '原始归档';
+  if (kind === 'clinical_correction') return '临床修订';
+  return '版本回滚';
 }
 
 function makeId(): string {

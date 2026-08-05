@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use reqwest::{Client, Response, StatusCode, Url};
+use reqwest::{Client, Method, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
 
@@ -36,6 +36,7 @@ pub struct RemoteUser {
 pub struct PatientSummary {
     pub id: i64,
     pub patient_id: String,
+    pub issuer_of_patient_id: Option<String>,
     pub name: Option<String>,
     pub birth_date: Option<String>,
     pub sex: Option<String>,
@@ -51,7 +52,9 @@ pub struct StudySummary {
     pub study_date: Option<String>,
     pub study_time: Option<String>,
     pub accession_number: Option<String>,
+    pub study_id: Option<String>,
     pub description: Option<String>,
+    pub referring_physician: Option<String>,
     pub modalities: Vec<String>,
     pub series_count: i32,
     pub instance_count: i32,
@@ -64,6 +67,7 @@ pub struct SeriesSummary {
     pub modality: Option<String>,
     pub description: Option<String>,
     pub body_part_examined: Option<String>,
+    pub protocol_name: Option<String>,
     pub instance_count: i32,
 }
 
@@ -224,6 +228,87 @@ impl RemoteState {
         self.get_json(url).await
     }
 
+    pub async fn transform_schema(&self) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url("api/dicom/schema").await?;
+        self.get_json(url).await
+    }
+
+    pub async fn preview_clinical_transform(
+        &self,
+        target_type: &str,
+        target_key: &str,
+        rules: serde_json::Value,
+        reason: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self
+            .session_url("api/dicom/transformations/preview")
+            .await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "mode": "clinical_correction",
+                "target": { "target_type": target_type, "key": target_key },
+                "rules": rules,
+                "reason": reason
+            })),
+        )
+        .await
+    }
+
+    pub async fn confirm_transform(
+        &self,
+        job_id: &str,
+        confirmation_token: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url("api/dicom/transformations").await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "job_id": job_id,
+                "confirmation_token": confirmation_token
+            })),
+        )
+        .await
+    }
+
+    pub async fn transform_jobs(&self) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url("api/dicom/transformations").await?;
+        self.get_json(url).await
+    }
+
+    pub async fn instance_revisions_by_sop(
+        &self,
+        sop_uid: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(sop_uid)?;
+        let url = self
+            .session_url(&format!("api/dicom/instances/by-sop/{sop_uid}/revisions"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn preview_rollback(
+        &self,
+        logical_id: &str,
+        version_id: i64,
+        reason: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self
+            .session_url(&format!("api/dicom/instances/{logical_id}/rollback"))
+            .await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "version_id": version_id,
+                "reason": reason
+            })),
+        )
+        .await
+    }
+
     pub async fn list_instance_uids(
         &self,
         study_uid: &str,
@@ -318,28 +403,48 @@ impl RemoteState {
             .map_err(|error| RemoteError::InvalidResponse(error.to_string()))
     }
 
+    async fn authorized_json<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<serde_json::Value>,
+    ) -> Result<T, RemoteError> {
+        let response = self.authorized_request(method, url, body).await?;
+        response
+            .json()
+            .await
+            .map_err(|error| RemoteError::InvalidResponse(error.to_string()))
+    }
+
     async fn authorized_get(&self, url: Url) -> Result<Response, RemoteError> {
+        self.authorized_request(Method::GET, url, None).await
+    }
+
+    async fn authorized_request(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<serde_json::Value>,
+    ) -> Result<Response, RemoteError> {
         let mut guard = self.session.lock().await;
         let session = guard.as_mut().ok_or(RemoteError::NotLoggedIn)?;
-        let mut response = session
-            .client
-            .get(url.clone())
-            .bearer_auth(&session.access_token)
-            .send()
-            .await
-            .map_err(request_error)?;
+        let send = |session: &Session| {
+            let mut request = session
+                .client
+                .request(method.clone(), url.clone())
+                .bearer_auth(&session.access_token);
+            if let Some(body) = body.clone() {
+                request = request.json(&body);
+            }
+            request.send()
+        };
+        let mut response = send(session).await.map_err(request_error)?;
         if response.status() == StatusCode::UNAUTHORIZED {
             if let Err(error) = refresh(session).await {
                 *guard = None;
                 return Err(error);
             }
-            response = session
-                .client
-                .get(url)
-                .bearer_auth(&session.access_token)
-                .send()
-                .await
-                .map_err(request_error)?;
+            response = send(session).await.map_err(request_error)?;
             if response.status() == StatusCode::UNAUTHORIZED {
                 *guard = None;
                 return Err(RemoteError::NotLoggedIn);

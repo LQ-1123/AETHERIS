@@ -20,7 +20,7 @@ use pacs_dimse::{
     FindFailure, FindHandler, FindRequest, FindResponse, IncomingInstance, StoreFailure,
     StoreHandler,
 };
-use pacs_store::{InstanceKey, Store, StoreOutcome};
+use pacs_store::{InstanceKey, Store};
 use sqlx::PgPool;
 
 pub struct PacsStoreHandler {
@@ -58,14 +58,6 @@ impl StoreHandler for PacsStoreHandler {
             )
             .await
             .map_err(|error| classify(&error))?;
-
-        if stored.outcome == StoreOutcome::Replaced {
-            tracing::warn!(
-                calling_ae_title = instance.calling_ae_title,
-                sop_instance_uid = %metadata.instance.uid,
-                "同一 SOPInstanceUID 收到了不同内容,已覆盖"
-            );
-        }
 
         ingest_instance(
             &self.pool,
@@ -144,6 +136,10 @@ fn classify(error: &pacs_store::StoreError) -> StoreFailure {
         // NotFound 是读路径的错误(resolve_for_read),落盘路径产生不了它。
         // 真出现说明代码走错了分支,当作不可重传的处理失败。
         pacs_store::StoreError::NotFound { .. } => false,
+        // UID/content conflicts indicate a sender bug. Retrying the same object cannot help and
+        // must never overwrite the archived original.
+        pacs_store::StoreError::ContentConflict { .. }
+        | pacs_store::StoreError::DestinationExists { .. } => false,
     };
 
     if out_of_resources {

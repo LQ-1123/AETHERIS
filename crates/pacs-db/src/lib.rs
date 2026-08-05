@@ -15,6 +15,7 @@
 pub mod find;
 pub mod ingest;
 pub mod retrieve;
+mod transformations;
 pub mod worklist;
 
 use std::time::Duration;
@@ -27,6 +28,14 @@ pub use find::{DEFAULT_LIMIT, FindResults, find, find_for_institution};
 pub use ingest::{Ingested, StorageRecord, ingest_instance};
 pub use retrieve::{
     StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
+};
+pub use transformations::{
+    ActivatedVersion, JobRecord, NewPreviewJob, RevisionRecord, RunnableJob, TargetType,
+    TransformMode, TransformSource, TransformTarget, UidAlias, VersionSource,
+    activate_clinical_job, claim_job, create_preview_job, get_job, get_version_source, job_sources,
+    list_jobs, list_revisions, list_runnable_jobs, list_uid_aliases,
+    logical_instance_id_for_current_sop, mark_job_failed, queue_preview_job,
+    recover_interrupted_jobs, select_transform_sources, update_job_progress,
 };
 pub use worklist::{
     PatientSummary, SeriesSummary, StudySummary, list_patient_studies, list_patients,
@@ -45,6 +54,12 @@ pub enum DbError {
     /// 一次静默漏掉的检查比一次明确的失败危险得多。
     #[error("结果超过 {limit} 条,请收窄查询条件")]
     TooManyResults { limit: usize },
+    #[error("资源不存在")]
+    NotFound,
+    #[error("并发冲突: {0}")]
+    Conflict(String),
+    #[error("数据无效: {0}")]
+    Invalid(String),
 }
 
 /// 连接数据库并建立连接池。

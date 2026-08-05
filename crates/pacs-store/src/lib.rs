@@ -28,7 +28,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
-pub use layout::InstanceKey;
+pub use layout::{InstanceKey, derived_relative_path};
 
 /// 临时文件目录名,位于存储根下。
 ///
@@ -52,6 +52,15 @@ pub struct StoredFile {
     pub outcome: StoreOutcome,
 }
 
+/// A fully fsynced derived file which is not visible at its final path yet.
+#[derive(Debug)]
+pub struct StagedFile {
+    temp_path: PathBuf,
+    pub relative_path: String,
+    pub size: u64,
+    pub sha256: [u8; 32],
+}
+
 /// 目标路径上原本有没有东西。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreOutcome {
@@ -59,12 +68,6 @@ pub enum StoreOutcome {
     Created,
     /// 已存在且内容完全一致 —— 设备重传,幂等跳过,没有写盘。
     AlreadyIdentical,
-    /// 已存在但内容不同,已覆盖。
-    ///
-    /// 同一个 SOPInstanceUID 对应两份不同的数据,按标准这不该发生,通常是
-    /// 设备重用了 UID 或中途改写过影像。覆盖是为了让存储和数据库保持一致,
-    /// 但一定会告警 —— 这是设备侧的 bug 信号。
-    Replaced,
 }
 
 #[derive(Debug, Error)]
@@ -83,6 +86,10 @@ pub enum StoreError {
     /// 信号(孤儿记录),调用方应当回 404 并告警,而不是当成一般的读失败。
     #[error("相对路径 {relative:?} 对应的文件不存在")]
     NotFound { relative: String },
+    #[error("SOP Instance UID 已存在但文件内容不同: {relative}")]
+    ContentConflict { relative: String },
+    #[error("派生文件目标路径已存在: {relative}")]
+    DestinationExists { relative: String },
 }
 
 impl StoreError {
@@ -138,10 +145,13 @@ impl Store {
                     outcome: StoreOutcome::AlreadyIdentical,
                 });
             }
-            Some(_) => tracing::warn!(
-                path = %relative,
-                "同一 SOPInstanceUID 收到内容不同的影像,覆盖旧文件;这通常是发送方重用了 UID"
-            ),
+            Some(_) => {
+                tracing::error!(
+                    path = %relative,
+                    "同一 SOPInstanceUID 收到内容不同的影像，拒绝覆盖不可变原始文件"
+                );
+                return Err(StoreError::ContentConflict { relative });
+            }
             None => {}
         }
 
@@ -168,12 +178,97 @@ impl Store {
             relative_path: relative,
             size,
             sha256,
-            outcome: if existing.is_some() {
-                StoreOutcome::Replaced
-            } else {
-                StoreOutcome::Created
-            },
+            outcome: StoreOutcome::Created,
         })
+    }
+
+    /// Write and fsync a derived file into staging without exposing a final path.
+    pub async fn stage_derived(
+        &self,
+        job_id: Uuid,
+        key: InstanceKey<'_>,
+        bytes: &[u8],
+    ) -> Result<StagedFile, StoreError> {
+        let relative_path = layout::derived_relative_path(job_id, key);
+        let temp_path = self
+            .root
+            .join(TEMP_DIR)
+            .join(format!("{}.part", Uuid::new_v4()));
+        self.write_temp(&temp_path, bytes).await.inspect_err(|_| {
+            let temp_path = temp_path.clone();
+            tokio::spawn(async move { fs::remove_file(temp_path).await });
+        })?;
+        Ok(StagedFile {
+            temp_path,
+            relative_path,
+            size: bytes.len() as u64,
+            sha256: Sha256::digest(bytes).into(),
+        })
+    }
+
+    /// Atomically move a staged file into its immutable final path and fsync the directory.
+    pub async fn activate_staged(&self, staged: StagedFile) -> Result<StoredFile, StoreError> {
+        let final_path = self.resolve(&staged.relative_path)?;
+        match fs::symlink_metadata(&final_path).await {
+            Ok(_) => {
+                return Err(StoreError::DestinationExists {
+                    relative: staged.relative_path,
+                });
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::at(&final_path)(error)),
+        }
+        let parent = final_path.parent().expect("派生文件一定有父目录");
+        self.create_dirs_synced(parent).await?;
+        fs::rename(&staged.temp_path, &final_path)
+            .await
+            .map_err(StoreError::at(&final_path))?;
+        sync_dir(parent).await.map_err(StoreError::at(parent))?;
+        Ok(StoredFile {
+            relative_path: staged.relative_path,
+            size: staged.size,
+            sha256: staged.sha256,
+            outcome: StoreOutcome::Created,
+        })
+    }
+
+    /// Best-effort cancellation of a staged output which has not been activated.
+    pub async fn discard_staged(&self, staged: StagedFile) -> Result<(), StoreError> {
+        match fs::remove_file(&staged.temp_path).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(StoreError::at(&staged.temp_path)(error)),
+        }
+    }
+
+    /// Remove an unreferenced derived output after database activation failed.
+    ///
+    /// The namespace check prevents this recovery path from ever deleting an immutable original.
+    pub async fn remove_derived(&self, relative: &str) -> Result<(), StoreError> {
+        self.remove_namespaced(relative, "derived").await
+    }
+
+    async fn remove_namespaced(&self, relative: &str, namespace: &str) -> Result<(), StoreError> {
+        let relative_path = Path::new(relative);
+        if !matches!(
+            relative_path.components().next(),
+            Some(std::path::Component::Normal(component)) if component == namespace
+        ) {
+            return Err(StoreError::PathEscape {
+                relative: relative.to_owned(),
+            });
+        }
+        let path = self.resolve(relative)?;
+        match fs::remove_file(&path).await {
+            Ok(()) => {
+                if let Some(parent) = path.parent() {
+                    sync_dir(parent).await.map_err(StoreError::at(parent))?;
+                }
+                Ok(())
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(StoreError::at(path)(error)),
+        }
     }
 
     /// 目标路径已有文件时,判断内容是否一致。路径为空返回 `None`。
@@ -191,7 +286,7 @@ impl Store {
 
         // 先比长度:不等就不用把整个文件读进内存了
         if metadata.len() != size {
-            return Ok(Some(StoreOutcome::Replaced));
+            return Ok(Some(StoreOutcome::Created));
         }
         let existing = fs::read(final_path)
             .await
@@ -199,7 +294,7 @@ impl Store {
         Ok(Some(if existing == bytes {
             StoreOutcome::AlreadyIdentical
         } else {
-            StoreOutcome::Replaced
+            StoreOutcome::Created
         }))
     }
 
