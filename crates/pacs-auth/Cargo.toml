@@ -29,3 +29,4 @@ axum.workspace = true
 [dev-dependencies]
 dotenvy.workspace = true
 tokio.workspace = true
+tower.workspace = true

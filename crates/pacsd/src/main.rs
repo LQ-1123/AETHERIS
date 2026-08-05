@@ -9,6 +9,10 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::Router;
+use axum::extract::Request;
+use axum::http::{HeaderName, HeaderValue};
+use axum::middleware::Next;
+use axum::response::Response;
 use clap::{Parser, Subcommand};
 
 use crate::config::Config;
@@ -116,6 +120,14 @@ async fn main() -> Result<()> {
     let http_app = Router::new()
         .nest("/auth", pacs_auth::http::routes(auth_service.clone()))
         .nest(
+            "/api/v1",
+            pacs_auth::service_accounts::management_routes(auth_service.clone())
+                .merge(pacs_auth::service_accounts::service_routes(
+                    auth_service.clone(),
+                ))
+                .merge(pacs_auth::service_accounts::documentation_routes()),
+        )
+        .nest(
             "/dicomweb",
             pacs_web::dicomweb_routes(
                 // Store 里只有一个 PathBuf,克隆便宜;包进 Arc 是让 WADO 的
@@ -125,7 +137,8 @@ async fn main() -> Result<()> {
             ),
         )
         .nest("/api", api_routes)
-        .fallback(|| async { axum::http::StatusCode::NOT_FOUND });
+        .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
+        .layer(axum::middleware::from_fn(request_id));
 
     // DIMSE 监听
     let dimse = pacs_dimse::DimseServer::bind(pacs_dimse::ServerConfig::new(
@@ -177,4 +190,16 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn request_id(mut request: Request, next: Next) -> Response {
+    static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+    let value = HeaderValue::from_str(&uuid::Uuid::new_v4().to_string())
+        .expect("UUID 必须是合法 HTTP header");
+    request
+        .headers_mut()
+        .insert(X_REQUEST_ID.clone(), value.clone());
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(X_REQUEST_ID.clone(), value);
+    response
 }

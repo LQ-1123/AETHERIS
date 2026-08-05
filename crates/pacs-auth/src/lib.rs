@@ -12,10 +12,12 @@ pub mod model;
 pub mod password;
 pub mod repository;
 pub mod service;
+pub mod service_accounts;
 pub mod token;
 
 pub use middleware::{Identity, require};
 pub use model::{InvalidUsername, Permission, Role, User, normalize_username};
 pub use password::{PasswordError, WeakPassword};
 pub use service::{AuthError, AuthService};
+pub use service_accounts::{ApiScope, ServiceIdentity};
 pub use token::{AccessClaims, AccessTokenCodec, RefreshToken, TokenError};

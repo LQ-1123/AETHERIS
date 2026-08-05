@@ -37,7 +37,20 @@ pub async fn ingest_instance(
     metadata: &InstanceMetadata,
     storage: StorageRecord<'_>,
 ) -> Result<Ingested, DbError> {
+    ingest_instance_for_institution(pool, metadata, storage, 1).await
+}
+
+/// 把实例写入显式指定的机构。HTTP 上传必须使用认证身份里的机构,
+/// 不能依赖数据库的默认值,否则多租户调用会静默写进默认机构。
+pub async fn ingest_instance_for_institution(
+    pool: &PgPool,
+    metadata: &InstanceMetadata,
+    storage: StorageRecord<'_>,
+    institution_id: i64,
+) -> Result<Ingested, DbError> {
     let mut tx = pool.begin().await?;
+
+    validate_uid_ownership(&mut tx, metadata, institution_id).await?;
 
     // A sender may retransmit an original SOP after the clinical projection has advanced to a
     // derived UID. Match every immutable version, not just the current projection, so the
@@ -68,8 +81,8 @@ pub async fn ingest_instance(
     let (patient_id, study_id) = if let Some(ids) = historical_study {
         ids
     } else {
-        let patient_id = upsert_patient(&mut tx, metadata).await?;
-        let study_id = upsert_study(&mut tx, metadata, patient_id).await?;
+        let patient_id = upsert_patient(&mut tx, metadata, institution_id).await?;
+        let study_id = upsert_study(&mut tx, metadata, patient_id, institution_id).await?;
         (patient_id, study_id)
     };
     let series_id = if historical_study.is_some() {
@@ -96,6 +109,61 @@ pub async fn ingest_instance(
         instance_id,
         instance_created,
     })
+}
+
+/// DICOM UID 理论上全局唯一,数据库也按全局唯一约束保存。若一个 UID 已属于
+/// 另一机构,不能把调用方悄悄挂到那棵影像树上,也不能通过幂等响应泄露其存在。
+async fn validate_uid_ownership(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+    institution_id: i64,
+) -> Result<(), DbError> {
+    let owner: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT p.institution_id
+        FROM dicom_instance_versions v
+        JOIN instances i ON i.id = v.instance_fk
+        JOIN series se ON se.id = i.series_fk
+        JOIN studies st ON st.id = se.study_fk
+        JOIN patients p ON p.id = st.patient_fk
+        WHERE v.sop_instance_uid = $1
+        LIMIT 1
+        "#,
+    )
+    .bind(metadata.instance.uid.as_str())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if owner.is_some_and(|owner| owner != institution_id) {
+        return Err(DbError::Conflict(
+            "SOPInstanceUID 已属于其他机构".to_owned(),
+        ));
+    }
+
+    let study_owner: Option<i64> =
+        sqlx::query_scalar("SELECT institution_id FROM studies WHERE study_instance_uid = $1")
+            .bind(metadata.study.uid.as_str())
+            .fetch_optional(&mut **tx)
+            .await?;
+    if study_owner.is_some_and(|owner| owner != institution_id) {
+        return Err(DbError::Conflict(
+            "StudyInstanceUID 已属于其他机构".to_owned(),
+        ));
+    }
+
+    let series_owner: Option<i64> = sqlx::query_scalar(
+        "SELECT st.institution_id FROM series se
+         JOIN studies st ON st.id = se.study_fk
+         WHERE se.series_instance_uid = $1",
+    )
+    .bind(metadata.series.uid.as_str())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if series_owner.is_some_and(|owner| owner != institution_id) {
+        return Err(DbError::Conflict(
+            "SeriesInstanceUID 已属于其他机构".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 async fn find_instance_by_version_uid(
@@ -232,15 +300,16 @@ async fn ensure_original_version(
 async fn upsert_patient(
     tx: &mut Transaction<'_, Postgres>,
     metadata: &InstanceMetadata,
+    institution_id: i64,
 ) -> Result<i64, DbError> {
     let patient = &metadata.patient;
     let id = sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO patients (
-            patient_id, issuer_of_patient_id, name, name_normalized,
+            institution_id, patient_id, issuer_of_patient_id, name, name_normalized,
             birth_date, sex, attributes
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (institution_id, patient_id) DO UPDATE SET
             issuer_of_patient_id = COALESCE(EXCLUDED.issuer_of_patient_id, patients.issuer_of_patient_id),
             name                 = COALESCE(EXCLUDED.name, patients.name),
@@ -251,6 +320,7 @@ async fn upsert_patient(
         RETURNING id
         "#,
     )
+    .bind(institution_id)
     .bind(&patient.patient_id)
     .bind(&patient.issuer_of_patient_id)
     .bind(&patient.name)
@@ -267,15 +337,16 @@ async fn upsert_study(
     tx: &mut Transaction<'_, Postgres>,
     metadata: &InstanceMetadata,
     patient_id: i64,
+    institution_id: i64,
 ) -> Result<i64, DbError> {
     let study = &metadata.study;
     let id = sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO studies (
-            patient_fk, study_instance_uid, study_date, study_time,
+            patient_fk, institution_id, study_instance_uid, study_date, study_time,
             accession_number, study_id, description, referring_physician, attributes
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (study_instance_uid) DO UPDATE SET
             study_date          = COALESCE(EXCLUDED.study_date, studies.study_date),
             study_time          = COALESCE(EXCLUDED.study_time, studies.study_time),
@@ -288,6 +359,7 @@ async fn upsert_study(
         "#,
     )
     .bind(patient_id)
+    .bind(institution_id)
     .bind(study.uid.as_str())
     .bind(study.date)
     .bind(study.time)

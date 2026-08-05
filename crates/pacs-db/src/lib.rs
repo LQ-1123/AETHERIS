@@ -15,6 +15,7 @@
 mod annotations;
 pub mod find;
 pub mod ingest;
+mod jobs;
 pub mod retrieve;
 mod transformations;
 pub mod worklist;
@@ -26,7 +27,17 @@ use sqlx::postgres::PgPoolOptions;
 use thiserror::Error;
 
 pub use find::{DEFAULT_LIMIT, FindResults, find, find_for_institution};
-pub use ingest::{Ingested, StorageRecord, ingest_instance};
+pub use ingest::{Ingested, StorageRecord, ingest_instance, ingest_instance_for_institution};
+pub use jobs::{
+    BackgroundJob, BackgroundJobItem, JobItemStatus, JobKind, JobStatus, NewJob,
+    add_job_item as add_background_job_item, claim_job as claim_background_job,
+    complete_job as complete_background_job, create_job as create_background_job,
+    fail_job as fail_background_job, finish_job_item as finish_background_job_item,
+    get_job as get_background_job, heartbeat_job as heartbeat_background_job,
+    list_job_items as list_background_job_items, recover_expired_jobs as recover_background_jobs,
+    request_job_cancellation, start_job_item as start_background_job_item,
+    update_job_progress as update_background_job_progress,
+};
 pub use retrieve::{
     StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
 };

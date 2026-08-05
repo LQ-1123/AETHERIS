@@ -27,3 +27,11 @@ sqlx.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 sha2.workspace = true
+mime.workspace = true
+multer.workspace = true
+
+[dev-dependencies]
+pacs-core = { workspace = true, features = ["fixtures"] }
+dotenvy.workspace = true
+tempfile.workspace = true
+tower.workspace = true

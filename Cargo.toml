@@ -46,6 +46,8 @@ axum = "0.8"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors"] }
+mime = "0.3"
+multer = "3"
 
 # TLS
 rustls = "0.23"

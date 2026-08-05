@@ -59,7 +59,8 @@ impl WebState {
 /// 权限挂在路由树上而不是逐个 handler 写 —— 新增路由默认继承保护,
 /// 漏写不会变成默认放行(见 `pacs_auth::middleware` 的模块文档)。
 pub fn dicomweb_routes(state: WebState, auth: Arc<AuthService>) -> Router {
-    Router::new()
+    let read_auth = Arc::clone(&auth);
+    let read_routes = Router::new()
         // —— QIDO-RS ——
         .route("/studies", get(search_studies))
         .route("/studies/{study_uid}/series", get(search_series))
@@ -81,11 +82,12 @@ pub fn dicomweb_routes(state: WebState, auth: Arc<AuthService>) -> Router {
             get(crate::wado::retrieve_frames),
         )
         // 先 with_state 再 layer:反过来会让状态类型在中间件那层被擦掉
-        .with_state(state)
+        .with_state(state.clone())
         .layer(axum::middleware::from_fn(move |request, next| {
-            let auth = Arc::clone(&auth);
+            let auth = Arc::clone(&read_auth);
             async move { pacs_auth::require(auth, Permission::ViewImages, request, next).await }
-        }))
+        }));
+    read_routes.merge(crate::stow::routes(state, auth))
 }
 
 /// `GET /studies`
