@@ -1,6 +1,6 @@
 //! Persistence for institution-scoped DICOM routing.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -39,6 +39,8 @@ pub struct RouteDestination {
     pub name: String,
     pub protocol: RouteProtocol,
     pub enabled: bool,
+    pub approval_status: String,
+    pub approved_at: Option<DateTime<Utc>>,
     pub host: Option<String>,
     pub port: Option<i32>,
     pub called_ae_title: Option<String>,
@@ -155,6 +157,20 @@ pub struct ObservedDicomPeer {
     pub last_disconnected_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutableSeries {
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub study_instance_uid: String,
+    pub study_description: Option<String>,
+    pub study_date: Option<NaiveDate>,
+    pub series_instance_uid: String,
+    pub series_number: Option<i32>,
+    pub series_description: Option<String>,
+    pub modality: Option<String>,
+    pub instance_count: i32,
+}
+
 pub async fn observe_dicom_association_opened(
     pool: &PgPool,
     institution_id: i64,
@@ -228,6 +244,50 @@ pub async fn list_observed_dicom_peers(
     .fetch_all(pool)
     .await?;
     rows.iter().map(decode_observed_peer).collect()
+}
+
+pub async fn list_routable_series(
+    pool: &PgPool,
+    institution_id: i64,
+    limit: i64,
+) -> Result<Vec<RoutableSeries>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT p.patient_id,p.name AS patient_name,
+           st.study_instance_uid,st.description AS study_description,st.study_date,
+           se.series_instance_uid,se.series_number,se.description AS series_description,
+           se.modality,se.number_of_instances
+           FROM series se
+           JOIN studies st ON st.id=se.study_fk
+           JOIN patients p ON p.id=st.patient_fk
+           WHERE st.institution_id=$1 AND p.institution_id=$1
+             AND EXISTS (
+               SELECT 1 FROM instances i
+               WHERE i.series_fk=se.id AND i.current_version_id IS NOT NULL
+             )
+           ORDER BY st.study_date DESC NULLS LAST,st.updated_at DESC,
+                    se.series_number NULLS LAST,se.series_instance_uid
+           LIMIT $2"#,
+    )
+    .bind(institution_id)
+    .bind(limit.clamp(1, 500))
+    .fetch_all(pool)
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok(RoutableSeries {
+                patient_id: row.try_get("patient_id")?,
+                patient_name: row.try_get("patient_name")?,
+                study_instance_uid: row.try_get("study_instance_uid")?,
+                study_description: row.try_get("study_description")?,
+                study_date: row.try_get("study_date")?,
+                series_instance_uid: row.try_get("series_instance_uid")?,
+                series_number: row.try_get("series_number")?,
+                series_description: row.try_get("series_description")?,
+                modality: row.try_get("modality")?,
+                instance_count: row.try_get("number_of_instances")?,
+            })
+        })
+        .collect()
 }
 
 pub async fn list_route_destinations(
@@ -335,6 +395,25 @@ pub async fn delete_route_destination(
             .rows_affected()
             == 1,
     )
+}
+
+pub async fn approve_route_destination(
+    pool: &PgPool,
+    institution_id: i64,
+    id: Uuid,
+) -> Result<RouteDestination, DbError> {
+    let row = sqlx::query(
+        r#"UPDATE dicom_route_destinations SET
+             approval_status='approved',approved_at=COALESCE(approved_at,now()),enabled=true,
+             status='unknown',last_error=NULL
+           WHERE institution_id=$1 AND id=$2 RETURNING *"#,
+    )
+    .bind(institution_id)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::NotFound)?;
+    decode_destination(&row)
 }
 
 pub async fn record_destination_health(
@@ -520,6 +599,7 @@ pub async fn enqueue_route_delivery(
            (id,institution_id,destination_fk,rule_fk,version_fk,sop_instance_uid)
            SELECT $1,$2,d.id,$4,$5,$6 FROM dicom_route_destinations d
            WHERE d.id=$3 AND d.institution_id=$2 AND d.enabled
+             AND d.approval_status='approved'
            ON CONFLICT (destination_fk,version_fk) DO NOTHING RETURNING id"#,
     )
     .bind(delivery_id)
@@ -728,6 +808,8 @@ fn decode_destination(row: &sqlx::postgres::PgRow) -> Result<RouteDestination, D
         name: row.try_get("name")?,
         protocol: RouteProtocol::parse(row.try_get("protocol")?)?,
         enabled: row.try_get("enabled")?,
+        approval_status: row.try_get("approval_status")?,
+        approved_at: row.try_get("approved_at")?,
         host: row.try_get("host")?,
         port: row.try_get("port")?,
         called_ae_title: row.try_get("called_ae_title")?,

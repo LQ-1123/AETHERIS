@@ -7,6 +7,8 @@ import type {
   RoiStatistics,
   RemoteSeriesSummary,
   RemoteUser,
+  LocalDicomNode,
+  RoutableSeries,
   ObservedDicomPeer,
   RouteDelivery,
   RouteDestination,
@@ -94,12 +96,16 @@ async function routerDelete(path: string): Promise<void> {
 }
 
 export const listRouteDestinations = (): Promise<RouteDestination[]> => routerGet('destinations');
+export const getLocalDicomNode = (): Promise<LocalDicomNode> => routerGet('node');
 export const listObservedDicomPeers = (): Promise<ObservedDicomPeer[]> => routerGet('peers?limit=200');
+export const listRoutableSeries = (): Promise<RoutableSeries[]> => routerGet('series?limit=300');
 export const saveRouteDestination = (input: RouteDestinationInput, id?: string): Promise<RouteDestination> =>
   routerWrite(id ? 'PUT' : 'POST', id ? `destinations/${id}` : 'destinations', input);
 export const deleteRouteDestination = (id: string): Promise<void> => routerDelete(`destinations/${id}`);
 export const testRouteDestination = (id: string): Promise<RouteDestination> =>
   routerWrite('POST', `destinations/${id}/test`, {});
+export const approveRouteDestination = (id: string): Promise<RouteDestination> =>
+  routerWrite('POST', `destinations/${id}/approve`, {});
 export const listRouteRules = (): Promise<RouteRule[]> => routerGet('rules');
 export const saveRouteRule = (input: RouteRuleInput, id?: string): Promise<RouteRule> =>
   routerWrite(id ? 'PUT' : 'POST', id ? `rules/${id}` : 'rules', input);

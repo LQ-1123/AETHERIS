@@ -396,80 +396,49 @@
       <header class="dialog-heading">
         <div>
           <h2 id="dicom-router-title">DICOM Router</h2>
-          <span id="router-summary">0 个目的地</span>
+          <span id="router-summary">0 个已接入站点</span>
         </div>
         <div class="dialog-heading-actions">
           <button id="router-refresh" class="icon-button" type="button" title="刷新路由状态" aria-label="刷新路由状态"><i data-lucide="refresh-cw"></i></button>
           <button id="router-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
         </div>
       </header>
-      <div class="segmented router-tabs" role="tablist" aria-label="Router 视图">
-        <button type="button" role="tab" data-router-tab="destinations" aria-selected="true">设备</button>
-        <button type="button" role="tab" data-router-tab="rules" aria-selected="false">规则</button>
-        <button type="button" role="tab" data-router-tab="deliveries" aria-selected="false">投递</button>
-      </div>
       <p id="router-error" class="dialog-error" role="alert" hidden></p>
-
-      <section class="router-view" data-router-view="destinations">
-        <div class="router-section-heading"><strong>入站设备</strong><span id="router-peer-count">0 台</span></div>
-        <div id="router-peer-list" class="router-list router-peer-list"></div>
-        <div class="router-section-heading"><strong>路由目的地</strong><span>回传配置</span></div>
-        <div id="router-destination-list" class="router-list"></div>
-        <form id="router-destination-form" class="router-form">
-          <input id="router-destination-id" type="hidden" />
-          <label><span>名称</span><input id="router-destination-name" maxlength="128" required /></label>
-          <label><span>协议</span><select id="router-destination-protocol"><option value="dimse">DIMSE</option><option value="stow">STOW-RS</option></select></label>
-          <label class="checkbox-field"><input id="router-destination-enabled" type="checkbox" checked /><span>启用</span></label>
-          <div id="router-dimse-fields" class="router-fields">
-            <label><span>主机</span><input id="router-destination-host" spellcheck="false" /></label>
-            <label><span>端口</span><input id="router-destination-port" type="number" min="1" max="65535" value="104" /></label>
-            <label><span>Called AE</span><input id="router-destination-called-ae" maxlength="16" value="STORESCP" spellcheck="false" /></label>
-            <label><span>Calling AE</span><input id="router-destination-calling-ae" maxlength="16" value="REMOTE_PACS" spellcheck="false" /></label>
-            <label class="checkbox-field"><input id="router-destination-tls" type="checkbox" /><span>TLS</span></label>
-            <label class="router-wide-field"><span>TLS CA PEM</span><textarea id="router-destination-dimse-ca" rows="3" spellcheck="false"></textarea></label>
+      <section class="router-view">
+        <div class="router-section-heading"><strong>已接入站点</strong><span id="router-peer-count">0 个站点</span></div>
+        <div class="router-topology-shell">
+          <canvas id="router-topology-canvas" class="router-topology-canvas" role="img"></canvas>
+          <div class="router-topology-footer">
+            <div class="router-topology-legend" aria-label="节点状态">
+              <span data-status="online">在线</span><span data-status="recent">最近连接</span>
+              <span data-status="offline">离线</span><span data-status="unknown">未检测</span>
+            </div>
+            <div id="router-topology-detail" class="router-topology-detail">暂无 DICOM 节点</div>
           </div>
-          <div id="router-stow-fields" class="router-fields" hidden>
-            <label class="router-wide-field"><span>STOW URL</span><input id="router-destination-stow-url" type="url" spellcheck="false" /></label>
-            <label><span>Bearer Token</span><input id="router-destination-token" type="password" autocomplete="off" /></label>
-            <label class="router-wide-field"><span>CA PEM</span><textarea id="router-destination-ca" rows="3" spellcheck="false"></textarea></label>
-          </div>
-          <footer class="router-form-actions">
-            <button id="router-destination-reset" type="button">新建设备</button>
-            <button class="command-button" type="submit"><i data-lucide="save"></i><span>保存</span></button>
-          </footer>
-        </form>
+        </div>
+        <div class="router-section-heading"><strong>接入申请</strong><span id="router-request-count">0 个待确认</span></div>
+        <div id="router-request-list" class="router-list router-request-list"></div>
       </section>
+    </dialog>
 
-      <section class="router-view" data-router-view="rules" hidden>
-        <div id="router-rule-list" class="router-list"></div>
-        <form id="router-rule-form" class="router-form">
-          <input id="router-rule-id" type="hidden" />
-          <label><span>名称</span><input id="router-rule-name" maxlength="128" required /></label>
-          <label><span>目的地</span><select id="router-rule-destination" required></select></label>
-          <label><span>优先级</span><input id="router-rule-priority" type="number" value="100" required /></label>
-          <label class="checkbox-field"><input id="router-rule-enabled" type="checkbox" checked /><span>启用</span></label>
-          <label><span>来源 AE</span><input id="router-rule-source" maxlength="16" spellcheck="false" /></label>
-          <label><span>模态</span><input id="router-rule-modality" placeholder="CT" spellcheck="false" /></label>
-          <label><span>检查部位</span><input id="router-rule-body-part" placeholder="CHEST" spellcheck="false" /></label>
-          <label><span>检查描述包含</span><input id="router-rule-study-description" /></label>
-          <label><span>序列描述包含</span><input id="router-rule-series-description" /></label>
-          <label class="router-wide-field"><span>指定 Tag（DICOM JSON 对象）</span><textarea id="router-rule-tags" rows="3" spellcheck="false">{}</textarea></label>
-          <footer class="router-form-actions">
-            <button id="router-rule-reset" type="button">新建规则</button>
-            <button class="command-button" type="submit"><i data-lucide="save"></i><span>保存</span></button>
-          </footer>
-        </form>
-      </section>
-
-      <section class="router-view" data-router-view="deliveries" hidden>
-        <form id="router-send-form" class="router-send-form">
-          <label><span>目的地</span><select id="router-send-destination" required></select></label>
-          <label><span>StudyInstanceUID</span><input id="router-send-study" required spellcheck="false" /></label>
-          <label><span>SeriesInstanceUID（可选）</span><input id="router-send-series" spellcheck="false" /></label>
-          <button class="command-button" type="submit"><i data-lucide="send"></i><span>发送</span></button>
-        </form>
-        <div id="router-delivery-list" class="router-list router-deliveries"></div>
-      </section>
+    <dialog id="study-share-dialog" class="operational-dialog share-dialog" aria-labelledby="study-share-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="study-share-title">分享检查</h2>
+          <span id="study-share-description"></span>
+        </div>
+        <button id="study-share-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <form id="study-share-form" class="share-form">
+        <label><span>发送到站点</span><select id="study-share-destination" required></select></label>
+        <p id="study-share-empty" class="share-empty" hidden>暂无已批准的接入站点</p>
+        <p id="study-share-result" class="share-result" role="status" hidden></p>
+        <p id="study-share-error" class="dialog-error" role="alert" hidden></p>
+        <footer class="share-actions">
+          <button id="study-share-cancel" type="button">取消</button>
+          <button id="study-share-submit" class="command-button" type="submit"><i data-lucide="share-2"></i><span>发送</span></button>
+        </footer>
+      </form>
     </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>

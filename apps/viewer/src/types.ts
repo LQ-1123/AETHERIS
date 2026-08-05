@@ -212,6 +212,25 @@ export interface RemoteUser {
 export type RouteProtocol = 'dimse' | 'stow';
 export type RouteConnectionStatus = 'unknown' | 'online' | 'offline';
 
+export interface LocalDicomNode {
+  ae_title: string;
+  listen_host: string;
+  listen_port: number;
+}
+
+export interface RoutableSeries {
+  patient_id: string;
+  patient_name: string | null;
+  study_instance_uid: string;
+  study_description: string | null;
+  study_date: string | null;
+  series_instance_uid: string;
+  series_number: number | null;
+  series_description: string | null;
+  modality: string | null;
+  instance_count: number;
+}
+
 export interface ObservedDicomPeer {
   id: number;
   institution_id: number;
@@ -231,6 +250,8 @@ export interface RouteDestination {
   name: string;
   protocol: RouteProtocol;
   enabled: boolean;
+  approval_status: 'pending' | 'approved';
+  approved_at: string | null;
   host: string | null;
   port: number | null;
   called_ae_title: string | null;

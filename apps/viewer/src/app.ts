@@ -16,6 +16,7 @@ import {
   listInstanceRevisionsBySop,
   listPatientStudies,
   listPatients,
+  listRouteDestinations,
   listStudySeries,
   listSharedAnnotations,
   listTransformJobs,
@@ -32,9 +33,10 @@ import {
   remoteLogout,
   renderMprSlice,
   selectImageStack,
+  sendRouteScope,
   updateSharedAnnotation,
 } from './api';
-import { Download, Edit3, createIcons } from 'lucide';
+import { Download, Edit3, Share2, createIcons } from 'lucide';
 import {
   AnnotationHistory,
   annotationHitTest,
@@ -263,6 +265,7 @@ export class App {
   private selectedRollbackRevision: DicomRevision | null = null;
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
+  private shareStudyUid: string | null = null;
 
   private viewport = requiredElement<HTMLElement>('viewport');
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
@@ -873,6 +876,13 @@ export class App {
     requiredElement<HTMLButtonElement>('logout-btn').addEventListener('click', () => {
       void this.logout();
     });
+    requiredElement<HTMLFormElement>('study-share-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.submitStudyShare();
+    });
+    for (const id of ['study-share-close', 'study-share-cancel']) {
+      requiredElement<HTMLButtonElement>(id).addEventListener('click', () => this.closeStudyShare());
+    }
     requiredElement<HTMLButtonElement>('worklist-toggle').addEventListener('click', () => {
       document.getElementById('worklist-panel')?.classList.toggle('collapsed');
       document.getElementById('workspace')?.classList.toggle('worklist-hidden');
@@ -1765,8 +1775,9 @@ export class App {
             const studyItem = document.createElement('div');
             studyItem.className = 'study-item';
             const modality = study.modalities.join(' / ') || '未知模态';
+            const studyTitle = study.description?.trim() || '未命名检查';
             const studyRow = worklistRow(
-              study.description?.trim() || '未命名检查',
+              studyTitle,
               `${formatApiDate(study.study_date) || '无日期'} · ${modality}`,
               `${study.series_count} 序列 · ${study.instance_count} 实例`,
               this.expandedStudyUid === study.study_uid,
@@ -1774,6 +1785,7 @@ export class App {
             studyRow.classList.add('study-row');
             studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
             studyItem.append(studyRow);
+            this.appendShareButton(studyItem, study.study_uid, studyTitle);
             this.appendExportButton(studyItem, study.study_uid);
             this.appendTagEditButton(studyItem, {
               targetType: 'study',
@@ -1851,7 +1863,80 @@ export class App {
     setText('patient-page', `第 ${this.patientPage + 1} 页`);
     requiredElement<HTMLButtonElement>('patients-previous').disabled = this.patientPage === 0;
     requiredElement<HTMLButtonElement>('patients-next').disabled = !this.hasNextPatientPage;
-    createIcons({ icons: { Download, Edit3 } });
+    createIcons({ icons: { Download, Edit3, Share2 } });
+  }
+
+  private appendShareButton(container: HTMLElement, studyUid: string, title: string): void {
+    if (this.remoteUser?.role !== 'admin') return;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'worklist-share-button';
+    button.title = '分享此检查'; button.setAttribute('aria-label', button.title);
+    button.innerHTML = '<i data-lucide="share-2"></i><span>分享</span>';
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void this.openStudyShare(studyUid, title);
+    });
+    container.append(button);
+  }
+
+  private async openStudyShare(studyUid: string, title: string): Promise<void> {
+    this.shareStudyUid = studyUid;
+    setText('study-share-description', title);
+    requiredElement<HTMLElement>('study-share-result').hidden = true;
+    requiredElement<HTMLElement>('study-share-error').hidden = true;
+    const dialog = requiredElement<HTMLDialogElement>('study-share-dialog');
+    if (!dialog.open) dialog.showModal();
+    const select = requiredElement<HTMLSelectElement>('study-share-destination');
+    const submit = requiredElement<HTMLButtonElement>('study-share-submit');
+    const empty = requiredElement<HTMLElement>('study-share-empty');
+    select.disabled = true;
+    submit.disabled = true;
+    select.replaceChildren();
+    try {
+      const destinations = (await listRouteDestinations()).filter(
+        (entry) => entry.approval_status === 'approved' && entry.enabled,
+      );
+      select.replaceChildren(...destinations.map((entry) => {
+        const option = document.createElement('option');
+        option.value = entry.id;
+        option.textContent = `${entry.name} · ${entry.status === 'online' ? '在线' : entry.status === 'offline' ? '离线' : '未检测'}`;
+        return option;
+      }));
+      empty.hidden = destinations.length > 0;
+      select.disabled = destinations.length === 0;
+      submit.disabled = destinations.length === 0;
+    } catch (error) {
+      const node = requiredElement<HTMLElement>('study-share-error');
+      node.textContent = errorMessage(error);
+      node.hidden = false;
+      empty.hidden = true;
+    }
+  }
+
+  private async submitStudyShare(): Promise<void> {
+    if (!this.shareStudyUid) return;
+    const select = requiredElement<HTMLSelectElement>('study-share-destination');
+    const submit = requiredElement<HTMLButtonElement>('study-share-submit');
+    const error = requiredElement<HTMLElement>('study-share-error');
+    const result = requiredElement<HTMLElement>('study-share-result');
+    submit.disabled = true;
+    error.hidden = true;
+    result.hidden = true;
+    try {
+      const response = await sendRouteScope(select.value, this.shareStudyUid);
+      result.textContent = `已发送到所选站点：${response.queued} 个实例进入队列，${response.skipped_as_duplicate} 个已发送实例被跳过`;
+      result.hidden = false;
+    } catch (reason) {
+      error.textContent = errorMessage(reason);
+      error.hidden = false;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  private closeStudyShare(): void {
+    this.shareStudyUid = null;
+    const dialog = requiredElement<HTMLDialogElement>('study-share-dialog');
+    if (dialog.open) dialog.close();
   }
 
   private appendExportButton(container: HTMLElement, studyUid: string, seriesUid?: string): void {

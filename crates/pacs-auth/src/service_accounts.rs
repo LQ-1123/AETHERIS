@@ -385,13 +385,22 @@ async fn openapi_document() -> Json<serde_json::Value> {
             },
             "/api/v1/router/destinations": {
                 "get": {"summary": "List DICOM route destinations", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Destination list and connection state"}}},
-                "post": {"summary": "Create a DIMSE or STOW-RS destination", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Destination created"}}}
+                "post": {"summary": "Register a station connection request", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Pending station request created"}}}
+            },
+            "/api/v1/router/destinations/{id}/approve": {
+                "post": {"summary": "Approve a station request and test connectivity", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Approved station and connection state"}}}
+            },
+            "/api/v1/router/node": {
+                "get": {"summary": "Get the local PACS DIMSE AE and listening endpoint", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Local DICOM node identity"}}}
             },
             "/api/v1/router/destinations/{id}/test": {
                 "post": {"summary": "Run C-ECHO or STOW connectivity test", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Updated connection state"}}}
             },
             "/api/v1/router/peers": {
                 "get": {"summary": "List inbound DIMSE peers observed by Calling AE and source IP", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Observed inbound device list"}}}
+            },
+            "/api/v1/router/series": {
+                "get": {"summary": "List routable Study and Series selections", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Recent routable series, scoped to the caller institution"}}}
             },
             "/api/v1/router/rules": {
                 "get": {"summary": "List automatic route rules", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Rule list"}}},

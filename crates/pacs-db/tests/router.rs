@@ -61,6 +61,7 @@ async fn destinations_rules_and_deliveries_are_institution_scoped_and_idempotent
     )
     .await
     .unwrap();
+    assert_eq!(destination.approval_status, "pending");
     pacs_db::create_route_destination(
         &pool,
         institution_two,
@@ -137,6 +138,20 @@ async fn destinations_rules_and_deliveries_are_institution_scoped_and_idempotent
     )
     .await
     .unwrap();
+    let routable = pacs_db::list_routable_series(&pool, 1, 100).await.unwrap();
+    let option = routable
+        .iter()
+        .find(|value| value.series_instance_uid == series)
+        .expect("新入库序列应可供 Router 选择");
+    assert_eq!(option.study_instance_uid, study);
+    assert_eq!(option.instance_count, 1);
+    assert!(
+        pacs_db::list_routable_series(&pool, institution_two, 100)
+            .await
+            .unwrap()
+            .iter()
+            .all(|value| value.series_instance_uid != series)
+    );
     let source = pacs_db::route_source_by_sop(&pool, 1, &sop).await.unwrap();
     let matched = pacs_db::matching_route_rules(&pool, &source, Some("MODALITY_AE"))
         .await
@@ -151,6 +166,16 @@ async fn destinations_rules_and_deliveries_are_institution_scoped_and_idempotent
             .unwrap()
             .is_empty()
     );
+    let before_approval =
+        pacs_db::enqueue_route_delivery(&pool, &source, destination.id, Some(rule.id), None)
+            .await
+            .unwrap();
+    assert!(before_approval.is_none());
+    let destination = pacs_db::approve_route_destination(&pool, 1, destination.id)
+        .await
+        .unwrap();
+    assert_eq!(destination.approval_status, "approved");
+    assert!(destination.approved_at.is_some());
     let first =
         pacs_db::enqueue_route_delivery(&pool, &source, destination.id, Some(rule.id), None)
             .await

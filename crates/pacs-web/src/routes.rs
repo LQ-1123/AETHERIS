@@ -1,5 +1,6 @@
 //! QIDO-RS 路由与响应编码。
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::{Extension, Path, Query as UrlQuery, State};
@@ -32,6 +33,14 @@ pub struct WebState {
     /// 不必构造 `Store`。为 `None` 时取回接口回 500 并告警,
     /// 而不是静默返回 404 —— 后者会让"存储没配"看起来像"影像不存在"。
     pub store: Option<Arc<pacs_store::Store>>,
+    /// PACS 本机 DIMSE 节点。Router 管理端用它展示实际 AE 与监听端口。
+    pub dicom_node: Option<DicomNodeConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DicomNodeConfig {
+    pub ae_title: String,
+    pub bind: SocketAddr,
 }
 
 impl WebState {
@@ -41,6 +50,7 @@ impl WebState {
             pool,
             max_results: pacs_db::DEFAULT_LIMIT,
             store: None,
+            dicom_node: None,
         }
     }
 
@@ -50,7 +60,16 @@ impl WebState {
             pool,
             max_results: pacs_db::DEFAULT_LIMIT,
             store: Some(store),
+            dicom_node: None,
         }
+    }
+
+    pub fn with_dicom_node(mut self, ae_title: impl Into<String>, bind: SocketAddr) -> Self {
+        self.dicom_node = Some(DicomNodeConfig {
+            ae_title: ae_title.into(),
+            bind,
+        });
+        self
     }
 }
 

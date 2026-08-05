@@ -8,7 +8,8 @@
 DCMTK 测试平台需要同时模拟两个方向：
 
 1. 模拟 CT、MR 等设备，使用 `echoscu`、`storescu` 向 PACS 发送 C-ECHO 和 C-STORE。
-2. 模拟接收设备，使用 `storescp` 接收 PACS Router 发出的 C-ECHO 和 C-STORE。
+2. 模拟接收端点，使用 `storescp` 接收 PACS Router 发出的 C-ECHO 和 C-STORE；该端点
+   也可以替换为另一套 PACS、工作站或 DICOM 网关。
 
 当前 Router 管理 API 支持 HTTP GET、POST、PUT、DELETE；Router 的 DIMSE 出站操作为
 C-ECHO 和 C-STORE。HTTP GET/POST 与 DICOM C-GET 是两套不同协议，当前阶段不把
@@ -85,6 +86,10 @@ PACS_HTTP_BIND=127.0.0.1:8443
 | 管理 API -> PACS | `https://127.0.0.1` | `8443` |
 
 PACS `.env` 保持默认值即可。
+
+PACS 出站时以 `REMOTE_PACS` 作为 Calling AE 建立新的 DIMSE Association。`11112` 是
+PACS SCP 的入站监听端口，不是出站 TCP 源端口；操作系统会为出站连接分配临时源端口。
+对端依靠 Calling AE 识别 PACS，因此不需要让 `storescu` 绑定或冒用 `11112`。
 
 ### 3.2 PACS 运行在 Mac，模拟器运行在 Docker
 
@@ -281,17 +286,18 @@ storescu \
 - `process_status`：`storescp` 子进程是否存活。
 - `pacs_connectivity`：最近一次从模拟设备到 PACS 的 C-ECHO 是否成功。
 
-PACS Viewer 中显示的 Router 设备状态是相反方向，即 PACS 到模拟器的 C-ECHO 或
-C-STORE 结果。两个方向必须分别测试，不能只用进程存活代替网络连通性。
+PACS Viewer 的拓扑只显示管理员已经批准接入的站点，并直接显示 PACS 对站点执行
+C-ECHO/STOW 健康检查的结果。测试平台的进程存活状态不能代替实际网络连通性。
 
 Remote PACS 还会按 Calling AE 和来源 IP 自动登记成功建立过 Association 的入站设备。
 C-ECHO 这类短连接释放后显示为“最近连接”；Association 尚未释放时显示为“连接中”。
 入站连接的来源端口是临时端口，不能作为回传端口，因此自动发现记录不会自动变成
 Router 目的地，回传仍需明确配置设备的固定监听端口。
 
-## 5. 在 PACS 中注册 DCMTK 模拟器
+## 5. 从设备端申请接入 PACS
 
-可以直接在 Viewer 的 DICOM Router 界面创建目的地，也可以调用 API。
+Viewer 不再要求管理员填写主机、端口和 AE。模拟设备或测试平台通过 API 主动提交站点
+名称及固定接收地址，Router 中出现申请后由管理员同意或拒绝。
 
 ### 5.1 获取管理员 JWT
 
@@ -319,7 +325,7 @@ Authorization: Bearer <ACCESS_TOKEN>
 也可以使用具有 `route` scope 的服务账号 API Key，格式为 `pacs_sk_*`。API Key
 只在创建时显示一次，不应写入源码或日志。
 
-### 5.2 创建 DIMSE Router 目的地
+### 5.2 提交 DIMSE 接入申请
 
 PACS 与模拟器都直接运行在同一台 Mac 时：
 
@@ -340,9 +346,24 @@ curl --cacert ./data/storage/tls/ca.crt \
   }'
 ```
 
-响应中的 `id` 是后续连接测试、规则和手工发送使用的 `destination_id`。
+响应中的 `approval_status` 为 `pending`，`id` 是这次接入申请的标识。测试平台只负责
+提交申请，不能使用服务账号 API Key 自行批准。
 
-### 5.3 从 PACS 测试模拟器连接
+### 5.3 管理员批准申请
+
+管理员可以直接在 Viewer 的 DICOM Router 中点击“同意”。也可以使用管理员 JWT：
+
+```sh
+curl --cacert ./data/storage/tls/ca.crt \
+  -X POST \
+  https://127.0.0.1:8443/api/v1/router/destinations/<DESTINATION_ID>/approve \
+  -H 'Authorization: Bearer <ADMIN_ACCESS_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  --data '{}'
+```
+
+批准时 PACS 会自动执行一次 C-ECHO 或 STOW 健康检查，返回 `approval_status`、`status`
+和 `last_latency_ms`。需要再次检测时可调用：
 
 ```sh
 curl --cacert ./data/storage/tls/ca.crt \
@@ -363,12 +384,15 @@ curl --cacert ./data/storage/tls/ca.crt \
 }
 ```
 
-失败时 HTTP 请求仍可能返回目的地对象，但 `status` 为 `offline`，具体错误在
-`last_error`。Viewer 中的“测试连接”按钮调用的是同一接口。
+失败时 HTTP 请求仍可能返回站点对象，但 `status` 为 `offline`，具体错误在
+`last_error`。
 
 ## 6. 路由数据到模拟器
 
-### 6.1 手工发送 Study 或 Series
+### 6.1 分享 Study
+
+Viewer 患者工作列表的每个 Study 后都有“分享”按钮。点击后只需选择自定义名称的已批准
+站点并发送；未批准或已停用站点不会出现在列表中。API 仍支持 Study/Series 范围：
 
 发送整个 Study：
 

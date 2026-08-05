@@ -14,7 +14,7 @@ use chrono::{Duration, Utc};
 use pacs_auth::service_accounts::{ApiScope, ServiceIdentity};
 use pacs_auth::{AuthService, Identity, Permission};
 use pacs_db::{BackgroundJob, JobKind, RouteDestination, RouteProtocol};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ use crate::WebState;
 
 pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
     Router::new()
+        .route("/router/node", get(local_node))
         .route(
             "/router/destinations",
             get(list_destinations).post(create_destination),
@@ -31,7 +32,12 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
             put(update_destination).delete(delete_destination),
         )
         .route("/router/destinations/{id}/test", post(test_destination))
+        .route(
+            "/router/destinations/{id}/approve",
+            post(approve_destination),
+        )
         .route("/router/peers", get(list_observed_peers))
+        .route("/router/series", get(list_routable_series))
         .route("/router/rules", get(list_rules).post(create_rule))
         .route("/router/rules/{id}", put(update_rule).delete(delete_rule))
         .route("/router/send", post(send_scope))
@@ -42,6 +48,22 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
             let auth = Arc::clone(&auth);
             async move { require_route(auth, request, next).await }
         }))
+}
+
+#[derive(Debug, Serialize)]
+struct LocalDicomNode {
+    ae_title: String,
+    listen_host: String,
+    listen_port: u16,
+}
+
+async fn local_node(State(state): State<WebState>) -> Result<Json<LocalDicomNode>, RouterError> {
+    let node = state.dicom_node.ok_or(RouterError::DicomNodeUnavailable)?;
+    Ok(Json(LocalDicomNode {
+        ae_title: node.ae_title,
+        listen_host: node.bind.ip().to_string(),
+        listen_port: node.bind.port(),
+    }))
 }
 
 async fn require_route(auth: Arc<AuthService>, request: Request, next: Next) -> Response {
@@ -187,6 +209,9 @@ async fn test_destination(
 ) -> Result<Json<RouteDestination>, RouterError> {
     let institution_id = institution(user.as_ref(), service.as_ref())?;
     let destination = pacs_db::get_route_destination(&state.pool, institution_id, id).await?;
+    if destination.approval_status != "approved" {
+        return Err(RouterError::BadRequest("站点接入申请尚未批准".to_owned()));
+    }
     let started = Instant::now();
     let result = check_destination(&destination).await;
     let latency = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
@@ -200,6 +225,30 @@ async fn test_destination(
     )
     .await?;
     Ok(Json(updated))
+}
+
+async fn approve_destination(
+    State(state): State<WebState>,
+    Path(id): Path<Uuid>,
+    user: Option<Extension<Identity>>,
+) -> Result<Json<RouteDestination>, RouterError> {
+    let user = user.ok_or(RouterError::Forbidden)?;
+    let institution_id = user.institution_id;
+    let destination = pacs_db::approve_route_destination(&state.pool, institution_id, id).await?;
+    let started = Instant::now();
+    let result = check_destination(&destination).await;
+    let latency = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
+    Ok(Json(
+        pacs_db::record_destination_health(
+            &state.pool,
+            institution_id,
+            id,
+            result.is_ok(),
+            latency,
+            result.as_ref().err().map(String::as_str),
+        )
+        .await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,6 +267,22 @@ async fn list_observed_peers(
             &state.pool,
             institution(user.as_ref(), service.as_ref())?,
             query.limit.unwrap_or(200),
+        )
+        .await?,
+    ))
+}
+
+async fn list_routable_series(
+    State(state): State<WebState>,
+    user: Option<Extension<Identity>>,
+    service: Option<Extension<ServiceIdentity>>,
+    Query(query): Query<PeerQuery>,
+) -> Result<Json<Vec<pacs_db::RoutableSeries>>, RouterError> {
+    Ok(Json(
+        pacs_db::list_routable_series(
+            &state.pool,
+            institution(user.as_ref(), service.as_ref())?,
+            query.limit.unwrap_or(300),
         )
         .await?,
     ))
@@ -344,6 +409,13 @@ async fn send_scope(
             .map_err(|_| RouterError::BadRequest("SeriesInstanceUID 无效".to_owned()))?;
     }
     let institution_id = institution(user.as_ref(), service.as_ref())?;
+    let destination =
+        pacs_db::get_route_destination(&state.pool, institution_id, input.destination_id).await?;
+    if destination.approval_status != "approved" || !destination.enabled {
+        return Err(RouterError::BadRequest(
+            "目标站点尚未批准或已停用".to_owned(),
+        ));
+    }
     let sources = pacs_db::route_sources_for_scope(
         &state.pool,
         institution_id,
@@ -645,12 +717,16 @@ async fn send_stow(destination: &RouteDestination, bytes: &[u8]) -> Result<(), S
 enum RouterError {
     #[error("认证中间件未提供调用方身份")]
     MissingIdentity,
+    #[error("只有管理员可以批准站点接入申请")]
+    Forbidden,
     #[error("{0}")]
     BadRequest(String),
     #[error("资源不存在")]
     NotFound,
     #[error("影像存储未配置")]
     StorageUnavailable,
+    #[error("PACS DIMSE 节点未配置")]
+    DicomNodeUnavailable,
     #[error("路由传输失败: {0}")]
     Transport(String),
     #[error("数据库操作失败")]
@@ -659,13 +735,15 @@ enum RouterError {
 impl IntoResponse for RouterError {
     fn into_response(self) -> Response {
         let status = match &self {
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::NotFound | Self::Database(pacs_db::DbError::NotFound) => StatusCode::NOT_FOUND,
             Self::Database(pacs_db::DbError::Conflict(_)) => StatusCode::CONFLICT,
             Self::Transport(_) => StatusCode::BAD_GATEWAY,
-            Self::MissingIdentity | Self::StorageUnavailable | Self::Database(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            Self::MissingIdentity
+            | Self::StorageUnavailable
+            | Self::DicomNodeUnavailable
+            | Self::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         if status.is_server_error() {
             tracing::error!(error=%self,"DICOM Router 请求失败");
@@ -680,6 +758,21 @@ mod tests {
     use axum::body::Bytes;
     use axum::extract::Request;
     use axum::routing::post;
+    use sqlx::postgres::PgPoolOptions;
+
+    #[tokio::test]
+    async fn local_node_reports_configured_ae_and_listener() {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/router_node_test")
+            .unwrap();
+        let state =
+            WebState::new(pool).with_dicom_node("REMOTE_PACS", "127.0.0.1:11112".parse().unwrap());
+        let Json(node) = local_node(State(state)).await.unwrap();
+        assert_eq!(node.ae_title, "REMOTE_PACS");
+        assert_eq!(node.listen_host, "127.0.0.1");
+        assert_eq!(node.listen_port, 11112);
+    }
+
     #[test]
     fn stow_body_is_related_and_contains_part10() {
         let bytes = b"DICOM";
@@ -699,6 +792,8 @@ mod tests {
             name: "STOW test".to_owned(),
             protocol: RouteProtocol::Stow,
             enabled: true,
+            approval_status: "approved".to_owned(),
+            approved_at: Some(Utc::now()),
             host: None,
             port: None,
             called_ae_title: None,

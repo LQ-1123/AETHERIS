@@ -109,7 +109,8 @@ async fn main() -> Result<()> {
     // HTTP 路由。/auth 不鉴权(登录本身就是取令牌的入口),
     // /dicomweb 整棵子树要求 ViewImages。
     let shared_store = Arc::new(store.clone());
-    let api_state = pacs_web::WebState::with_store(pool.clone(), shared_store.clone());
+    let api_state = pacs_web::WebState::with_store(pool.clone(), shared_store.clone())
+        .with_dicom_node(config.ae_title.clone(), config.dimse_bind);
     let transform_state = api_state.clone();
     let _transform_worker = pacs_web::start_transform_worker(transform_state.clone());
     let _transfer_worker = pacs_web::start_transfer_worker(transform_state.clone());
@@ -146,7 +147,8 @@ async fn main() -> Result<()> {
             pacs_web::dicomweb_routes(
                 // Store 里只有一个 PathBuf,克隆便宜;包进 Arc 是让 WADO 的
                 // handler 和 DIMSE 的 store handler 共用同一份存储根配置
-                pacs_web::WebState::with_store(pool.clone(), shared_store),
+                pacs_web::WebState::with_store(pool.clone(), shared_store)
+                    .with_dicom_node(config.ae_title.clone(), config.dimse_bind),
                 auth_service.clone(),
             ),
         )

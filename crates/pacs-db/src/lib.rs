@@ -45,10 +45,11 @@ pub use retrieve::{
     StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
 };
 pub use router::{
-    ObservedDicomPeer, RouteDelivery, RouteDestination, RouteDestinationInput, RouteProtocol,
-    RouteRule, RouteRuleInput, RouteSource, create_route_destination, create_route_rule,
-    delete_route_destination, delete_route_rule, enqueue_route_delivery, finish_delivery,
-    get_delivery_source, get_route_destination, list_observed_dicom_peers, list_route_deliveries,
+    ObservedDicomPeer, RoutableSeries, RouteDelivery, RouteDestination, RouteDestinationInput,
+    RouteProtocol, RouteRule, RouteRuleInput, RouteSource, approve_route_destination,
+    create_route_destination, create_route_rule, delete_route_destination, delete_route_rule,
+    enqueue_route_delivery, finish_delivery, get_delivery_source, get_route_destination,
+    list_observed_dicom_peers, list_routable_series, list_route_deliveries,
     list_route_destinations, list_route_rules, mark_delivery_running, matching_route_rules,
     observe_dicom_association_closed, observe_dicom_association_opened, record_destination_health,
     replay_route_delivery, reset_observed_dicom_associations, retry_delivery, route_source_by_sop,
