@@ -12,15 +12,18 @@
 //! 这两项的取舍记录在此,避免后续误以为是漏做。
 
 pub mod annotations;
+pub mod ingest;
 pub mod qido;
 pub mod routes;
 pub mod stow;
+pub mod transfers;
 pub mod transformations;
 pub mod wado;
 pub mod worklist;
 
 pub use annotations::annotation_routes;
 pub use routes::{WebState, dicomweb_routes};
+pub use transfers::{start_transfer_worker, transfer_routes};
 pub use transformations::{dicom_transformation_routes, start_transform_worker};
 pub use wado::WadoError;
 pub use worklist::worklist_routes;

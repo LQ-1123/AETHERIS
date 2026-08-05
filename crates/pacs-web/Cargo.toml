@@ -29,9 +29,12 @@ chrono.workspace = true
 sha2.workspace = true
 mime.workspace = true
 multer.workspace = true
+compress-tools.workspace = true
+zip.workspace = true
+libc.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 pacs-core = { workspace = true, features = ["fixtures"] }
 dotenvy.workspace = true
-tempfile.workspace = true
 tower.workspace = true

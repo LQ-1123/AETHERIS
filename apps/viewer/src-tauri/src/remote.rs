@@ -8,12 +8,14 @@ use std::time::Duration;
 use reqwest::{Client, Method, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct RemoteState {
     session: Arc<Mutex<Option<Session>>>,
     download_active: Arc<AtomicBool>,
     download_cancelled: Arc<AtomicBool>,
+    transfer_job: Arc<Mutex<Option<Uuid>>>,
 }
 
 struct Session {
@@ -129,6 +131,7 @@ impl RemoteState {
             session: Arc::new(Mutex::new(None)),
             download_active: Arc::new(AtomicBool::new(false)),
             download_cancelled: Arc::new(AtomicBool::new(false)),
+            transfer_job: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -260,7 +263,8 @@ impl RemoteState {
                 "api/studies/{study_uid}/series/{series_uid}/annotations"
             ))
             .await?;
-        self.authorized_json(Method::POST, url, Some(annotation)).await
+        self.authorized_json(Method::POST, url, Some(annotation))
+            .await
     }
 
     pub async fn update_shared_annotation(
@@ -274,9 +278,8 @@ impl RemoteState {
     ) -> Result<serde_json::Value, RemoteError> {
         validate_uid(study_uid)?;
         validate_uid(series_uid)?;
-        uuid::Uuid::parse_str(annotation_id).map_err(|_| {
-            RemoteError::InvalidResponse("标注 ID 不是有效 UUID".to_owned())
-        })?;
+        uuid::Uuid::parse_str(annotation_id)
+            .map_err(|_| RemoteError::InvalidResponse("标注 ID 不是有效 UUID".to_owned()))?;
         let url = self
             .session_url(&format!(
                 "api/studies/{study_uid}/series/{series_uid}/annotations/{annotation_id}"
@@ -435,6 +438,132 @@ impl RemoteState {
             .map_err(request_error)
     }
 
+    pub async fn create_import(&self) -> Result<Uuid, RemoteError> {
+        let url = self.session_url("api/v1/imports").await?;
+        let value: serde_json::Value = self
+            .authorized_json(Method::POST, url, Some(serde_json::json!({})))
+            .await?;
+        job_id(&value)
+    }
+
+    pub async fn create_upload(
+        &self,
+        job: Uuid,
+        name: &str,
+        size: u64,
+    ) -> Result<Uuid, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/imports/{job}/files"))
+            .await?;
+        let value: serde_json::Value = self
+            .authorized_json(
+                Method::POST,
+                url,
+                Some(serde_json::json!({"relative_name": name, "size": size})),
+            )
+            .await?;
+        value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or_else(|| RemoteError::InvalidResponse("上传响应缺少文件 ID".to_owned()))
+    }
+
+    pub async fn upload_chunk(
+        &self,
+        job: Uuid,
+        upload: Uuid,
+        offset: u64,
+        bytes: Vec<u8>,
+    ) -> Result<(), RemoteError> {
+        let mut url = self
+            .session_url(&format!("api/v1/imports/{job}/files/{upload}"))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("offset", &offset.to_string());
+        self.authorized_bytes(Method::PUT, url, bytes).await?;
+        Ok(())
+    }
+
+    pub async fn upload_offset(&self, job: Uuid, upload: Uuid) -> Result<u64, RemoteError> {
+        let value = self.transfer_status("imports", job).await?;
+        value
+            .get("uploads")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|items| {
+                items.iter().find(|item| {
+                    item.get("id").and_then(serde_json::Value::as_str) == Some(&upload.to_string())
+                })
+            })
+            .and_then(|item| item.get("received_size"))
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| RemoteError::InvalidResponse("任务响应缺少上传偏移".to_owned()))
+    }
+
+    pub async fn complete_import(&self, job: Uuid) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/imports/{job}/complete"))
+            .await?;
+        let _: serde_json::Value = self
+            .authorized_json(Method::POST, url, Some(serde_json::json!({})))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn create_export(
+        &self,
+        study: &str,
+        series: Option<&str>,
+    ) -> Result<Uuid, RemoteError> {
+        let url = self.session_url("api/v1/exports").await?;
+        let value: serde_json::Value = self
+            .authorized_json(
+                Method::POST,
+                url,
+                Some(
+                    serde_json::json!({"study_instance_uid": study, "series_instance_uid": series}),
+                ),
+            )
+            .await?;
+        job_id(&value)
+    }
+
+    pub async fn transfer_status(
+        &self,
+        kind: &str,
+        job: Uuid,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url(&format!("api/v1/{kind}/{job}")).await?;
+        self.get_json(url).await
+    }
+
+    pub async fn download_export(&self, job: Uuid) -> Result<Vec<u8>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/exports/{job}/download"))
+            .await?;
+        let response = self.authorized_get(url).await?;
+        response
+            .bytes()
+            .await
+            .map(|v| v.to_vec())
+            .map_err(request_error)
+    }
+
+    pub async fn begin_transfer(&self, job: Uuid) {
+        *self.transfer_job.lock().await = Some(job);
+    }
+    pub async fn end_transfer(&self) {
+        *self.transfer_job.lock().await = None;
+    }
+    pub async fn cancel_transfer(&self, kind: &str) -> Result<(), RemoteError> {
+        let Some(job) = *self.transfer_job.lock().await else {
+            return Ok(());
+        };
+        let url = self.session_url(&format!("api/v1/{kind}/{job}")).await?;
+        let _: serde_json::Value = self.authorized_json(Method::DELETE, url, None).await?;
+        Ok(())
+    }
+
     pub fn begin_download(&self) -> Result<DownloadGuard, RemoteError> {
         self.download_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -518,6 +647,38 @@ impl RemoteState {
         }
         ensure_success(response).await
     }
+
+    async fn authorized_bytes(
+        &self,
+        method: Method,
+        url: Url,
+        body: Vec<u8>,
+    ) -> Result<Response, RemoteError> {
+        let mut guard = self.session.lock().await;
+        let session = guard.as_mut().ok_or(RemoteError::NotLoggedIn)?;
+        let send = |session: &Session| {
+            session
+                .client
+                .request(method.clone(), url.clone())
+                .bearer_auth(&session.access_token)
+                .body(body.clone())
+                .send()
+        };
+        let mut response = send(session).await.map_err(request_error)?;
+        if response.status() == StatusCode::UNAUTHORIZED {
+            refresh(session).await?;
+            response = send(session).await.map_err(request_error)?;
+        }
+        ensure_success(response).await
+    }
+}
+
+fn job_id(value: &serde_json::Value) -> Result<Uuid, RemoteError> {
+    value
+        .pointer("/job/id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .ok_or_else(|| RemoteError::InvalidResponse("响应缺少任务 ID".to_owned()))
 }
 
 pub struct DownloadGuard(RemoteState);

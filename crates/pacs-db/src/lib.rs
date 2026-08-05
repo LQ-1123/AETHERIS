@@ -17,6 +17,7 @@ pub mod find;
 pub mod ingest;
 mod jobs;
 pub mod retrieve;
+mod transfers;
 mod transformations;
 pub mod worklist;
 
@@ -35,11 +36,17 @@ pub use jobs::{
     fail_job as fail_background_job, finish_job_item as finish_background_job_item,
     get_job as get_background_job, heartbeat_job as heartbeat_background_job,
     list_job_items as list_background_job_items, recover_expired_jobs as recover_background_jobs,
-    request_job_cancellation, start_job_item as start_background_job_item,
+    release_job as release_background_job, request_job_cancellation,
+    start_job_item as start_background_job_item,
     update_job_progress as update_background_job_progress,
 };
 pub use retrieve::{
     StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
+};
+pub use transfers::{
+    ExportArtifact, ExportSource, ImportUpload, UploadStatus, advance_upload, create_import_upload,
+    find_export_artifact, list_export_sources, list_import_uploads, mark_upload_failed,
+    mark_upload_ready, purge_expired_export_artifacts, save_export_artifact,
 };
 pub use transformations::{
     ActivatedVersion, JobRecord, NewPreviewJob, RevisionRecord, RunnableJob, TargetType,

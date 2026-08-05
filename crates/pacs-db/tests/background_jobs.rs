@@ -40,6 +40,7 @@ fn new_job(id: Uuid, kind: JobKind, key: Option<&str>, max_attempts: i32) -> New
         payload: &serde_json::Value::Null,
         progress_total: 2,
         max_attempts,
+        available_at: None,
     }
 }
 

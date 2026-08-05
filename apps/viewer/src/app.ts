@@ -2,11 +2,15 @@ import {
   buildLut,
   cancelMprBuild,
   cancelRemoteDownload,
+  cancelTransfer,
   chooseCaCertificate,
   chooseDicomFiles,
+  chooseImportFiles,
+  chooseImportFolder,
   closeSeries,
   closeMpr,
   confirmTransform,
+  exportFromPacs,
   createSharedAnnotation,
   getTransformSchema,
   listInstanceRevisionsBySop,
@@ -20,6 +24,7 @@ import {
   measureMprRoi,
   openRemoteSeries,
   openSeries,
+  importToPacs,
   prepareMpr,
   previewClinicalTransform,
   previewRollback,
@@ -29,7 +34,7 @@ import {
   selectImageStack,
   updateSharedAnnotation,
 } from './api';
-import { Edit3, createIcons } from 'lucide';
+import { Download, Edit3, createIcons } from 'lucide';
 import {
   AnnotationHistory,
   annotationHitTest,
@@ -44,6 +49,7 @@ import { clampToImage, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
+import { importConflictMessage, importSummary } from './transfer-report';
 import type {
   Annotation,
   AnnotationKind,
@@ -63,6 +69,7 @@ import type {
   SeriesMetadata,
   SharedAnnotationRecord,
   StudySummary,
+  TransferProgress,
   TagRuleInput,
   ToolMode,
   TransformJob,
@@ -244,6 +251,8 @@ export class App {
   private studies = new Map<number, StudySummary[]>();
   private series = new Map<string, RemoteSeriesSummary[]>();
   private worklistBusy = false;
+  private transferActive = false;
+  private transferKind: 'imports' | 'exports' | null = null;
   private transformSchema: TransformSchema | null = null;
   private tagEditorContext: TagEditorContext | null = null;
   private transformPreview: TransformPreviewResponse | null = null;
@@ -285,6 +294,7 @@ export class App {
     };
     this.setupEventListeners();
     this.setupRemoteProgress();
+    this.setupImportDrop();
     this.setupResizeObserver();
     this.restoreConnectionFields();
     this.updateUi();
@@ -868,6 +878,32 @@ export class App {
     requiredElement<HTMLButtonElement>('refresh-worklist').addEventListener('click', () => {
       void this.loadPatients();
     });
+    const importMenu = requiredElement<HTMLElement>('import-menu');
+    const importMenuButton = requiredElement<HTMLButtonElement>('import-menu-button');
+    const importMenuPanel = requiredElement<HTMLElement>('import-menu-panel');
+    const closeImportMenu = (): void => {
+      importMenuPanel.hidden = true;
+      importMenuButton.setAttribute('aria-expanded', 'false');
+    };
+    importMenuButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      importMenuPanel.hidden = !importMenuPanel.hidden;
+      importMenuButton.setAttribute('aria-expanded', String(!importMenuPanel.hidden));
+    });
+    requiredElement<HTMLButtonElement>('import-files').addEventListener('click', () => {
+      closeImportMenu();
+      void this.chooseAndImport(false);
+    });
+    requiredElement<HTMLButtonElement>('import-folder').addEventListener('click', () => {
+      closeImportMenu();
+      void this.chooseAndImport(true);
+    });
+    document.addEventListener('click', (event) => {
+      if (!importMenu.contains(event.target as Node)) closeImportMenu();
+    });
+    requiredElement<HTMLButtonElement>('cancel-transfer').addEventListener('click', () => {
+      if (this.transferKind) void cancelTransfer(this.transferKind).catch((error) => this.showError(errorMessage(error)));
+    });
     requiredElement<HTMLFormElement>('patient-search').addEventListener('submit', (event) => {
       event.preventDefault();
       this.patientPage = 0;
@@ -1083,6 +1119,77 @@ export class App {
         setText('loading-text', `正在构建体数据 ${payload.completed} / ${payload.total}`);
       }),
     );
+    void import('@tauri-apps/api/event').then(({ listen }) =>
+      listen<TransferProgress>('transfer-progress', ({ payload }) => {
+        if (!this.transferActive) return;
+        const text = payload.phase === 'upload'
+          ? `上传 ${formatBytes(payload.completed_bytes)} / ${formatBytes(payload.total_bytes)}`
+          : `处理 ${payload.completed_files} / ${payload.total_files}`;
+        setText('worklist-status', text);
+      }),
+    );
+  }
+
+  private setupImportDrop(): void {
+    void import('@tauri-apps/api/webview').then(({ getCurrentWebview }) =>
+      getCurrentWebview().onDragDropEvent(({ payload }) => {
+        const overlay = requiredElement<HTMLElement>('import-drop-overlay');
+        if (payload.type === 'enter') {
+          if (!this.canEditDicomTags() || this.transferActive) return;
+          setText(
+            'import-drop-detail',
+            `${payload.paths.length} 个项目 · DICOM、ZIP/RAR 或文件夹`,
+          );
+          overlay.hidden = false;
+          return;
+        }
+        if (payload.type === 'leave') {
+          overlay.hidden = true;
+          return;
+        }
+        if (payload.type !== 'drop') return;
+        overlay.hidden = true;
+        if (!this.canEditDicomTags()) {
+          if (this.remoteUser) this.showError('当前账号没有导入 DICOM 的权限');
+          return;
+        }
+        if (this.transferActive) {
+          this.showError('已有导入或导出任务正在进行');
+          return;
+        }
+        if (payload.paths.length) void this.importPaths(payload.paths);
+      }),
+    ).catch((error) => console.warn('无法启用拖拽导入', error));
+  }
+
+  private async chooseAndImport(folder: boolean): Promise<void> {
+    if (!this.canEditDicomTags() || this.transferActive) return;
+    const paths = folder ? await chooseImportFolder() : await chooseImportFiles();
+    if (!paths?.length) return;
+    await this.importPaths(paths);
+  }
+
+  private async importPaths(paths: string[]): Promise<void> {
+    this.transferActive = true; this.transferKind = 'imports'; this.setWorklistBusy(true, '准备上传...');
+    try {
+      const response = await importToPacs(paths);
+      const summary = importSummary(response);
+      setText('worklist-status', summary);
+      const conflict = importConflictMessage(response);
+      if (conflict) this.showError(conflict);
+      this.setWorklistBusy(false);
+      await this.loadPatients();
+      setText('worklist-status', summary);
+    } catch (error) { this.showError(errorMessage(error)); setText('worklist-status', errorMessage(error)); }
+    finally { this.transferActive = false; this.transferKind = null; this.setWorklistBusy(false); }
+  }
+
+  private async exportSelection(studyUid: string, seriesUid?: string): Promise<void> {
+    if (this.transferActive) return;
+    this.transferActive = true; this.transferKind = 'exports'; this.setWorklistBusy(true, '正在生成 ZIP...');
+    try { const result = await exportFromPacs(studyUid, seriesUid); if (result) setText('worklist-status', 'ZIP 已保存'); }
+    catch (error) { this.showError(errorMessage(error)); setText('worklist-status', errorMessage(error)); }
+    finally { this.transferActive = false; this.transferKind = null; this.setWorklistBusy(false); }
   }
 
   private async loadPatients(): Promise<void> {
@@ -1662,6 +1769,7 @@ export class App {
             studyRow.classList.add('study-row');
             studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
             studyItem.append(studyRow);
+            this.appendExportButton(studyItem, study.study_uid);
             this.appendTagEditButton(studyItem, {
               targetType: 'study',
               targetKey: study.study_uid,
@@ -1706,6 +1814,7 @@ export class App {
                     void this.openRemote(study.study_uid, entry.series_uid);
                   });
                   seriesEntry.append(seriesButton);
+                  this.appendExportButton(seriesEntry, study.study_uid, entry.series_uid);
                   this.appendTagEditButton(seriesEntry, {
                     targetType: 'series',
                     targetKey: entry.series_uid,
@@ -1737,7 +1846,15 @@ export class App {
     setText('patient-page', `第 ${this.patientPage + 1} 页`);
     requiredElement<HTMLButtonElement>('patients-previous').disabled = this.patientPage === 0;
     requiredElement<HTMLButtonElement>('patients-next').disabled = !this.hasNextPatientPage;
-    createIcons({ icons: { Edit3 } });
+    createIcons({ icons: { Download, Edit3 } });
+  }
+
+  private appendExportButton(container: HTMLElement, studyUid: string, seriesUid?: string): void {
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'worklist-export-button';
+    button.title = seriesUid ? '导出序列 ZIP' : '导出检查 ZIP'; button.setAttribute('aria-label', button.title);
+    button.innerHTML = `<i data-lucide="download"></i><span>${seriesUid ? '导出序列' : '导出检查'}</span>`;
+    button.addEventListener('click', (event) => { event.stopPropagation(); void this.exportSelection(studyUid, seriesUid); });
+    container.append(button);
   }
 
   private setWorklistBusy(busy: boolean, message = ''): void {
@@ -1746,6 +1863,7 @@ export class App {
     requiredElement<HTMLButtonElement>('refresh-worklist').disabled = busy;
     requiredElement<HTMLInputElement>('patient-query').disabled = busy;
     requiredElement<HTMLButtonElement>('refresh-worklist').classList.toggle('spinning', busy);
+    requiredElement<HTMLButtonElement>('cancel-transfer').hidden = !this.transferActive;
   }
 
   private mprPointerDown(
@@ -3285,6 +3403,13 @@ function worklistRow(
   content.append(heading, sub, metadata);
   button.append(disclosure, content);
   return button;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`;
 }
 
 function emptyWorklistMessage(message: string): HTMLElement {

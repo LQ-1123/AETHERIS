@@ -59,6 +59,9 @@ fn main() {
             commands::preview_rollback,
             commands::open_remote_series,
             commands::cancel_remote_download,
+            commands::import_to_pacs,
+            commands::export_from_pacs,
+            commands::cancel_transfer,
         ]);
 
     // 注册自定义协议

@@ -413,6 +413,101 @@ button svg {
   font-size: 10px;
 }
 
+.worklist-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.import-menu {
+  position: relative;
+}
+
+.worklist-command {
+  height: 30px;
+  gap: 5px;
+  padding: 0 8px;
+  color: #dce1e3;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.worklist-command svg {
+  width: 14px;
+  height: 14px;
+}
+
+.worklist-command span {
+  color: inherit;
+  font-size: inherit;
+}
+
+.import-menu-panel {
+  position: absolute;
+  z-index: 30;
+  top: 35px;
+  right: 0;
+  display: grid;
+  width: 132px;
+  padding: 4px;
+  border: 1px solid #454b4e;
+  border-radius: 4px;
+  background: #202426;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 42%);
+}
+
+.import-menu-panel button {
+  justify-content: flex-start;
+  width: 100%;
+  height: 32px;
+  gap: 7px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  color: #dce1e3;
+  font-size: 10px;
+}
+
+.import-menu-panel button:hover:not(:disabled) {
+  border-color: transparent;
+  background: #303638;
+}
+
+.import-menu-panel svg {
+  width: 14px;
+  height: 14px;
+  color: #91cbd2;
+}
+
+.import-drop-overlay {
+  position: fixed;
+  z-index: 80;
+  inset: 70px 34px 34px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  border: 2px dashed #70c9d3;
+  background: rgb(16 22 24 / 94%);
+  color: #eef7f8;
+  pointer-events: none;
+}
+
+.import-drop-overlay svg {
+  width: 34px;
+  height: 34px;
+  color: #7dd4dd;
+}
+
+.import-drop-overlay strong {
+  font-size: 16px;
+}
+
+.import-drop-overlay span {
+  color: #a7b4b8;
+  font-size: 11px;
+}
+
 .search-control {
   position: relative;
   min-width: 330px;
@@ -441,6 +536,12 @@ button svg {
   font-size: 10px;
 }
 
+.transfer-cancel {
+  min-height: 30px;
+  margin: 0 12px 8px;
+  color: #f0f2f3;
+}
+
 .patient-list {
   min-width: 330px;
   height: calc(100% - 164px);
@@ -461,7 +562,7 @@ button svg {
   grid-template-columns: 12px minmax(0, 1fr);
   align-items: start;
   gap: 8px;
-  padding: 10px 70px 10px 12px;
+  padding: 10px 122px 10px 12px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -547,7 +648,7 @@ button svg {
 }
 
 .series-entry .series-row {
-  padding-right: 68px;
+  padding-right: 112px;
 }
 
 .worklist-edit-button {
@@ -572,6 +673,33 @@ button svg {
 .worklist-edit-button svg {
   width: 13px;
   height: 13px;
+}
+
+.worklist-export-button {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 40px;
+  width: 76px;
+  height: 25px;
+  gap: 4px;
+  padding: 0 6px;
+  border-color: #3b5559;
+  background: #202b2e;
+  color: #a9d6dc;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.worklist-export-button:hover:not(:disabled) {
+  border-color: #58aab4;
+  background: #203a3e;
+  color: #d1f2f5;
+}
+
+.worklist-export-button svg {
+  width: 12px;
+  height: 12px;
 }
 
 .series-row.recommended {

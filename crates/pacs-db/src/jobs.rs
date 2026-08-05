@@ -121,6 +121,8 @@ pub struct NewJob<'a> {
     pub payload: &'a Value,
     pub progress_total: i64,
     pub max_attempts: i32,
+    /// Keep an upload job out of the worker queue until the client completes it.
+    pub available_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -180,9 +182,9 @@ pub async fn create_job(pool: &PgPool, new: NewJob<'_>) -> Result<BackgroundJob,
         r#"
         INSERT INTO background_jobs (
             id, institution_id, created_by, kind, idempotency_key,
-            payload, progress_total, max_attempts
+            payload, progress_total, max_attempts, available_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, now()))
         ON CONFLICT (institution_id, kind, idempotency_key)
             WHERE idempotency_key IS NOT NULL
         DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
@@ -197,8 +199,30 @@ pub async fn create_job(pool: &PgPool, new: NewJob<'_>) -> Result<BackgroundJob,
     .bind(new.payload)
     .bind(new.progress_total)
     .bind(new.max_attempts)
+    .bind(new.available_at)
     .fetch_one(pool)
     .await?;
+    decode_job(&row)
+}
+
+/// Make a deferred queued job available after all upload files are durable.
+pub async fn release_job(
+    pool: &PgPool,
+    institution_id: i64,
+    id: Uuid,
+) -> Result<BackgroundJob, DbError> {
+    let row = sqlx::query(
+        "UPDATE background_jobs
+         SET available_at = now()
+         WHERE institution_id = $1 AND id = $2 AND status = 'queued'
+           AND cancel_requested = false
+         RETURNING *",
+    )
+    .bind(institution_id)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DbError::Conflict("任务不存在、已取消或已开始".to_owned()))?;
     decode_job(&row)
 }
 

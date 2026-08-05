@@ -1,5 +1,6 @@
 import type {
   DicomRevision,
+  ImportTransferResponse,
   PatientSummary,
   MprMetadata,
   MprPlane,
@@ -38,6 +39,37 @@ export async function chooseDicomFiles(): Promise<string[] | null> {
   });
   if (!selected) return null;
   return Array.isArray(selected) ? selected : [selected];
+}
+
+export async function chooseImportFiles(): Promise<string[] | null> {
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({ multiple: true, directory: false,
+    filters: [{ name: 'DICOM 或归档', extensions: ['dcm', 'dicom', 'zip', 'rar', '*'] }] });
+  if (!selected) return null;
+  return Array.isArray(selected) ? selected : [selected];
+}
+
+export async function chooseImportFolder(): Promise<string[] | null> {
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({ multiple: false, directory: true });
+  return typeof selected === 'string' ? [selected] : null;
+}
+
+export async function importToPacs(paths: string[]): Promise<ImportTransferResponse> {
+  const invoke = await getInvoke(); return invoke<ImportTransferResponse>('import_to_pacs', { paths });
+}
+
+export async function exportFromPacs(studyUid: string, seriesUid?: string): Promise<Record<string, unknown> | null> {
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  const destination = await save({ defaultPath: `${seriesUid ? `series-${seriesUid}` : `study-${studyUid}`}.zip`,
+    filters: [{ name: 'ZIP', extensions: ['zip'] }] });
+  if (!destination) return null;
+  const invoke = await getInvoke();
+  return invoke('export_from_pacs', { studyUid, seriesUid, destination });
+}
+
+export async function cancelTransfer(kind: 'imports' | 'exports'): Promise<void> {
+  const invoke = await getInvoke(); await invoke('cancel_transfer', { kind });
 }
 
 export async function chooseCaCertificate(): Promise<string | null> {

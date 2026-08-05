@@ -8,6 +8,7 @@ use crate::state::{SeriesMetadata, ViewerState};
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tauri::command]
 pub async fn open_series(
@@ -404,4 +405,241 @@ pub async fn open_remote_series(
 #[tauri::command]
 pub fn cancel_remote_download(state: State<'_, RemoteState>) {
     state.cancel_download();
+}
+
+#[derive(Clone, Serialize)]
+pub struct TransferProgress {
+    phase: String,
+    completed_bytes: u64,
+    total_bytes: u64,
+    completed_files: usize,
+    total_files: usize,
+    status: Option<String>,
+}
+
+#[tauri::command]
+pub async fn import_to_pacs(
+    paths: Vec<String>,
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    let files = tauri::async_runtime::spawn_blocking(move || collect_upload_files(paths))
+        .await
+        .map_err(|error| format!("扫描导入文件失败: {error}"))??;
+    if files.is_empty() {
+        return Err("没有可上传的文件".to_owned());
+    }
+    let total_bytes = files
+        .iter()
+        .map(|(_, path)| std::fs::metadata(path).map(|v| v.len()).unwrap_or(0))
+        .sum();
+    let job = state.create_import().await.map_err(|e| e.to_string())?;
+    state.begin_transfer(job).await;
+    let result = async {
+        let mut completed_bytes = 0u64;
+        for (index, (name, path)) in files.iter().enumerate() {
+            let size = tokio::fs::metadata(path)
+                .await
+                .map_err(|e| e.to_string())?
+                .len();
+            let upload = state
+                .create_upload(job, name, size)
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut file = tokio::fs::File::open(path)
+                .await
+                .map_err(|e| e.to_string())?;
+            let mut offset = 0u64;
+            let mut buffer = vec![0u8; 8 * 1024 * 1024];
+            loop {
+                let read = file.read(&mut buffer).await.map_err(|e| e.to_string())?;
+                if read == 0 {
+                    break;
+                }
+                let chunk = buffer[..read].to_vec();
+                let mut attempts = 0;
+                loop {
+                    match state.upload_chunk(job, upload, offset, chunk.clone()).await {
+                        Ok(()) => break,
+                        Err(_) if attempts < 3 => {
+                            attempts += 1;
+                            let server_offset = state
+                                .upload_offset(job, upload)
+                                .await
+                                .map_err(|e| e.to_string())?;
+                            if server_offset == offset + read as u64 {
+                                break;
+                            }
+                            if server_offset != offset {
+                                return Err(format!("服务端上传偏移异常: {server_offset}"));
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(250 * attempts))
+                                .await;
+                        }
+                        Err(error) => return Err(error.to_string()),
+                    }
+                }
+                offset += read as u64;
+                completed_bytes += read as u64;
+                let _ = app.emit(
+                    "transfer-progress",
+                    TransferProgress {
+                        phase: "upload".to_owned(),
+                        completed_bytes,
+                        total_bytes,
+                        completed_files: index,
+                        total_files: files.len(),
+                        status: None,
+                    },
+                );
+            }
+        }
+        state
+            .complete_import(job)
+            .await
+            .map_err(|e| e.to_string())?;
+        poll_transfer(&state, "imports", job, &app, total_bytes, files.len()).await
+    }
+    .await;
+    state.end_transfer().await;
+    result
+}
+
+#[tauri::command]
+pub async fn export_from_pacs(
+    study_uid: String,
+    series_uid: Option<String>,
+    destination: String,
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    let job = state
+        .create_export(&study_uid, series_uid.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    state.begin_transfer(job).await;
+    let result = async {
+        let value = poll_transfer(&state, "exports", job, &app, 0, 0).await?;
+        let bytes = state
+            .download_export(job)
+            .await
+            .map_err(|e| e.to_string())?;
+        let target = PathBuf::from(destination);
+        let part = target.with_extension("zip.part");
+        let mut file = tokio::fs::File::create(&part)
+            .await
+            .map_err(|e| e.to_string())?;
+        file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+        file.sync_all().await.map_err(|e| e.to_string())?;
+        tokio::fs::rename(part, target)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(value)
+    }
+    .await;
+    state.end_transfer().await;
+    result
+}
+
+#[tauri::command]
+pub async fn cancel_transfer(kind: String, state: State<'_, RemoteState>) -> Result<(), String> {
+    state
+        .cancel_transfer(&kind)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn poll_transfer(
+    state: &RemoteState,
+    kind: &str,
+    job: uuid::Uuid,
+    app: &AppHandle,
+    total_bytes: u64,
+    total_files: usize,
+) -> Result<serde_json::Value, String> {
+    loop {
+        let value = state
+            .transfer_status(kind, job)
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = value
+            .pointer("/job/status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let completed = value
+            .pointer("/job/progress_completed")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let total = value
+            .pointer("/job/progress_total")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(total_files as u64) as usize;
+        let _ = app.emit(
+            "transfer-progress",
+            TransferProgress {
+                phase: "processing".to_owned(),
+                completed_bytes: total_bytes,
+                total_bytes,
+                completed_files: completed,
+                total_files: total,
+                status: Some(status.to_owned()),
+            },
+        );
+        match status {
+            "succeeded" => return Ok(value),
+            "failed" | "cancelled" => {
+                return Err(value
+                    .pointer("/job/error_message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("任务未完成")
+                    .to_owned());
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_millis(750)).await,
+        }
+    }
+}
+
+fn collect_upload_files(paths: Vec<String>) -> Result<Vec<(String, PathBuf)>, String> {
+    let mut result = Vec::new();
+    for raw in paths {
+        let path = PathBuf::from(raw);
+        if path.is_file() {
+            let name = path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .ok_or("文件名不是 UTF-8")?
+                .to_owned();
+            result.push((name, path));
+        } else if path.is_dir() {
+            collect_directory(&path, &path, &mut result)?;
+        }
+    }
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
+}
+
+fn collect_directory(
+    root: &std::path::Path,
+    directory: &std::path::Path,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            collect_directory(root, &entry.path(), files)?;
+        } else if kind.is_file() {
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push((relative, entry.path()));
+        }
+    }
+    Ok(())
 }

@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Crosshair,
@@ -9,7 +10,9 @@ import {
   Eraser,
   FlipHorizontal2,
   FlipVertical2,
+  FileArchive,
   FolderOpen,
+  FolderUp,
   History,
   Info,
   Check,
@@ -33,6 +36,7 @@ import {
   Square,
   Trash2,
   Undo2,
+  Upload,
   Users,
   X,
   createIcons,
@@ -43,6 +47,7 @@ import './styles.css';
 window.addEventListener('DOMContentLoaded', () => {
   createIcons({
     icons: {
+      ChevronDown,
       ChevronLeft,
       ChevronRight,
       Crosshair,
@@ -53,7 +58,9 @@ window.addEventListener('DOMContentLoaded', () => {
       Eraser,
       FlipHorizontal2,
       FlipVertical2,
+      FileArchive,
       FolderOpen,
+      FolderUp,
       History,
       Info,
       Check,
@@ -77,6 +84,7 @@ window.addEventListener('DOMContentLoaded', () => {
       Square,
       Trash2,
       Undo2,
+      Upload,
       Users,
       X,
     },

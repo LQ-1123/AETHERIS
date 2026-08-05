@@ -166,6 +166,12 @@
         </button>
       </div>
 
+      <div id="import-drop-overlay" class="import-drop-overlay" hidden>
+        <i data-lucide="upload"></i>
+        <strong>释放以导入</strong>
+        <span id="import-drop-detail">DICOM、ZIP/RAR 或文件夹</span>
+      </div>
+
       <section id="workspace">
         <aside id="worklist-panel" aria-label="病人列表">
           <div class="worklist-heading">
@@ -173,15 +179,31 @@
               <h2>病人列表</h2>
               <span id="worklist-count">本页 0 位</span>
             </div>
-            <button id="refresh-worklist" class="icon-button" type="button" title="刷新病人列表" aria-label="刷新病人列表">
-              <i data-lucide="refresh-cw"></i>
-            </button>
+            <div class="worklist-heading-actions">
+              <div id="import-menu" class="import-menu">
+                <button id="import-menu-button" class="worklist-command" type="button" title="导入 DICOM、ZIP/RAR 或文件夹" aria-haspopup="menu" aria-expanded="false">
+                  <i data-lucide="upload"></i><span>导入</span><i data-lucide="chevron-down"></i>
+                </button>
+                <div id="import-menu-panel" class="import-menu-panel" role="menu" hidden>
+                  <button id="import-files" type="button" role="menuitem">
+                    <i data-lucide="file-archive"></i><span>文件或归档</span>
+                  </button>
+                  <button id="import-folder" type="button" role="menuitem">
+                    <i data-lucide="folder-up"></i><span>文件夹</span>
+                  </button>
+                </div>
+              </div>
+              <button id="refresh-worklist" class="icon-button" type="button" title="刷新病人列表" aria-label="刷新病人列表">
+                <i data-lucide="refresh-cw"></i>
+              </button>
+            </div>
           </div>
           <form id="patient-search" class="search-control" role="search">
             <i data-lucide="search"></i>
             <input id="patient-query" type="search" placeholder="姓名或 Patient ID" aria-label="搜索病人" />
           </form>
           <div id="worklist-status" class="worklist-status" aria-live="polite"></div>
+          <button id="cancel-transfer" class="transfer-cancel" type="button" hidden>取消任务</button>
           <div id="patient-list" class="patient-list"></div>
           <div class="worklist-pagination">
             <button id="patients-previous" class="icon-button" type="button" title="上一页" aria-label="上一页">

@@ -250,6 +250,39 @@ export interface DownloadProgress {
   total: number;
 }
 
+export interface TransferProgress {
+  phase: 'upload' | 'processing';
+  completed_bytes: number;
+  total_bytes: number;
+  completed_files: number;
+  total_files: number;
+  status: string | null;
+}
+
+export interface ImportTransferItem {
+  item_key: string;
+  status: 'pending' | 'running' | 'succeeded' | 'skipped' | 'conflict' | 'failed' | 'cancelled';
+  input: { name?: string };
+  result: {
+    disposition?: 'created' | 'duplicate' | 'conflict' | 'invalid' | 'failed';
+    sop_instance_uid?: string | null;
+    error?: string | null;
+  };
+}
+
+export interface ImportTransferResponse {
+  job: {
+    result?: {
+      created?: number;
+      duplicates?: number;
+      conflicts?: number;
+      invalid?: number;
+      failed?: number;
+    };
+  };
+  items?: ImportTransferItem[];
+}
+
 export type TransformTargetType = 'patient' | 'study' | 'series' | 'instance';
 export type TransformScope = 'patient' | 'study' | 'series';
 

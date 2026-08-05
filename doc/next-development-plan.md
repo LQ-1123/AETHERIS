@@ -6,7 +6,7 @@
 
 > **2026-08-05 实施更新：阶段一已完成。** 已落地通用后台任务与明细、
 > PostgreSQL 租约/重试/取消/幂等机制、服务账号与 scoped API Key、API 限流、
-> OpenAPI、全局请求 ID，以及支持 JWT/API Key 的 STOW-RS。下一步从阶段二开始。
+> OpenAPI、全局请求 ID，以及支持 JWT/API Key 的 STOW-RS。阶段二已完成，下一步从阶段三开始。
 
 ## 开发顺序
 
@@ -137,7 +137,7 @@
 
 - [x] 计划确认并写入项目文档。
 - [x] 阶段一：后台任务与开放 API 基础。
-- [ ] 阶段二：批量导入、去重与 ZIP 导出。
+- [x] 阶段二：批量导入、去重与 ZIP 导出。
 - [ ] 阶段三：DICOM 路由引擎。
 - [ ] 阶段四：DICOM 生命周期策略。
 - [ ] 阶段五：Mask 标注与高级查询。
@@ -154,3 +154,23 @@
   PostgreSQL、文件字节保真与版本化修订测试。
 - 根 workspace `cargo clippy --workspace --all-targets -- -D warnings` 通过。
 - Viewer 18 项 TypeScript 测试、生产构建、17 项 Tauri Rust 测试和严格 Clippy 通过。
+
+### 阶段二验收记录（2026-08-05）
+
+- 新增迁移 `0011_transfer_jobs.sql`，真实 PostgreSQL 已验证延迟任务释放、机构隔离、
+  分块偏移冲突、顺序续传和文件完成状态。
+- `/api/v1/imports` 支持文件、文件夹展开、ZIP/RAR 上传，8 MiB 顺序分块、进度、
+  取消和错误后按服务端偏移续传；上传临时文件仅使用服务端 UUID 命名。
+- ZIP/RAR 统一使用 `compress-tools + libarchive`，按魔数识别并限制条目数、单文件、
+  解压总量和压缩比；路径穿越、非普通文件、损坏包和加密 ZIP 测试通过。
+- STOW-RS 与批量导入共用摄取函数，统一执行 DICOM 解析、UID 关系校验、不可变落盘、
+  SHA-256 去重和同 UID 异内容冲突报告；非 DICOM 条目按 `skipped` 记录。
+- `/api/v1/exports` 支持 Study/Series 当前有效版本 ZIP，路径稳定，包含
+  `manifest.json`、实例 UID、大小与 SHA-256；导出包可重新由导入归档读取，并在
+  24 小时后自动清理。
+- Viewer 工作列表增加文件/ZIP/RAR、文件夹导入，Study/Series ZIP 导出、进度和
+  取消控件；前端 18 项测试、生产构建、Tauri 17 项测试和严格 Clippy 通过。
+- 根 workspace 全 target 测试和严格 Clippy 通过，包含 PostgreSQL、DCMTK、STOW、
+  QIDO、WADO、归档安全和导出 manifest/hash 测试。
+- 本机没有 RAR 创建工具，未动态生成 RAR/加密 RAR 夹具；RAR 代码路径由已安装的
+  libarchive 3.8.9 提供，部署与 CI 必须安装 libarchive，并应补充固定 RAR 夹具回归。

@@ -93,3 +93,6 @@ dotenvy = "0.15"
 # 仅测试用
 futures = "0.3"
 tempfile = "3"
+compress-tools = "0.16.1"
+zip = { version = "4", default-features = false, features = ["deflate"] }
+libc = "0.2"

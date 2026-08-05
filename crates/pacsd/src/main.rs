@@ -108,6 +108,7 @@ async fn main() -> Result<()> {
     let api_state = pacs_web::WebState::with_store(pool.clone(), shared_store.clone());
     let transform_state = api_state.clone();
     let _transform_worker = pacs_web::start_transform_worker(transform_state.clone());
+    let _transfer_worker = pacs_web::start_transfer_worker(transform_state.clone());
     let api_routes = pacs_web::worklist_routes(api_state.clone(), auth_service.clone())
         .merge(pacs_web::annotation_routes(
             api_state.clone(),
@@ -125,7 +126,11 @@ async fn main() -> Result<()> {
                 .merge(pacs_auth::service_accounts::service_routes(
                     auth_service.clone(),
                 ))
-                .merge(pacs_auth::service_accounts::documentation_routes()),
+                .merge(pacs_auth::service_accounts::documentation_routes())
+                .merge(pacs_web::transfer_routes(
+                    transform_state,
+                    auth_service.clone(),
+                )),
         )
         .nest(
             "/dicomweb",

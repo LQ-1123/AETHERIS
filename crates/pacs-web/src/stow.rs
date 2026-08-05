@@ -1,6 +1,5 @@
 //! STOW-RS multipart DICOM ingestion (PS3.18 section 10.5).
 
-use std::io::Cursor;
 use std::sync::Arc;
 
 use axum::extract::{Extension, Request, State};
@@ -12,8 +11,6 @@ use axum::{Json, Router};
 use multer::{Constraints, Multipart, SizeLimit};
 use pacs_auth::service_accounts::{ApiScope, ServiceIdentity};
 use pacs_auth::{AuthService, Identity, Permission};
-use pacs_db::{StorageRecord, ingest_instance_for_institution};
-use pacs_store::{InstanceKey, StoreOutcome};
 use serde::Serialize;
 
 use crate::WebState;
@@ -89,7 +86,9 @@ async fn store_instances(
             continue;
         }
         let bytes = field.bytes().await.map_err(StowError::Multipart)?;
-        results.push(ingest_part(store, &state.pool, institution_id, &bytes).await);
+        results.push(PartResult::from(
+            crate::ingest::ingest_dicom(store, &state.pool, institution_id, &bytes).await,
+        ));
     }
 
     if results.is_empty() {
@@ -103,68 +102,6 @@ async fn store_instances(
     };
     audit_upload(&state, user.as_ref(), service.as_ref(), &results).await;
     Ok((status, Json(stow_response(&results))).into_response())
-}
-
-async fn ingest_part(
-    store: &pacs_store::Store,
-    pool: &sqlx::PgPool,
-    institution_id: i64,
-    bytes: &[u8],
-) -> PartResult {
-    let mut object = match dicom::object::from_reader(Cursor::new(bytes)) {
-        Ok(object) => object,
-        Err(error) => return PartResult::failure(None, None, format!("DICOM 解析失败: {error}")),
-    };
-    pacs_core::normalize_file_text(&mut object);
-    let metadata = match pacs_core::extract_metadata(&object) {
-        Ok(metadata) => metadata,
-        Err(error) => return PartResult::failure(None, None, error.to_string()),
-    };
-    let sop_class_uid = metadata
-        .instance
-        .sop_class_uid
-        .as_ref()
-        .map(ToString::to_string);
-    let sop_instance_uid = metadata.instance.uid.to_string();
-    let stored = match store
-        .store(
-            InstanceKey {
-                study: &metadata.study.uid,
-                series: &metadata.series.uid,
-                sop: &metadata.instance.uid,
-            },
-            bytes,
-        )
-        .await
-    {
-        Ok(stored) => stored,
-        Err(error) => {
-            return PartResult::failure(sop_class_uid, Some(sop_instance_uid), error.to_string());
-        }
-    };
-
-    if let Err(error) = ingest_instance_for_institution(
-        pool,
-        &metadata,
-        StorageRecord {
-            relative_path: &stored.relative_path,
-            size: stored.size,
-            sha256: &stored.sha256,
-        },
-        institution_id,
-    )
-    .await
-    {
-        tracing::error!(%error, path = %stored.relative_path, "STOW-RS 入库失败，盘上留下孤儿文件");
-        return PartResult::failure(sop_class_uid, Some(sop_instance_uid), error.to_string());
-    }
-    PartResult {
-        sop_class_uid,
-        sop_instance_uid: Some(sop_instance_uid),
-        success: true,
-        duplicate: stored.outcome == StoreOutcome::AlreadyIdentical,
-        error: None,
-    }
 }
 
 fn multipart_boundary(content_type: Option<&axum::http::HeaderValue>) -> Result<String, StowError> {
@@ -209,6 +146,23 @@ impl PartResult {
             success: false,
             duplicate: false,
             error: Some(error.into()),
+        }
+    }
+}
+
+impl From<crate::ingest::IngestOutcome> for PartResult {
+    fn from(value: crate::ingest::IngestOutcome) -> Self {
+        let success = value.success();
+        let duplicate = matches!(
+            value.disposition,
+            crate::ingest::IngestDisposition::Duplicate
+        );
+        Self {
+            sop_class_uid: value.sop_class_uid,
+            sop_instance_uid: value.sop_instance_uid,
+            success,
+            duplicate,
+            error: value.error,
         }
     }
 }
