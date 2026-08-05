@@ -1,5 +1,12 @@
 export type VoiFunction = 'LINEAR' | 'LINEAR_EXACT' | 'SIGMOID';
-export type ToolMode = 'window' | 'pan' | 'crosshair' | 'length';
+export type AnnotationKind =
+  | 'length'
+  | 'arrow'
+  | 'ellipse_roi'
+  | 'rectangle_roi'
+  | 'angle'
+  | 'point_probe';
+export type ToolMode = 'window' | 'pan' | 'crosshair' | AnnotationKind;
 export type ViewerMode = '2d' | 'mpr';
 export type MprPlane = 'axial' | 'coronal' | 'sagittal';
 
@@ -70,12 +77,79 @@ export interface ViewTransform {
   zoom: number;
   panX: number;
   panY: number;
+  rotation: 0 | 90 | 180 | 270;
+  flipHorizontal: boolean;
+  flipVertical: boolean;
+  inverted: boolean;
 }
 
-export interface LengthMeasurement {
+export interface RoiStatistics {
+  count: number;
+  mean: number;
+  standard_deviation: number;
+  minimum: number;
+  maximum: number;
+  area: number | null;
+  area_unit: 'mm2' | 'px2' | null;
+  unit: string | null;
+}
+
+interface AnnotationBase {
   id: string;
+  revision?: number;
+  syncState?: 'synced' | 'pending' | 'error';
+  measurementError?: string;
+}
+
+export interface LineAnnotation extends AnnotationBase {
+  kind: 'length' | 'arrow';
   start: Point;
   end: Point;
+}
+
+export interface RoiAnnotation extends AnnotationBase {
+  kind: 'ellipse_roi' | 'rectangle_roi';
+  start: Point;
+  end: Point;
+  statistics?: RoiStatistics;
+}
+
+export interface PointProbeAnnotation extends AnnotationBase {
+  kind: 'point_probe';
+  point: Point;
+  statistics?: RoiStatistics;
+}
+
+export interface AngleAnnotation extends AnnotationBase {
+  kind: 'angle';
+  start: Point;
+  vertex: Point;
+  end: Point;
+}
+
+export type Annotation =
+  | LineAnnotation
+  | RoiAnnotation
+  | PointProbeAnnotation
+  | AngleAnnotation;
+
+export interface SharedAnnotationRecord {
+  id: string;
+  study_instance_uid: string;
+  series_instance_uid: string;
+  sop_instance_uid: string | null;
+  frame_number: number | null;
+  coordinate_space: 'image' | 'patient';
+  mpr_plane: MprPlane | null;
+  schema_version: number;
+  kind: AnnotationKind;
+  geometry: Record<string, unknown>;
+  revision: number;
+  created_by: number | null;
+  modified_by: number | null;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PatientPoint3D {

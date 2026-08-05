@@ -1,6 +1,9 @@
 //! Local DICOM series state for the desktop viewer.
 
-use crate::mpr::{MprMetadata, Plane, SourceSlice, Volume};
+use crate::mpr::{
+    MprMetadata, PixelStatistics, Plane, RoiShape, SourceSlice, Volume, decode_stored_values,
+    statistics_for_region,
+};
 use dicom::core::Tag;
 use dicom::dictionary_std::tags;
 use dicom::object::{DefaultDicomObject, open_file};
@@ -433,6 +436,81 @@ impl ViewerState {
             function,
         };
         Ok(GrayLut::build(&frame.pipeline, Some(&window), Some(frame.bits_allocated)).table)
+    }
+
+    pub fn measure_frame_roi(
+        &self,
+        handle: SeriesHandle,
+        stack_index: u32,
+        logical_frame: u32,
+        shape: RoiShape,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) -> Result<PixelStatistics, ViewerError> {
+        let (frame, pixel_area) = {
+            let inner = self.lock();
+            let series = inner
+                .series
+                .get(&handle)
+                .ok_or(ViewerError::UnknownHandle(handle))?;
+            let stack = series
+                .image_stacks
+                .get(stack_index as usize)
+                .ok_or(ViewerError::UnknownImageStack { stack_index })?;
+            let frame = stack.frames.get(logical_frame as usize).cloned().ok_or(
+                ViewerError::FrameOutOfBounds {
+                    frame: logical_frame,
+                    total: stack.frames.len() as u32,
+                },
+            )?;
+            let pixel_area = frame
+                .row_spacing_mm
+                .zip(frame.col_spacing_mm)
+                .map(|(row, col)| row * col);
+            (frame, pixel_area)
+        };
+        let bytes = self.get_frame_bytes(handle, stack_index, logical_frame)?;
+        let mut stored = Vec::with_capacity(frame.rows as usize * frame.cols as usize);
+        decode_stored_values(&bytes, frame.bits_allocated, &frame.pipeline, &mut stored);
+        statistics_for_region(
+            &stored,
+            frame.cols as usize,
+            frame.rows as usize,
+            shape,
+            start,
+            end,
+            frame.pipeline.modality_lut.slope,
+            frame.pipeline.modality_lut.intercept,
+            frame.pipeline.modality_lut.unit,
+            pixel_area,
+        )
+        .map_err(ViewerError::Unsupported)
+    }
+
+    pub fn measure_mpr_roi(
+        &self,
+        handle: SeriesHandle,
+        plane: Plane,
+        slice_index: u32,
+        shape: RoiShape,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) -> Result<PixelStatistics, ViewerError> {
+        let volume = {
+            let inner = self.lock();
+            Arc::clone(
+                inner
+                    .series
+                    .get(&handle)
+                    .ok_or(ViewerError::UnknownHandle(handle))?
+                    .mpr
+                    .as_ref()
+                    .ok_or_else(|| ViewerError::Unsupported("尚未构建 MPR 体数据".to_owned()))?,
+            )
+        };
+        volume
+            .measure_roi(plane, slice_index, shape, start, end)
+            .map_err(ViewerError::Unsupported)
     }
 
     pub fn prepare_mpr(

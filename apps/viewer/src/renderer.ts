@@ -6,7 +6,8 @@ import {
   type ImageGeometry,
   type ViewportSize,
 } from './geometry';
-import type { FrameMetadata, LengthMeasurement, Point, ViewState, ViewTransform } from './types';
+import { angleDegrees, annotationLabel, annotationPoints } from './annotations';
+import type { Annotation, FrameMetadata, Point, ViewState, ViewTransform } from './types';
 
 export class Renderer {
   private imageContext: CanvasRenderingContext2D;
@@ -93,9 +94,10 @@ export class Renderer {
 
   render(
     state: ViewState,
-    measurements: LengthMeasurement[],
-    draft: LengthMeasurement | null,
+    annotations: Annotation[],
+    draft: Annotation | null,
     selectedId: string | null,
+    annotationsVisible = true,
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.imageContext.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -105,16 +107,17 @@ export class Renderer {
     const frame = state.metadata.frames[state.currentFrame];
     if (!frame || !this.frameData) return;
 
-    this.renderView(state, frame, measurements, draft, selectedId, null);
+    this.renderView(state, frame, annotations, draft, selectedId, null, annotationsVisible);
   }
 
   renderMpr(
     view: ViewTransform,
     frame: FrameMetadata,
-    measurements: LengthMeasurement[],
-    draft: LengthMeasurement | null,
+    annotations: Annotation[],
+    draft: Annotation | null,
     selectedId: string | null,
     crosshair: Point,
+    annotationsVisible = true,
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.imageContext.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -122,58 +125,71 @@ export class Renderer {
     this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
     if (!this.frameData) return;
-    this.renderView(view, frame, measurements, draft, selectedId, crosshair);
+    this.renderView(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible);
   }
 
   renderMprOverlay(
     view: ViewTransform,
     frame: FrameMetadata,
-    measurements: LengthMeasurement[],
-    draft: LengthMeasurement | null,
+    annotations: Annotation[],
+    draft: Annotation | null,
     selectedId: string | null,
     crosshair: Point,
+    annotationsVisible = true,
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
-    this.renderOverlay(view, frame, measurements, draft, selectedId, crosshair);
+    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible);
   }
 
   private renderView(
     view: ViewTransform,
     frame: FrameMetadata,
-    measurements: LengthMeasurement[],
-    draft: LengthMeasurement | null,
+    annotations: Annotation[],
+    draft: Annotation | null,
     selectedId: string | null,
     crosshair: Point | null,
+    annotationsVisible: boolean,
   ): void {
 
     const image = imageGeometry(frame);
     const transform = renderTransform(this.viewport, image, view);
+    this.imageContext.save();
     this.imageContext.imageSmoothingEnabled = false;
+    this.imageContext.filter = view.inverted ? 'invert(1)' : 'none';
+    this.imageContext.translate(transform.centerX, transform.centerY);
+    this.imageContext.scale(transform.scale, transform.scale);
+    this.imageContext.rotate(view.rotation * Math.PI / 180);
+    this.imageContext.scale(view.flipHorizontal ? -1 : 1, view.flipVertical ? -1 : 1);
+    this.imageContext.scale(image.columnOverRow, 1);
     this.imageContext.drawImage(
       this.sourceCanvas,
-      transform.originX,
-      transform.originY,
-      transform.width,
-      transform.height,
+      -frame.cols / 2,
+      -frame.rows / 2,
+      frame.cols,
+      frame.rows,
     );
+    this.imageContext.restore();
 
-    this.renderOverlay(view, frame, measurements, draft, selectedId, crosshair);
+    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible);
   }
 
   private renderOverlay(
     view: ViewTransform,
     frame: FrameMetadata,
-    measurements: LengthMeasurement[],
-    draft: LengthMeasurement | null,
+    annotations: Annotation[],
+    draft: Annotation | null,
     selectedId: string | null,
     crosshair: Point | null,
+    annotationsVisible: boolean,
   ): void {
-    for (const measurement of measurements) {
-      this.drawMeasurement(measurement, frame, view, measurement.id === selectedId, false);
+    if (annotationsVisible) {
+      for (const annotation of annotations) {
+        this.drawAnnotation(annotation, frame, view, annotation.id === selectedId, false);
+      }
+      if (draft) this.drawAnnotation(draft, frame, view, false, true);
     }
-    if (draft) this.drawMeasurement(draft, frame, view, false, true);
     if (crosshair) this.drawCrosshair(crosshair, frame, view);
   }
 
@@ -219,58 +235,122 @@ export class Renderer {
     return this.sourceImageData;
   }
 
-  private drawMeasurement(
-    measurement: LengthMeasurement,
+  private drawAnnotation(
+    annotation: Annotation,
     frame: FrameMetadata,
     view: ViewTransform,
     selected: boolean,
     draft: boolean,
   ): void {
-    const start = this.toScreenFor(measurement.start, frame, view);
-    const end = this.toScreenFor(measurement.end, frame, view);
-    const color = selected ? '#ffffff' : draft ? '#7fd6ff' : '#ffd166';
+    const points = annotationPoints(annotation).map((point) => this.toScreenFor(point, frame, view));
+    const color = annotation.syncState === 'error'
+      ? '#ff7a7a'
+      : selected ? '#ffffff' : draft || annotation.syncState === 'pending' ? '#7fd6ff' : '#ffd166';
     const context = this.overlayContext;
     context.save();
     context.strokeStyle = color;
     context.fillStyle = color;
     context.lineWidth = selected ? 2.5 : 1.75;
     context.setLineDash(draft ? [5, 4] : []);
-    context.beginPath();
-    context.moveTo(start.x, start.y);
-    context.lineTo(end.x, end.y);
-    context.stroke();
+    this.drawAnnotationPath(context, annotation, points, frame, view);
     context.setLineDash([]);
-    for (const point of [start, end]) {
+    if (annotation.kind === 'arrow') drawArrowHead(context, points[0], points[1], color);
+    for (const point of points) {
       context.beginPath();
-      context.arc(point.x, point.y, selected ? 4 : 3, 0, Math.PI * 2);
-      context.fill();
+      context.arc(point.x, point.y, selected ? 4 : 2.5, 0, Math.PI * 2);
+      selected ? context.fill() : context.stroke();
     }
 
-    const distance = measurementValue(measurement.start, measurement.end, frame.spacing);
-    const caveat = frame.spacing.confidence === 'detector' ? '  探测器平面' : '';
-    const label = `${distance.value.toFixed(distance.unit === 'mm' ? 1 : 0)} ${distance.unit}${caveat}`;
-    const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    context.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    const metrics = context.measureText(label);
-    const labelX = Math.min(
-      Math.max(6, midpoint.x + 8),
-      this.viewport.width - metrics.width - 14,
-    );
-    const labelY = Math.min(Math.max(20, midpoint.y - 8), this.viewport.height - 8);
-    context.fillStyle = 'rgba(10, 14, 18, 0.86)';
-    context.fillRect(labelX - 5, labelY - 14, metrics.width + 10, 19);
-    context.fillStyle = color;
-    context.fillText(label, labelX, labelY);
+    const label = this.annotationValue(annotation, frame);
+    if (label) this.drawLabel(label, points[points.length - 1], color);
     context.restore();
+  }
+
+  private drawAnnotationPath(
+    context: CanvasRenderingContext2D,
+    annotation: Annotation,
+    points: Point[],
+    frame: FrameMetadata,
+    view: ViewTransform,
+  ): void {
+    context.beginPath();
+    if (annotation.kind === 'ellipse_roi') {
+      const imageStart = annotation.start;
+      const imageEnd = annotation.end;
+      const center = { x: (imageStart.x + imageEnd.x) / 2, y: (imageStart.y + imageEnd.y) / 2 };
+      const rx = Math.abs(imageEnd.x - imageStart.x) / 2;
+      const ry = Math.abs(imageEnd.y - imageStart.y) / 2;
+      for (let index = 0; index <= 64; index += 1) {
+        const angle = index / 64 * Math.PI * 2;
+        const screen = this.toScreenFor(
+          { x: center.x + Math.cos(angle) * rx, y: center.y + Math.sin(angle) * ry },
+          frame,
+          view,
+        );
+        if (index === 0) context.moveTo(screen.x, screen.y);
+        else context.lineTo(screen.x, screen.y);
+      }
+      context.closePath();
+    } else if (annotation.kind === 'rectangle_roi') {
+      const corners = [
+        annotation.start,
+        { x: annotation.end.x, y: annotation.start.y },
+        annotation.end,
+        { x: annotation.start.x, y: annotation.end.y },
+      ].map((point) => this.toScreenFor(point, frame, view));
+      context.moveTo(corners[0].x, corners[0].y);
+      for (const corner of corners.slice(1)) context.lineTo(corner.x, corner.y);
+      context.closePath();
+    } else if (annotation.kind === 'angle') {
+      context.moveTo(points[0].x, points[0].y);
+      context.lineTo(points[1].x, points[1].y);
+      context.lineTo(points[2].x, points[2].y);
+    } else if (annotation.kind === 'point_probe') {
+      const point = points[0];
+      context.moveTo(point.x - 7, point.y);
+      context.lineTo(point.x + 7, point.y);
+      context.moveTo(point.x, point.y - 7);
+      context.lineTo(point.x, point.y + 7);
+    } else {
+      context.moveTo(points[0].x, points[0].y);
+      context.lineTo(points[1].x, points[1].y);
+    }
+    context.stroke();
+  }
+
+  private annotationValue(annotation: Annotation, frame: FrameMetadata): string | null {
+    const statistics = annotationLabel(annotation);
+    if (statistics) return statistics;
+    if (annotation.kind === 'length') {
+      const distance = measurementValue(annotation.start, annotation.end, frame.spacing);
+      const caveat = frame.spacing.confidence === 'detector' ? '  探测器平面' : '';
+      return `${distance.value.toFixed(distance.unit === 'mm' ? 1 : 0)} ${distance.unit}${caveat}`;
+    }
+    if (annotation.kind === 'angle') return `${angleDegrees(annotation).toFixed(1)}°`;
+    if (annotation.measurementError) return annotation.measurementError;
+    return annotation.syncState === 'error' ? '同步失败' : null;
+  }
+
+  private drawLabel(label: string, anchor: Point, color: string): void {
+    const context = this.overlayContext;
+    const lines = label.split('\n');
+    context.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const width = Math.max(...lines.map((line) => context.measureText(line).width));
+    const x = Math.min(Math.max(6, anchor.x + 8), this.viewport.width - width - 14);
+    const y = Math.min(Math.max(20, anchor.y - 8), this.viewport.height - lines.length * 16 - 4);
+    context.fillStyle = 'rgba(10, 14, 18, 0.88)';
+    context.fillRect(x - 5, y - 14, width + 10, lines.length * 16 + 3);
+    context.fillStyle = color;
+    lines.forEach((line, index) => context.fillText(line, x, y + index * 16));
   }
 
   private drawCrosshair(point: Point, frame: FrameMetadata, view: ViewTransform): void {
     const screen = this.toScreenFor(point, frame, view);
     const transform = renderTransform(this.viewport, imageGeometry(frame), view);
-    const left = Math.max(0, transform.originX);
-    const right = Math.min(this.viewport.width, transform.originX + transform.width);
-    const top = Math.max(0, transform.originY);
-    const bottom = Math.min(this.viewport.height, transform.originY + transform.height);
+    const left = Math.max(0, transform.centerX - transform.width / 2);
+    const right = Math.min(this.viewport.width, transform.centerX + transform.width / 2);
+    const top = Math.max(0, transform.centerY - transform.height / 2);
+    const bottom = Math.min(this.viewport.height, transform.centerY + transform.height / 2);
     const context = this.overlayContext;
     context.save();
     context.strokeStyle = '#45d4e3';
@@ -288,6 +368,25 @@ export class Renderer {
     context.stroke();
     context.restore();
   }
+}
+
+function drawArrowHead(
+  context: CanvasRenderingContext2D,
+  start: Point,
+  end: Point,
+  color: string,
+): void {
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const size = 12;
+  context.save();
+  context.fillStyle = color;
+  context.beginPath();
+  context.moveTo(end.x, end.y);
+  context.lineTo(end.x - Math.cos(angle - Math.PI / 6) * size, end.y - Math.sin(angle - Math.PI / 6) * size);
+  context.lineTo(end.x - Math.cos(angle + Math.PI / 6) * size, end.y - Math.sin(angle + Math.PI / 6) * size);
+  context.closePath();
+  context.fill();
+  context.restore();
 }
 
 export function imageGeometry(frame: FrameMetadata): ImageGeometry {

@@ -79,6 +79,58 @@
           <button data-tool="length" data-requires-series type="button" title="测距" aria-label="测距">
             <i data-lucide="ruler"></i>
           </button>
+          <button data-tool="arrow" data-requires-series type="button" title="箭头标注" aria-label="箭头标注">
+            <i data-lucide="mouse-pointer-2"></i>
+          </button>
+          <button data-tool="ellipse_roi" data-requires-series type="button" title="椭圆 ROI" aria-label="椭圆 ROI">
+            <i data-lucide="circle"></i>
+          </button>
+          <button data-tool="rectangle_roi" data-requires-series type="button" title="矩形 ROI" aria-label="矩形 ROI">
+            <i data-lucide="square"></i>
+          </button>
+          <button data-tool="angle" data-requires-series type="button" title="角度测量" aria-label="角度测量">
+            <i data-lucide="drafting-compass"></i>
+          </button>
+          <button data-tool="point_probe" data-requires-series type="button" title="CT 值探针" aria-label="CT 值探针">
+            <i data-lucide="scan-line"></i>
+          </button>
+        </div>
+        <div class="segmented" role="group" aria-label="标注历史">
+          <button id="undo-annotation" data-requires-series type="button" title="撤销标注 (Ctrl/Cmd+Z)" aria-label="撤销标注">
+            <i data-lucide="undo-2"></i>
+          </button>
+          <button id="redo-annotation" data-requires-series type="button" title="重做标注 (Ctrl/Cmd+Shift+Z)" aria-label="重做标注">
+            <i data-lucide="redo-2"></i>
+          </button>
+          <button id="toggle-annotations" data-requires-series type="button" title="显示或隐藏标注 (V)" aria-label="显示或隐藏标注">
+            <i data-lucide="eye"></i>
+          </button>
+          <button id="retry-annotation-sync" data-requires-series type="button" title="重试失败的标注同步" aria-label="重试失败的标注同步">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <button id="clear-current-annotations" data-requires-series type="button" title="清除当前图像标注" aria-label="清除当前图像标注">
+            <i data-lucide="eraser"></i>
+          </button>
+          <button id="clear-all-annotations" data-requires-series type="button" title="清除整个序列标注" aria-label="清除整个序列标注">
+            <i data-lucide="trash-2"></i>
+          </button>
+        </div>
+        <div class="segmented" role="group" aria-label="图像方向与反色">
+          <button id="invert-btn" data-requires-series type="button" title="反色 (I)" aria-label="反色">
+            <i data-lucide="contrast"></i>
+          </button>
+          <button id="flip-horizontal-btn" data-requires-series type="button" title="水平翻转" aria-label="水平翻转">
+            <i data-lucide="flip-horizontal-2"></i>
+          </button>
+          <button id="flip-vertical-btn" data-requires-series type="button" title="垂直翻转" aria-label="垂直翻转">
+            <i data-lucide="flip-vertical-2"></i>
+          </button>
+          <button id="rotate-left-btn" data-requires-series type="button" title="逆时针旋转 90°" aria-label="逆时针旋转 90°">
+            <i data-lucide="rotate-ccw"></i>
+          </button>
+          <button id="rotate-right-btn" data-requires-series type="button" title="顺时针旋转 90°" aria-label="顺时针旋转 90°">
+            <i data-lucide="rotate-cw"></i>
+          </button>
         </div>
         <button id="reset-btn" class="icon-button" data-requires-series type="button" title="重置视图" aria-label="重置视图">
           <i data-lucide="rotate-ccw"></i>

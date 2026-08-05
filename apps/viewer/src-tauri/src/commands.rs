@@ -1,6 +1,6 @@
 //! Tauri IPC commands used by the viewer frontend.
 
-use crate::mpr::{MprMetadata, Plane};
+use crate::mpr::{MprMetadata, PixelStatistics, Plane, RoiShape};
 use crate::remote::{
     DownloadProgress, PatientSummary, RemoteState, RemoteUser, SeriesSummary, StudySummary,
 };
@@ -60,6 +60,44 @@ pub fn build_lut(
         )
         .map(tauri::ipc::Response::new)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn measure_frame_roi(
+    handle: u64,
+    stack_index: u32,
+    frame_index: u32,
+    shape: RoiShape,
+    start: [f64; 2],
+    end: [f64; 2],
+    state: State<'_, ViewerState>,
+) -> Result<PixelStatistics, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.measure_frame_roi(handle, stack_index, frame_index, shape, start, end)
+    })
+    .await
+    .map_err(|error| format!("像素统计任务失败: {error}"))?
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn measure_mpr_roi(
+    handle: u64,
+    plane: Plane,
+    slice_index: u32,
+    shape: RoiShape,
+    start: [f64; 2],
+    end: [f64; 2],
+    state: State<'_, ViewerState>,
+) -> Result<PixelStatistics, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.measure_mpr_roi(handle, plane, slice_index, shape, start, end)
+    })
+    .await
+    .map_err(|error| format!("MPR 像素统计任务失败: {error}"))?
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Serialize)]
@@ -178,6 +216,55 @@ pub async fn list_study_series(
 ) -> Result<Vec<SeriesSummary>, String> {
     state
         .list_study_series(&study_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_shared_annotations(
+    study_uid: String,
+    series_uid: String,
+    since: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .list_shared_annotations(&study_uid, &series_uid, since.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn create_shared_annotation(
+    study_uid: String,
+    series_uid: String,
+    annotation: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .create_shared_annotation(&study_uid, &series_uid, annotation)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn update_shared_annotation(
+    study_uid: String,
+    series_uid: String,
+    annotation_id: String,
+    expected_revision: i64,
+    geometry: serde_json::Value,
+    deleted: bool,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .update_shared_annotation(
+            &study_uid,
+            &series_uid,
+            &annotation_id,
+            expected_revision,
+            geometry,
+            deleted,
+        )
         .await
         .map_err(|error| error.to_string())
 }

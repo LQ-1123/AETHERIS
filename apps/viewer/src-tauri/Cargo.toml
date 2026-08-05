@@ -41,6 +41,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tempfile = "3"
 rayon = "1.10"
+uuid = "1"
 
 [dev-dependencies]
 pacs-core = { path = "../../../crates/pacs-core", features = ["fixtures"] }

@@ -34,6 +34,9 @@ pub enum Action {
     StoreImages,
     DeleteImages,
     ViewAuditLog,
+    AnnotationCreated,
+    AnnotationUpdated,
+    AnnotationDeleted,
 }
 
 impl Action {
@@ -51,6 +54,9 @@ impl Action {
             Self::StoreImages => "store_images",
             Self::DeleteImages => "delete_images",
             Self::ViewAuditLog => "view_audit_log",
+            Self::AnnotationCreated => "annotation_created",
+            Self::AnnotationUpdated => "annotation_updated",
+            Self::AnnotationDeleted => "annotation_deleted",
         }
     }
 }
@@ -206,6 +212,9 @@ mod tests {
             Action::StoreImages,
             Action::DeleteImages,
             Action::ViewAuditLog,
+            Action::AnnotationCreated,
+            Action::AnnotationUpdated,
+            Action::AnnotationDeleted,
         ];
         let unique: std::collections::HashSet<_> = actions.iter().map(|a| a.as_str()).collect();
         assert_eq!(unique.len(), actions.len(), "动作名有重复,统计会串");

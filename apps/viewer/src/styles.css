@@ -156,6 +156,9 @@ input:disabled {
   padding: 0 10px;
   border-bottom: 1px solid #34383b;
   background: #202326;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .brand {
@@ -642,7 +645,12 @@ body[data-tool="pan"] #overlay-canvas {
   cursor: grab;
 }
 
-body[data-tool="length"] #overlay-canvas {
+body[data-tool="length"] #overlay-canvas,
+body[data-tool="arrow"] #overlay-canvas,
+body[data-tool="ellipse_roi"] #overlay-canvas,
+body[data-tool="rectangle_roi"] #overlay-canvas,
+body[data-tool="angle"] #overlay-canvas,
+body[data-tool="point_probe"] #overlay-canvas {
   cursor: crosshair;
 }
 
@@ -704,6 +712,11 @@ body[data-tool="pan"] .mpr-viewport canvas[id$="overlay-canvas"] {
 }
 
 body[data-tool="length"] .mpr-viewport canvas[id$="overlay-canvas"],
+body[data-tool="arrow"] .mpr-viewport canvas[id$="overlay-canvas"],
+body[data-tool="ellipse_roi"] .mpr-viewport canvas[id$="overlay-canvas"],
+body[data-tool="rectangle_roi"] .mpr-viewport canvas[id$="overlay-canvas"],
+body[data-tool="angle"] .mpr-viewport canvas[id$="overlay-canvas"],
+body[data-tool="point_probe"] .mpr-viewport canvas[id$="overlay-canvas"],
 body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   cursor: crosshair;
 }

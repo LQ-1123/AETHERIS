@@ -10,6 +10,12 @@ import type { SpacingInfo } from './types';
 
 const viewport = { width: 1000, height: 800 };
 const image = { rows: 400, cols: 500, columnOverRow: 1 };
+const display = {
+  rotation: 0 as const,
+  flipHorizontal: false,
+  flipVertical: false,
+  inverted: false,
+};
 
 describe('viewer geometry', () => {
   it('fits an image without changing its aspect ratio', () => {
@@ -18,7 +24,7 @@ describe('viewer geometry', () => {
   });
 
   it('round-trips image and screen coordinates', () => {
-    const view = { zoom: 1.7, panX: 28, panY: -13 };
+    const view = { zoom: 1.7, panX: 28, panY: -13, ...display };
     const original = { x: 133.25, y: 291.5 };
     const screen = imageToScreen(original, viewport, image, view);
     const restored = screenToImage(screen, viewport, image, view);
@@ -28,12 +34,32 @@ describe('viewer geometry', () => {
 
   it('keeps the image point under the cursor fixed while zooming', () => {
     const cursor = { x: 720, y: 240 };
-    const before = { zoom: 1, panX: 0, panY: 0 };
+    const before = { zoom: 1, panX: 0, panY: 0, ...display };
     const imagePoint = screenToImage(cursor, viewport, image, before);
     const after = zoomAt(before, cursor, 2.4, viewport, image);
     const screenAfter = imageToScreen(imagePoint, viewport, image, after);
     expect(screenAfter.x).toBeCloseTo(cursor.x, 8);
     expect(screenAfter.y).toBeCloseTo(cursor.y, 8);
+  });
+
+  it('round-trips coordinates after rotation and flipping', () => {
+    const view = {
+      zoom: 1.2,
+      panX: -17,
+      panY: 25,
+      rotation: 90 as const,
+      flipHorizontal: true,
+      flipVertical: false,
+      inverted: true,
+    };
+    const original = { x: 47.5, y: 302.25 };
+    const screen = imageToScreen(original, viewport, image, view);
+    expect(screenToImage(screen, viewport, image, view)).toEqual(
+      expect.objectContaining({
+        x: expect.closeTo(original.x, 8),
+        y: expect.closeTo(original.y, 8),
+      }),
+    );
   });
 
   it('uses DICOM row and column spacing in the correct directions', () => {

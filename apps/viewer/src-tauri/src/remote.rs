@@ -228,6 +228,72 @@ impl RemoteState {
         self.get_json(url).await
     }
 
+    pub async fn list_shared_annotations(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        since: Option<&str>,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        let mut url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/annotations"
+            ))
+            .await?;
+        if let Some(since) = since {
+            url.query_pairs_mut().append_pair("since", since);
+        }
+        self.get_json(url).await
+    }
+
+    pub async fn create_shared_annotation(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        annotation: serde_json::Value,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/annotations"
+            ))
+            .await?;
+        self.authorized_json(Method::POST, url, Some(annotation)).await
+    }
+
+    pub async fn update_shared_annotation(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        annotation_id: &str,
+        expected_revision: i64,
+        geometry: serde_json::Value,
+        deleted: bool,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        uuid::Uuid::parse_str(annotation_id).map_err(|_| {
+            RemoteError::InvalidResponse("标注 ID 不是有效 UUID".to_owned())
+        })?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/annotations/{annotation_id}"
+            ))
+            .await?;
+        self.authorized_json(
+            Method::PATCH,
+            url,
+            Some(serde_json::json!({
+                "expected_revision": expected_revision,
+                "geometry": geometry,
+                "deleted": deleted,
+            })),
+        )
+        .await
+    }
+
     pub async fn transform_schema(&self) -> Result<serde_json::Value, RemoteError> {
         let url = self.session_url("api/dicom/schema").await?;
         self.get_json(url).await

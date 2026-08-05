@@ -12,6 +12,7 @@
 //! 却要为此在每次改表后多一道 `cargo sqlx prepare`。SQL 的正确性交给
 //! 跑在真实数据库上的集成测试来保证。
 
+mod annotations;
 pub mod find;
 pub mod ingest;
 pub mod retrieve;
@@ -79,3 +80,7 @@ pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
     sqlx::migrate!("./migrations").run(pool).await?;
     Ok(())
 }
+pub use annotations::{
+    AnnotationRecord, AnnotationUpdate, NewAnnotation, create_annotation, list_annotations,
+    update_annotation,
+};

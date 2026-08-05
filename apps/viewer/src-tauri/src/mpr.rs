@@ -35,6 +35,26 @@ pub enum Plane {
     Sagittal,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoiShape {
+    Point,
+    Rectangle,
+    Ellipse,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct PixelStatistics {
+    pub count: usize,
+    pub mean: f64,
+    pub standard_deviation: f64,
+    pub minimum: f64,
+    pub maximum: f64,
+    pub area: Option<f64>,
+    pub area_unit: Option<&'static str>,
+    pub unit: Option<&'static str>,
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct MprMetadata {
     pub stack_index: u32,
@@ -342,6 +362,37 @@ impl Volume {
             .collect())
     }
 
+    pub fn measure_roi(
+        &self,
+        plane: Plane,
+        slice_index: u32,
+        shape: RoiShape,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) -> Result<PixelStatistics, String> {
+        let metadata = self
+            .planes
+            .iter()
+            .find(|candidate| candidate.plane == plane)
+            .expect("三个标准切面总是存在");
+        if slice_index >= metadata.slice_count {
+            return Err(format!("MPR 切面越界: {slice_index} >= {}", metadata.slice_count));
+        }
+        let samples = self.resampled_slice(plane, slice_index, metadata);
+        statistics_for_region(
+            &samples,
+            metadata.cols as usize,
+            metadata.rows as usize,
+            shape,
+            start,
+            end,
+            self.pipeline.modality_lut.slope,
+            self.pipeline.modality_lut.intercept,
+            self.pipeline.modality_lut.unit,
+            Some(metadata.pixel_spacing_mm * metadata.pixel_spacing_mm),
+        )
+    }
+
     fn resampled_slice(
         &self,
         plane: Plane,
@@ -457,6 +508,92 @@ impl Volume {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn statistics_for_region(
+    samples: &[f32],
+    cols: usize,
+    rows: usize,
+    shape: RoiShape,
+    start: [f64; 2],
+    end: [f64; 2],
+    slope: f64,
+    intercept: f64,
+    unit: Option<&'static str>,
+    pixel_area: Option<f64>,
+) -> Result<PixelStatistics, String> {
+    if cols == 0 || rows == 0 || samples.len() != cols * rows {
+        return Err("像素缓冲区尺寸无效".to_owned());
+    }
+    if !start.iter().chain(end.iter()).all(|value| value.is_finite()) {
+        return Err("测量坐标必须是有限数值".to_owned());
+    }
+    let mut values = Vec::new();
+    if matches!(shape, RoiShape::Point) {
+        let col = start[0].round().clamp(0.0, (cols - 1) as f64) as usize;
+        let row = start[1].round().clamp(0.0, (rows - 1) as f64) as usize;
+        let stored = f64::from(samples[row * cols + col]);
+        if stored.is_finite() {
+            values.push(stored * slope + intercept);
+        }
+    } else {
+        let left = start[0].min(end[0]);
+        let right = start[0].max(end[0]);
+        let top = start[1].min(end[1]);
+        let bottom = start[1].max(end[1]);
+        let center_x = (left + right) / 2.0;
+        let center_y = (top + bottom) / 2.0;
+        let radius_x = (right - left) / 2.0;
+        let radius_y = (bottom - top) / 2.0;
+        let first_col = left.floor().max(0.0) as usize;
+        let last_col = right.ceil().min((cols - 1) as f64) as usize;
+        let first_row = top.floor().max(0.0) as usize;
+        let last_row = bottom.ceil().min((rows - 1) as f64) as usize;
+        for row in first_row..=last_row {
+            for col in first_col..=last_col {
+                let x = col as f64 + 0.5;
+                let y = row as f64 + 0.5;
+                let included = match shape {
+                    RoiShape::Rectangle => x >= left && x <= right && y >= top && y <= bottom,
+                    RoiShape::Ellipse if radius_x > 0.0 && radius_y > 0.0 => {
+                        ((x - center_x) / radius_x).powi(2)
+                            + ((y - center_y) / radius_y).powi(2)
+                            <= 1.0
+                    }
+                    _ => false,
+                };
+                if !included {
+                    continue;
+                }
+                let stored = f64::from(samples[row * cols + col]);
+                if stored.is_finite() {
+                    values.push(stored * slope + intercept);
+                }
+            }
+        }
+    }
+    if values.is_empty() {
+        return Err("测量区域内没有有效像素".to_owned());
+    }
+    let count = values.len();
+    let mean = values.iter().sum::<f64>() / count as f64;
+    let variance = values.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / count as f64;
+    let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let area = (!matches!(shape, RoiShape::Point)).then(|| {
+        pixel_area.map_or(count as f64, |value| value * count as f64)
+    });
+    Ok(PixelStatistics {
+        count,
+        mean,
+        standard_deviation: variance.sqrt(),
+        minimum,
+        maximum,
+        area,
+        area_unit: area.map(|_| if pixel_area.is_some() { "mm2" } else { "px2" }),
+        unit,
+    })
+}
+
 #[derive(Clone, Copy)]
 struct VoxelPoint {
     x: f64,
@@ -511,7 +648,7 @@ fn compatible_pipeline(left: &Pipeline, right: &Pipeline) -> bool {
         && left.photometric != Photometric::NotMonochrome
 }
 
-fn decode_stored_values(
+pub(crate) fn decode_stored_values(
     bytes: &[u8],
     bits_allocated: u16,
     pipeline: &Pipeline,
@@ -741,3 +878,46 @@ mod tests {
         assert!(irregular.contains("间距不均匀"));
     }
 }
+    #[test]
+    fn roi_statistics_apply_modality_rescale_and_area() {
+        let samples = [0.0, 100.0, 200.0, 300.0];
+        let stats = statistics_for_region(
+            &samples,
+            2,
+            2,
+            RoiShape::Rectangle,
+            [0.0, 0.0],
+            [2.0, 2.0],
+            1.0,
+            -100.0,
+            Some("HU"),
+            Some(0.25),
+        )
+        .unwrap();
+        assert_eq!(stats.count, 4);
+        assert!((stats.mean - 50.0).abs() < 1e-9);
+        assert!((stats.minimum + 100.0).abs() < 1e-9);
+        assert!((stats.maximum - 200.0).abs() < 1e-9);
+        assert_eq!(stats.area, Some(1.0));
+        assert_eq!(stats.area_unit, Some("mm2"));
+        assert_eq!(stats.unit, Some("HU"));
+    }
+
+    #[test]
+    fn point_probe_ignores_invalid_mpr_samples() {
+        let samples = [f32::NAN, 42.0];
+        let error = statistics_for_region(
+            &samples,
+            2,
+            1,
+            RoiShape::Point,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            1.0,
+            0.0,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("没有有效像素"));
+    }

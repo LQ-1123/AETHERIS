@@ -3,9 +3,11 @@ import type {
   PatientSummary,
   MprMetadata,
   MprPlane,
+  RoiStatistics,
   RemoteSeriesSummary,
   RemoteUser,
   SeriesMetadata,
+  SharedAnnotationRecord,
   StudySummary,
   TagRuleInput,
   TransformJob,
@@ -100,6 +102,43 @@ export async function listStudySeries(studyUid: string): Promise<RemoteSeriesSum
   return invoke<RemoteSeriesSummary[]>('list_study_series', { studyUid });
 }
 
+export async function listSharedAnnotations(
+  studyUid: string,
+  seriesUid: string,
+  since?: string,
+): Promise<SharedAnnotationRecord[]> {
+  const invoke = await getInvoke();
+  return invoke<SharedAnnotationRecord[]>('list_shared_annotations', { studyUid, seriesUid, since });
+}
+
+export async function createSharedAnnotation(
+  studyUid: string,
+  seriesUid: string,
+  annotation: Record<string, unknown>,
+): Promise<SharedAnnotationRecord> {
+  const invoke = await getInvoke();
+  return invoke<SharedAnnotationRecord>('create_shared_annotation', { studyUid, seriesUid, annotation });
+}
+
+export async function updateSharedAnnotation(
+  studyUid: string,
+  seriesUid: string,
+  annotationId: string,
+  expectedRevision: number,
+  geometry: Record<string, unknown>,
+  deleted: boolean,
+): Promise<SharedAnnotationRecord> {
+  const invoke = await getInvoke();
+  return invoke<SharedAnnotationRecord>('update_shared_annotation', {
+    studyUid,
+    seriesUid,
+    annotationId,
+    expectedRevision,
+    geometry,
+    deleted,
+  });
+}
+
 export async function getTransformSchema(): Promise<TransformSchema> {
   const invoke = await getInvoke();
   return invoke<TransformSchema>('transform_schema');
@@ -184,6 +223,44 @@ export async function buildLut(
   if (result instanceof Uint8Array) return result;
   if (result instanceof ArrayBuffer) return new Uint8Array(result);
   return new Uint8Array(result);
+}
+
+export async function measureFrameRoi(
+  handle: number,
+  stackIndex: number,
+  frameIndex: number,
+  shape: 'point' | 'rectangle' | 'ellipse',
+  start: [number, number],
+  end: [number, number],
+): Promise<RoiStatistics> {
+  const invoke = await getInvoke();
+  return invoke<RoiStatistics>('measure_frame_roi', {
+    handle,
+    stackIndex,
+    frameIndex,
+    shape,
+    start,
+    end,
+  });
+}
+
+export async function measureMprRoi(
+  handle: number,
+  plane: MprPlane,
+  sliceIndex: number,
+  shape: 'point' | 'rectangle' | 'ellipse',
+  start: [number, number],
+  end: [number, number],
+): Promise<RoiStatistics> {
+  const invoke = await getInvoke();
+  return invoke<RoiStatistics>('measure_mpr_roi', {
+    handle,
+    plane,
+    sliceIndex,
+    shape,
+    start,
+    end,
+  });
 }
 
 export async function prepareMpr(handle: number, stackIndex: number): Promise<MprMetadata> {

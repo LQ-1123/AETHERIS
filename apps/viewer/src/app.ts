@@ -7,13 +7,17 @@ import {
   closeSeries,
   closeMpr,
   confirmTransform,
+  createSharedAnnotation,
   getTransformSchema,
   listInstanceRevisionsBySop,
   listPatientStudies,
   listPatients,
   listStudySeries,
+  listSharedAnnotations,
   listTransformJobs,
   loadFrame,
+  measureFrameRoi,
+  measureMprRoi,
   openRemoteSeries,
   openSeries,
   prepareMpr,
@@ -23,17 +27,29 @@ import {
   remoteLogout,
   renderMprSlice,
   selectImageStack,
+  updateSharedAnnotation,
 } from './api';
 import { Edit3, createIcons } from 'lucide';
-import { clampToImage, pointToSegmentDistance, zoomAt } from './geometry';
+import {
+  AnnotationHistory,
+  annotationHitTest,
+  annotationPoints,
+  cloneAnnotations,
+  createAnnotation,
+  translateAnnotation,
+  updateAnnotationPoint,
+  type AnnotationHit,
+} from './annotations';
+import { clampToImage, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import type {
+  Annotation,
+  AnnotationKind,
   DicomRevision,
   FrameMetadata,
   DownloadProgress,
-  LengthMeasurement,
   MprBuildProgress,
   MprMetadata,
   MprPlane,
@@ -45,6 +61,7 @@ import type {
   RemoteSeriesSummary,
   RemoteUser,
   SeriesMetadata,
+  SharedAnnotationRecord,
   StudySummary,
   TagRuleInput,
   ToolMode,
@@ -73,7 +90,17 @@ type DragState =
       panX: number;
       panY: number;
     }
-  | { kind: 'length'; pointerId: number };
+  | { kind: 'annotation-create'; pointerId: number }
+  | {
+      kind: 'annotation-edit';
+      pointerId: number;
+      key: string;
+      annotationId: string;
+      handle: number | null;
+      startImage: Point;
+      original: Annotation;
+      before: Annotation[];
+    };
 
 type MprDragState =
   | {
@@ -92,7 +119,18 @@ type MprDragState =
       panX: number;
       panY: number;
     }
-  | { kind: 'crosshair' | 'length'; plane: MprPlane; pointerId: number };
+  | { kind: 'crosshair' | 'annotation-create'; plane: MprPlane; pointerId: number }
+  | {
+      kind: 'annotation-edit';
+      plane: MprPlane;
+      pointerId: number;
+      key: string;
+      annotationId: string;
+      handle: number | null;
+      startImage: Point;
+      original: Annotation;
+      before: Annotation[];
+    };
 
 interface MprSession {
   metadata: MprMetadata;
@@ -114,6 +152,14 @@ const FRONTEND_CACHE_BYTES = 128 * 1024 * 1024;
 const PATIENT_PAGE_SIZE = 30;
 const MPR_PLANES: readonly MprPlane[] = ['axial', 'coronal', 'sagittal'];
 const MPR_WHEEL_THRESHOLD = 30;
+const CT_WINDOW_PRESETS: readonly WindowPreset[] = [
+  { center: 40, width: 80, explanation: '脑窗', function: 'LINEAR' },
+  { center: 50, width: 130, explanation: '硬膜下', function: 'LINEAR' },
+  { center: -600, width: 1500, explanation: '肺窗', function: 'LINEAR' },
+  { center: 40, width: 350, explanation: '纵隔', function: 'LINEAR' },
+  { center: 50, width: 400, explanation: '腹部', function: 'LINEAR' },
+  { center: 400, width: 2000, explanation: '骨窗', function: 'LINEAR' },
+];
 const TAG_LABELS: Record<string, string> = {
   PatientName: '患者姓名',
   PatientID: '患者 ID',
@@ -141,8 +187,8 @@ export class App {
   private mprRenderers: Record<MprPlane, Renderer>;
   private viewerMode: ViewerMode = '2d';
   private mpr: MprSession | null = null;
-  private mprMeasurements = new Map<string, LengthMeasurement[]>();
-  private mprDraft: { plane: MprPlane; measurement: LengthMeasurement } | null = null;
+  private mprMeasurements = new Map<string, Annotation[]>();
+  private mprDraft: { plane: MprPlane; measurement: Annotation } | null = null;
   private mprDrag: MprDragState | null = null;
   private mprRequests: Record<MprPlane, RequestVersion> = {
     axial: new RequestVersion(),
@@ -168,9 +214,19 @@ export class App {
   private mprBuildActive = false;
   private frameCache = new ByteLruCache(FRONTEND_CACHE_BYTES);
   private pendingFrames = new Map<string, Promise<ArrayBuffer>>();
-  private measurements = new Map<string, LengthMeasurement[]>();
-  private draft: LengthMeasurement | null = null;
+  private measurements = new Map<string, Annotation[]>();
+  private draft: Annotation | null = null;
   private selectedMeasurementId: string | null = null;
+  private annotationHistory = new AnnotationHistory();
+  private annotationsVisible = true;
+  private angleAwaitingEnd = false;
+  private sharedAnnotationRecords = new Map<string, SharedAnnotationRecord>();
+  private annotationSyncCursor: string | null = null;
+  private annotationSyncTimer: number | null = null;
+  private annotationSyncActive = false;
+  private annotationSyncQueues = new Map<string, Promise<void>>();
+  private annotationSyncRetries = new Map<string, { generation: number; operation: () => Promise<void> }>();
+  private annotationSyncGeneration = 0;
   private drag: DragState | null = null;
   private frameRequests = new RequestVersion();
   private lutRequests = new RequestVersion();
@@ -256,6 +312,8 @@ export class App {
     const previousMpr = this.mpr;
     const previousMprMeasurements = this.mprMeasurements;
     const previousRemoteSeriesOpen = this.remoteSeriesOpen;
+    const previousSharedRecords = new Map(this.sharedAnnotationRecords);
+    const previousSyncCursor = this.annotationSyncCursor;
     let openedHandle: number | null = null;
     this.remoteDownloadActive = remoteDownload;
     try {
@@ -272,6 +330,11 @@ export class App {
       this.pendingFrames.clear();
       this.measurements = new Map();
       this.mprMeasurements = new Map();
+      this.stopAnnotationSync();
+      this.sharedAnnotationRecords.clear();
+      this.annotationSyncCursor = null;
+      this.annotationHistory.clear();
+      this.angleAwaitingEnd = false;
       this.draft = null;
       this.mprDraft = null;
       this.selectedMeasurementId = null;
@@ -287,11 +350,19 @@ export class App {
         zoom: 1,
         panX: 0,
         panY: 0,
+        rotation: 0,
+        flipHorizontal: false,
+        flipVertical: false,
+        inverted: false,
         lut: null,
         tool: 'window',
       };
       this.remoteSeriesOpen = remoteDownload;
       await this.loadCurrentFrame();
+      if (remoteDownload) {
+        await this.refreshSharedAnnotations();
+        this.startAnnotationSync();
+      }
       if (previous) void closeSeries(previous.metadata.handle).catch(console.error);
       openedHandle = null;
       this.showSeriesWarning();
@@ -305,6 +376,9 @@ export class App {
         this.viewerMode = previousMode;
         this.mpr = previousMpr;
         this.remoteSeriesOpen = previousRemoteSeriesOpen;
+        this.sharedAnnotationRecords = previousSharedRecords;
+        this.annotationSyncCursor = previousSyncCursor;
+        if (previousRemoteSeriesOpen) this.startAnnotationSync();
         this.frameCache.clear();
         this.pendingFrames.clear();
         if (previous) {
@@ -370,6 +444,10 @@ export class App {
         zoom: 1,
         panX: 0,
         panY: 0,
+        rotation: previous.rotation,
+        flipHorizontal: previous.flipHorizontal,
+        flipVertical: previous.flipVertical,
+        inverted: previous.inverted,
         lut: null,
         tool: previous.tool === 'crosshair' ? 'window' : previous.tool,
       };
@@ -421,6 +499,7 @@ export class App {
       this.renderer.setFrame(buffer, frame);
       this.renderer.applyLut(lut);
       this.render();
+      this.ensureCurrentStatistics();
       this.prefetch(frameIndex);
     } finally {
       if (this.frameRequests.isCurrent(generation)) this.setBusy(false);
@@ -489,6 +568,7 @@ export class App {
         );
         this.mprMeasurements = new Map();
         this.mpr = this.createMprSession(metadata);
+        this.applyAllSharedAnnotations();
       }
       this.viewerMode = 'mpr';
       this.state.tool = 'crosshair';
@@ -513,6 +593,10 @@ export class App {
       zoom: 1,
       panX: 0,
       panY: 0,
+      rotation: 0,
+      flipHorizontal: false,
+      flipVertical: false,
+      inverted: false,
     });
     return {
       metadata,
@@ -577,6 +661,7 @@ export class App {
       }
       this.mprRenderers[plane].setGrayFrame(buffer, this.mprFrame(plane));
       this.renderMprPlane(plane);
+      this.ensureCurrentStatistics(plane);
     } catch (error) {
       if (this.mprRequests[plane].isCurrent(generation)) this.showError(errorMessage(error));
     } finally {
@@ -717,6 +802,7 @@ export class App {
     this.draft = null;
     this.mprDraft = null;
     this.selectedMeasurementId = null;
+    this.angleAwaitingEnd = false;
     this.updateUi();
     this.render();
   }
@@ -728,6 +814,10 @@ export class App {
         this.mpr.viewports[plane].zoom = 1;
         this.mpr.viewports[plane].panX = 0;
         this.mpr.viewports[plane].panY = 0;
+        this.mpr.viewports[plane].rotation = 0;
+        this.mpr.viewports[plane].flipHorizontal = false;
+        this.mpr.viewports[plane].flipVertical = false;
+        this.mpr.viewports[plane].inverted = false;
       }
       this.setMprCrosshair(point3(this.mpr.metadata.initial_crosshair));
       return;
@@ -735,13 +825,21 @@ export class App {
     this.state.zoom = 1;
     this.state.panX = 0;
     this.state.panY = 0;
+    this.state.rotation = 0;
+    this.state.flipHorizontal = false;
+    this.state.flipVertical = false;
+    this.state.inverted = false;
     this.render();
     this.updateUi();
   }
 
-  private applyPreset(index: number): void {
+  private applyPreset(value: string): void {
     if (!this.state) return;
-    const preset = this.currentFrame()?.window_presets[index];
+    const [source, rawIndex] = value.split(':');
+    const index = Number(rawIndex);
+    const preset = source === 'ct'
+      ? CT_WINDOW_PRESETS[index]
+      : this.currentFrame()?.window_presets[index];
     if (!preset) return;
     this.state.windowCenter = preset.center;
     this.state.windowWidth = preset.width;
@@ -831,6 +929,17 @@ export class App {
     requiredElement<HTMLButtonElement>('open-btn').addEventListener('click', () => void this.openFiles());
     requiredElement<HTMLButtonElement>('empty-open-btn').addEventListener('click', () => void this.openFiles());
     requiredElement<HTMLButtonElement>('reset-btn').addEventListener('click', () => this.resetView());
+    requiredElement<HTMLButtonElement>('undo-annotation').addEventListener('click', () => this.undoAnnotation());
+    requiredElement<HTMLButtonElement>('redo-annotation').addEventListener('click', () => this.redoAnnotation());
+    requiredElement<HTMLButtonElement>('toggle-annotations').addEventListener('click', () => this.toggleAnnotationVisibility());
+    requiredElement<HTMLButtonElement>('retry-annotation-sync').addEventListener('click', () => this.retryAnnotationSync());
+    requiredElement<HTMLButtonElement>('clear-current-annotations').addEventListener('click', () => this.clearAnnotations('current'));
+    requiredElement<HTMLButtonElement>('clear-all-annotations').addEventListener('click', () => this.clearAnnotations('series'));
+    requiredElement<HTMLButtonElement>('invert-btn').addEventListener('click', () => this.toggleInvert());
+    requiredElement<HTMLButtonElement>('flip-horizontal-btn').addEventListener('click', () => this.flipView('horizontal'));
+    requiredElement<HTMLButtonElement>('flip-vertical-btn').addEventListener('click', () => this.flipView('vertical'));
+    requiredElement<HTMLButtonElement>('rotate-left-btn').addEventListener('click', () => this.rotateView(-1));
+    requiredElement<HTMLButtonElement>('rotate-right-btn').addEventListener('click', () => this.rotateView(1));
     requiredElement<HTMLButtonElement>('previous-frame').addEventListener('click', () => {
       if (this.state) void this.setFrame(this.state.currentFrame - 1);
     });
@@ -856,7 +965,7 @@ export class App {
     }
 
     this.frameSlider.addEventListener('input', () => void this.setFrame(Number(this.frameSlider.value)));
-    this.presetSelect.addEventListener('change', () => this.applyPreset(Number(this.presetSelect.value)));
+    this.presetSelect.addEventListener('change', () => this.applyPreset(this.presetSelect.value));
     this.imageStackSelect.addEventListener('change', () => {
       void this.switchImageStack(Number(this.imageStackSelect.value));
     });
@@ -940,6 +1049,7 @@ export class App {
     } finally {
       this.remoteUser = null;
       this.remoteSeriesOpen = false;
+      this.stopAnnotationSync();
       this.patients = [];
       this.studies.clear();
       this.series.clear();
@@ -1673,21 +1783,42 @@ export class App {
     } else {
       const hit = this.mprHitTest(plane, point);
       if (hit) {
-        this.selectedMeasurementId = hit.id;
-        this.mprDrag = null;
-        canvas.releasePointerCapture(event.pointerId);
+        const key = this.mprMeasurementKey(plane);
+        const frame = this.mprFrame(plane);
+        const imagePoint = clampToImage(
+          this.mprRenderers[plane].toImageFor(point, frame, viewport),
+          imageGeometry(frame),
+        );
+        this.selectedMeasurementId = hit.annotation.id;
+        this.mprDrag = {
+          kind: 'annotation-edit',
+          plane,
+          pointerId: event.pointerId,
+          key,
+          annotationId: hit.annotation.id,
+          handle: hit.handle,
+          startImage: imagePoint,
+          original: structuredClone(hit.annotation),
+          before: cloneAnnotations(this.currentMprMeasurements(plane)),
+        };
       } else {
         const frame = this.mprFrame(plane);
         const imagePoint = clampToImage(
           this.mprRenderers[plane].toImageFor(point, frame, viewport),
           imageGeometry(frame),
         );
-        this.mprDraft = {
-          plane,
-          measurement: { id: makeId(), start: imagePoint, end: imagePoint },
-        };
+        const tool = this.state.tool as AnnotationKind;
+        if (
+          tool === 'angle' && this.angleAwaitingEnd && this.mprDraft?.plane === plane &&
+          this.mprDraft.measurement.kind === 'angle'
+        ) {
+          this.mprDraft.measurement.end = imagePoint;
+        } else {
+          this.mprDraft = { plane, measurement: createAnnotation(tool, imagePoint, makeId()) };
+          this.angleAwaitingEnd = false;
+        }
         this.selectedMeasurementId = null;
-        this.mprDrag = { kind: 'length', plane, pointerId: event.pointerId };
+        this.mprDrag = { kind: 'annotation-create', plane, pointerId: event.pointerId };
       }
     }
     this.updateUi();
@@ -1729,12 +1860,25 @@ export class App {
       this.scheduleMprRefresh();
     } else if (this.mprDrag.kind === 'crosshair') {
       this.moveMprCrosshairFromScreen(plane, point);
-    } else if (this.mprDraft?.plane === plane) {
+    } else if (this.mprDrag.kind === 'annotation-edit') {
+      const drag = this.mprDrag;
+      const list = this.currentMprMeasurements(plane);
+      const annotation = list.find((candidate) => candidate.id === drag.annotationId);
+      if (!annotation) return;
       const frame = this.mprFrame(plane);
-      this.mprDraft.measurement.end = clampToImage(
+      const imagePoint = clampToImage(
         this.mprRenderers[plane].toImageFor(point, frame, viewport),
         imageGeometry(frame),
       );
+      this.updateEditedAnnotation(annotation, drag, imagePoint, frame);
+      this.renderMprPlane(plane);
+    } else if (this.mprDraft?.plane === plane) {
+      const frame = this.mprFrame(plane);
+      const imagePoint = clampToImage(
+        this.mprRenderers[plane].toImageFor(point, frame, viewport),
+        imageGeometry(frame),
+      );
+      this.updateDraft(this.mprDraft.measurement, imagePoint);
       this.renderMprPlane(plane);
     }
   }
@@ -1745,26 +1889,35 @@ export class App {
     event: PointerEvent,
   ): void {
     if (!this.mpr || !this.mprDrag || this.mprDrag.pointerId !== event.pointerId) return;
-    if (this.mprDrag.kind === 'length' && this.mprDraft?.plane === plane) {
+    if (this.mprDrag.kind === 'annotation-create' && this.mprDraft?.plane === plane) {
       const frame = this.mprFrame(plane);
       const viewport = this.mpr.viewports[plane];
-      const start = this.mprRenderers[plane].toScreenFor(
-        this.mprDraft.measurement.start,
-        frame,
-        viewport,
-      );
-      const end = this.mprRenderers[plane].toScreenFor(
-        this.mprDraft.measurement.end,
-        frame,
-        viewport,
-      );
-      if (Math.hypot(end.x - start.x, end.y - start.y) >= 4) {
+      const draft = this.mprDraft.measurement;
+      const extent = this.annotationScreenExtent(draft, (value) =>
+        this.mprRenderers[plane].toScreenFor(value, frame, viewport));
+      if (draft.kind === 'angle' && !this.angleAwaitingEnd && extent >= 4) {
+        this.angleAwaitingEnd = true;
+      } else if (extent >= 4 || draft.kind === 'point_probe') {
         const list = this.currentMprMeasurements(plane);
-        list.push(this.mprDraft.measurement);
-        this.mprMeasurements.set(this.mprMeasurementKey(plane), list);
-        this.selectedMeasurementId = this.mprDraft.measurement.id;
+        const before = cloneAnnotations(list);
+        list.push(draft);
+        const key = this.mprMeasurementKey(plane);
+        this.mprMeasurements.set(key, list);
+        this.recordAnnotationChange(key, before, list);
+        this.selectedMeasurementId = draft.id;
+        this.angleAwaitingEnd = false;
+        void this.refreshAnnotationStatistics(draft, plane);
+        this.mprDraft = null;
+      } else {
+        this.mprDraft = null;
+        this.angleAwaitingEnd = false;
       }
-      this.mprDraft = null;
+    } else if (this.mprDrag.kind === 'annotation-edit') {
+      const drag = this.mprDrag;
+      const list = this.currentMprMeasurements(plane);
+      this.recordAnnotationChange(drag.key, drag.before, list);
+      const annotation = list.find((candidate) => candidate.id === drag.annotationId);
+      if (annotation) void this.refreshAnnotationStatistics(annotation, plane);
     }
     this.mprDrag = null;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -1836,15 +1989,18 @@ export class App {
     setTimeout(() => this.resizeViewport(), 0);
   }
 
-  private mprHitTest(plane: MprPlane, screenPoint: Point): LengthMeasurement | null {
+  private mprHitTest(plane: MprPlane, screenPoint: Point): AnnotationHit | null {
     if (!this.mpr) return null;
     const renderer = this.mprRenderers[plane];
     const frame = this.mprFrame(plane);
     const viewport = this.mpr.viewports[plane];
-    for (const measurement of [...this.currentMprMeasurements(plane)].reverse()) {
-      const start = renderer.toScreenFor(measurement.start, frame, viewport);
-      const end = renderer.toScreenFor(measurement.end, frame, viewport);
-      if (pointToSegmentDistance(screenPoint, start, end) <= 8) return measurement;
+    for (const annotation of [...this.currentMprMeasurements(plane)].reverse()) {
+      const hit = annotationHitTest(
+        annotation,
+        screenPoint,
+        (value) => renderer.toScreenFor(value, frame, viewport),
+      );
+      if (hit) return { annotation, handle: hit.handle };
     }
     return null;
   }
@@ -1876,19 +2032,35 @@ export class App {
 
     const hit = this.hitTest(point);
     if (hit) {
-      this.selectedMeasurementId = hit.id;
-      this.overlayCanvas.releasePointerCapture(event.pointerId);
+      const imagePoint = clampToImage(
+        this.renderer.toImage(point, this.state),
+        imageGeometry(this.currentFrame()),
+      );
+      const key = this.currentFrame().frame_key;
+      this.selectedMeasurementId = hit.annotation.id;
+      this.drag = {
+        kind: 'annotation-edit',
+        pointerId: event.pointerId,
+        key,
+        annotationId: hit.annotation.id,
+        handle: hit.handle,
+        startImage: imagePoint,
+        original: structuredClone(hit.annotation),
+        before: cloneAnnotations(this.currentMeasurements()),
+      };
       this.render();
       return;
     }
     const imagePoint = clampToImage(this.renderer.toImage(point, this.state), imageGeometry(this.currentFrame()));
-    this.draft = {
-      id: makeId(),
-      start: imagePoint,
-      end: imagePoint,
-    };
+    const tool = this.state.tool as AnnotationKind;
+    if (tool === 'angle' && this.angleAwaitingEnd && this.draft?.kind === 'angle') {
+      this.draft.end = imagePoint;
+    } else {
+      this.draft = createAnnotation(tool, imagePoint, makeId());
+      this.angleAwaitingEnd = false;
+    }
     this.selectedMeasurementId = null;
-    this.drag = { kind: 'length', pointerId: event.pointerId };
+    this.drag = { kind: 'annotation-create', pointerId: event.pointerId };
     this.render();
   }
 
@@ -1913,27 +2085,56 @@ export class App {
       this.scheduleLutRefresh();
       return;
     }
-    if (this.draft) {
-      this.draft.end = clampToImage(
+    if (this.drag.kind === 'annotation-edit') {
+      const drag = this.drag;
+      const annotation = this.currentMeasurements().find(
+        (candidate) => candidate.id === drag.annotationId,
+      );
+      if (!annotation) return;
+      const imagePoint = clampToImage(
         this.renderer.toImage(point, this.state),
         imageGeometry(this.currentFrame()),
       );
+      this.updateEditedAnnotation(annotation, drag, imagePoint, this.currentFrame());
+      this.render();
+    } else if (this.draft) {
+      const imagePoint = clampToImage(
+        this.renderer.toImage(point, this.state),
+        imageGeometry(this.currentFrame()),
+      );
+      this.updateDraft(this.draft, imagePoint);
       this.render();
     }
   }
 
   private pointerUp(event: PointerEvent): void {
     if (!this.state || !this.drag || this.drag.pointerId !== event.pointerId) return;
-    if (this.drag.kind === 'length' && this.draft) {
-      const start = this.renderer.toScreen(this.draft.start, this.state);
-      const end = this.renderer.toScreen(this.draft.end, this.state);
-      if (Math.hypot(end.x - start.x, end.y - start.y) >= 4) {
+    if (this.drag.kind === 'annotation-create' && this.draft) {
+      const draft = this.draft;
+      const extent = this.annotationScreenExtent(draft, (value) => this.renderer.toScreen(value, this.state!));
+      if (draft.kind === 'angle' && !this.angleAwaitingEnd && extent >= 4) {
+        this.angleAwaitingEnd = true;
+      } else if (extent >= 4 || draft.kind === 'point_probe') {
         const list = this.currentMeasurements();
-        list.push(this.draft);
-        this.measurements.set(this.currentFrame().frame_key, list);
-        this.selectedMeasurementId = this.draft.id;
+        const before = cloneAnnotations(list);
+        list.push(draft);
+        const key = this.currentFrame().frame_key;
+        this.measurements.set(key, list);
+        this.recordAnnotationChange(key, before, list);
+        this.selectedMeasurementId = draft.id;
+        this.angleAwaitingEnd = false;
+        void this.refreshAnnotationStatistics(draft);
+        this.draft = null;
+      } else {
+        this.draft = null;
+        this.angleAwaitingEnd = false;
       }
-      this.draft = null;
+    } else if (this.drag.kind === 'annotation-edit') {
+      const drag = this.drag;
+      const list = this.currentMeasurements();
+      this.recordAnnotationChange(drag.key, drag.before, list);
+      const annotation = list.find((candidate) => candidate.id === drag.annotationId);
+      if (annotation) void this.refreshAnnotationStatistics(annotation);
     }
     this.drag = null;
     if (this.overlayCanvas.hasPointerCapture(event.pointerId)) {
@@ -1991,39 +2192,568 @@ export class App {
         const plane = this.mpr.activePlane;
         this.changeMprSlice(plane, this.mpr.viewports[plane].sliceIndex + 1);
       } else if (this.state) void this.setFrame(this.state.currentFrame + 1);
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      event.shiftKey ? this.redoAnnotation() : this.undoAnnotation();
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      this.redoAnnotation();
     } else if ((event.key === 'Delete' || event.key === 'Backspace') && this.selectedMeasurementId) {
       event.preventDefault();
-      if (this.mpr && this.viewerMode === 'mpr') {
-        const plane = this.mpr.activePlane;
-        const remaining = this.currentMprMeasurements(plane).filter(
-          (measurement) => measurement.id !== this.selectedMeasurementId,
-        );
-        this.mprMeasurements.set(this.mprMeasurementKey(plane), remaining);
-      } else {
-        const remaining = this.currentMeasurements().filter(
-          (measurement) => measurement.id !== this.selectedMeasurementId,
-        );
-        this.measurements.set(this.currentFrame().frame_key, remaining);
-      }
-      this.selectedMeasurementId = null;
-      this.render();
-      this.updateUi();
+      this.deleteSelectedAnnotation();
+    } else if (event.key.toLowerCase() === 'v') {
+      this.toggleAnnotationVisibility();
+    } else if (event.key.toLowerCase() === 'i') {
+      this.toggleInvert();
     } else if (event.key === 'Escape') {
       this.draft = null;
       this.mprDraft = null;
       this.selectedMeasurementId = null;
+      this.angleAwaitingEnd = false;
       this.render();
     }
   }
 
-  private hitTest(screenPoint: Point): LengthMeasurement | null {
+  private hitTest(screenPoint: Point): AnnotationHit | null {
     if (!this.state) return null;
-    for (const measurement of [...this.currentMeasurements()].reverse()) {
-      const start = this.renderer.toScreen(measurement.start, this.state);
-      const end = this.renderer.toScreen(measurement.end, this.state);
-      if (pointToSegmentDistance(screenPoint, start, end) <= 8) return measurement;
+    for (const annotation of [...this.currentMeasurements()].reverse()) {
+      const hit = annotationHitTest(
+        annotation,
+        screenPoint,
+        (value) => this.renderer.toScreen(value, this.state!),
+      );
+      if (hit) return { annotation, handle: hit.handle };
     }
     return null;
+  }
+
+  private updateDraft(annotation: Annotation, point: Point): void {
+    if (annotation.kind === 'point_probe') annotation.point = point;
+    else if (annotation.kind === 'angle') {
+      if (this.angleAwaitingEnd) annotation.end = point;
+      else annotation.start = point;
+    } else annotation.end = point;
+  }
+
+  private updateEditedAnnotation(
+    annotation: Annotation,
+    drag: Extract<DragState | MprDragState, { kind: 'annotation-edit' }>,
+    point: Point,
+    frame: FrameMetadata,
+  ): void {
+    Object.assign(annotation, structuredClone(drag.original));
+    if (drag.handle != null) {
+      updateAnnotationPoint(annotation, drag.handle, point);
+      return;
+    }
+    const points = annotationPoints(drag.original);
+    const requested = {
+      x: point.x - drag.startImage.x,
+      y: point.y - drag.startImage.y,
+    };
+    const delta = {
+      x: Math.max(-Math.min(...points.map((value) => value.x)), Math.min(
+        requested.x,
+        frame.cols - Math.max(...points.map((value) => value.x)),
+      )),
+      y: Math.max(-Math.min(...points.map((value) => value.y)), Math.min(
+        requested.y,
+        frame.rows - Math.max(...points.map((value) => value.y)),
+      )),
+    };
+    translateAnnotation(annotation, delta);
+  }
+
+  private annotationScreenExtent(
+    annotation: Annotation,
+    toScreen: (point: Point) => Point,
+  ): number {
+    const points = annotationPoints(annotation).map(toScreen);
+    if (points.length === 1) return 0;
+    return Math.max(
+      ...points.flatMap((left, index) =>
+        points.slice(index + 1).map((right) => Math.hypot(right.x - left.x, right.y - left.y))),
+    );
+  }
+
+  private recordAnnotationChange(key: string, before: Annotation[], after: Annotation[]): void {
+    if (JSON.stringify(before) === JSON.stringify(after)) return;
+    this.annotationHistory.push({ key, before, after: cloneAnnotations(after) });
+    if (this.remoteSeriesOpen) this.syncAnnotationDelta(key, before, after);
+  }
+
+  private undoAnnotation(): void {
+    const entry = this.annotationHistory.undo();
+    if (!entry) return;
+    if ('changes' in entry) {
+      for (const change of entry.changes) this.setAnnotationList(change.key, change.before, false);
+      this.render();
+      this.updateUi();
+    } else this.setAnnotationList(entry.key, entry.before);
+  }
+
+  private redoAnnotation(): void {
+    const entry = this.annotationHistory.redo();
+    if (!entry) return;
+    if ('changes' in entry) {
+      for (const change of entry.changes) this.setAnnotationList(change.key, change.after, false);
+      this.render();
+      this.updateUi();
+    } else this.setAnnotationList(entry.key, entry.after);
+  }
+
+  private setAnnotationList(key: string, annotations: Annotation[], render = true): void {
+    const target = key.startsWith('mpr:') ? this.mprMeasurements : this.measurements;
+    const before = cloneAnnotations(target.get(key) ?? []);
+    target.set(key, cloneAnnotations(annotations));
+    if (this.remoteSeriesOpen) this.syncAnnotationDelta(key, before, annotations);
+    this.selectedMeasurementId = null;
+    if (render) {
+      this.render();
+      this.updateUi();
+    }
+  }
+
+  private deleteSelectedAnnotation(): void {
+    if (!this.selectedMeasurementId || !this.state) return;
+    const mprPlane = this.mpr && this.viewerMode === 'mpr' ? this.mpr.activePlane : null;
+    const key = mprPlane ? this.mprMeasurementKey(mprPlane) : this.currentFrame().frame_key;
+    const list = mprPlane ? this.currentMprMeasurements(mprPlane) : this.currentMeasurements();
+    const before = cloneAnnotations(list);
+    const remaining = list.filter((annotation) => annotation.id !== this.selectedMeasurementId);
+    (mprPlane ? this.mprMeasurements : this.measurements).set(key, remaining);
+    this.recordAnnotationChange(key, before, remaining);
+    this.selectedMeasurementId = null;
+    this.render();
+    this.updateUi();
+  }
+
+  private clearAnnotations(scope: 'current' | 'series'): void {
+    if (!this.state) return;
+    const message = scope === 'current' ? '清除当前图像上的全部标注？' : '清除整个序列中的全部标注？';
+    if (!window.confirm(message)) return;
+    if (scope === 'current') {
+      const plane = this.mpr && this.viewerMode === 'mpr' ? this.mpr.activePlane : null;
+      const key = plane ? this.mprMeasurementKey(plane) : this.currentFrame().frame_key;
+      const target = plane ? this.mprMeasurements : this.measurements;
+      const before = cloneAnnotations(target.get(key) ?? []);
+      if (!before.length) return;
+      target.set(key, []);
+      this.recordAnnotationChange(key, before, []);
+    } else {
+      const target = this.viewerMode === 'mpr' ? this.mprMeasurements : this.measurements;
+      const changes = [];
+      for (const [key, list] of target) {
+        if (!list.length) continue;
+        const before = cloneAnnotations(list);
+        target.set(key, []);
+        changes.push({ key, before, after: [] });
+        if (this.remoteSeriesOpen) this.syncAnnotationDelta(key, before, []);
+      }
+      this.annotationHistory.pushBatch(changes);
+    }
+    this.selectedMeasurementId = null;
+    this.render();
+    this.updateUi();
+  }
+
+  private toggleAnnotationVisibility(): void {
+    this.annotationsVisible = !this.annotationsVisible;
+    this.render();
+    this.updateUi();
+  }
+
+  private activeViewTransform(): ViewState | MprViewportState | null {
+    if (!this.state) return null;
+    if (this.viewerMode === 'mpr' && this.mpr) return this.mpr.viewports[this.mpr.activePlane];
+    return this.state;
+  }
+
+  private toggleInvert(): void {
+    const view = this.activeViewTransform();
+    if (!view) return;
+    view.inverted = !view.inverted;
+    this.render();
+    this.updateUi();
+  }
+
+  private rotateView(direction: -1 | 1): void {
+    const view = this.activeViewTransform();
+    if (!view) return;
+    view.rotation = ((view.rotation + direction * 90 + 360) % 360) as 0 | 90 | 180 | 270;
+    view.panX = 0;
+    view.panY = 0;
+    this.render();
+    this.updateUi();
+  }
+
+  private flipView(axis: 'horizontal' | 'vertical'): void {
+    const view = this.activeViewTransform();
+    if (!view) return;
+    if (axis === 'horizontal') view.flipHorizontal = !view.flipHorizontal;
+    else view.flipVertical = !view.flipVertical;
+    this.render();
+    this.updateUi();
+  }
+
+  private startAnnotationSync(): void {
+    this.stopAnnotationSync();
+    this.annotationSyncTimer = window.setInterval(() => {
+      void this.refreshSharedAnnotations();
+    }, 5000);
+  }
+
+  private stopAnnotationSync(): void {
+    if (this.annotationSyncTimer != null) window.clearInterval(this.annotationSyncTimer);
+    this.annotationSyncTimer = null;
+    this.annotationSyncActive = false;
+    this.annotationSyncQueues.clear();
+    this.annotationSyncRetries.clear();
+    this.annotationSyncGeneration += 1;
+  }
+
+  private async refreshSharedAnnotations(): Promise<void> {
+    const studyUid = this.state?.metadata.study_uid;
+    const seriesUid = this.state?.metadata.series_uid;
+    if (!this.remoteSeriesOpen || !studyUid || !seriesUid || this.annotationSyncActive) return;
+    const generation = this.annotationSyncGeneration;
+    this.annotationSyncActive = true;
+    try {
+      const records = await listSharedAnnotations(
+        studyUid,
+        seriesUid,
+        this.annotationSyncCursor ?? undefined,
+      );
+      if (generation !== this.annotationSyncGeneration) return;
+      for (const record of records) {
+        const known = this.sharedAnnotationRecords.get(record.id);
+        if (known?.revision === record.revision && known.deleted_at === record.deleted_at) continue;
+        this.sharedAnnotationRecords.set(record.id, record);
+        this.applySharedAnnotation(record);
+      }
+      const latest = records.reduce<string | null>(
+        (value, record) => value == null || record.updated_at > value ? record.updated_at : value,
+        this.annotationSyncCursor,
+      );
+      this.annotationSyncCursor = latest;
+      this.render();
+      this.updateUi();
+    } catch (error) {
+      if (generation === this.annotationSyncGeneration) {
+        this.showError(`共享标注刷新失败: ${errorMessage(error)}`);
+      }
+    } finally {
+      if (generation === this.annotationSyncGeneration) this.annotationSyncActive = false;
+    }
+  }
+
+  private applyAllSharedAnnotations(): void {
+    for (const record of this.sharedAnnotationRecords.values()) this.applySharedAnnotation(record);
+  }
+
+  private applySharedAnnotation(record: SharedAnnotationRecord): void {
+    const existing = this.findAnnotation(record.id);
+    if (existing?.syncState === 'pending') return;
+    this.removeAnnotationById(record.id);
+    if (record.deleted_at) return;
+    if (record.schema_version !== 1) {
+      this.showError(`标注 ${record.id} 使用不支持的 schema_version=${record.schema_version}`);
+      return;
+    }
+    const located = this.annotationFromRecord(record);
+    if (!located) return;
+    const target = located.key.startsWith('mpr:') ? this.mprMeasurements : this.measurements;
+    const list = target.get(located.key) ?? [];
+    list.push(located.annotation);
+    target.set(located.key, list);
+    if (this.isCurrentAnnotationKey(located.key)) {
+      void this.refreshAnnotationStatistics(
+        located.annotation,
+        located.key.startsWith('mpr:') ? record.mpr_plane ?? undefined : undefined,
+      );
+    }
+  }
+
+  private annotationFromRecord(
+    record: SharedAnnotationRecord,
+  ): { key: string; annotation: Annotation } | null {
+    let key: string;
+    let mapper: (value: unknown) => Point | null;
+    if (record.coordinate_space === 'image') {
+      const frame = this.state?.metadata.frames.find(
+        (candidate) => candidate.sop_instance_uid === record.sop_instance_uid
+          && candidate.source_frame + 1 === record.frame_number,
+      );
+      if (!frame) return null;
+      key = frame.frame_key;
+      mapper = pointFromUnknown;
+    } else {
+      const plane = record.mpr_plane;
+      if (!this.mpr || !plane) return null;
+      const metadata = requirePlane(this.mpr.metadata, plane);
+      const first = firstGeometryPoint(record.geometry);
+      const patient = patientPointFromUnknown(first);
+      if (!patient) return null;
+      const sliceIndex = sliceForPatientPoint(patient, metadata);
+      key = `mpr:${plane}:${sliceIndex}`;
+      mapper = (value) => {
+        const point = patientPointFromUnknown(value);
+        return point ? mprImageForPatient(point, sliceIndex, metadata) : null;
+      };
+    }
+    const annotation = annotationFromGeometry(record.id, record.kind, record.geometry, mapper);
+    if (!annotation) return null;
+    annotation.revision = record.revision;
+    annotation.syncState = 'synced';
+    return { key, annotation };
+  }
+
+  private syncAnnotationDelta(key: string, before: Annotation[], after: Annotation[]): void {
+    const generation = this.annotationSyncGeneration;
+    const beforeById = new Map(before.map((annotation) => [annotation.id, annotation]));
+    const afterById = new Map(after.map((annotation) => [annotation.id, annotation]));
+    for (const annotation of after) {
+      const previous = beforeById.get(annotation.id);
+      if (!previous || JSON.stringify(annotationGeometry(previous)) !== JSON.stringify(annotationGeometry(annotation))) {
+        annotation.syncState = 'pending';
+        const snapshot = structuredClone(annotation);
+        this.queueAnnotationSync(annotation.id, generation, async () => {
+          await this.saveSharedAnnotation(key, snapshot, previous == null);
+        });
+      }
+    }
+    for (const annotation of before) {
+      if (afterById.has(annotation.id)) continue;
+      this.queueAnnotationSync(annotation.id, generation, async () => {
+        await this.deleteSharedAnnotation(annotation.id);
+      });
+    }
+  }
+
+  private queueAnnotationSync(
+    id: string,
+    generation: number,
+    operation: () => Promise<void>,
+  ): void {
+    const previous = this.annotationSyncQueues.get(id) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        if (generation === this.annotationSyncGeneration) {
+          await operation();
+          this.annotationSyncRetries.delete(id);
+        }
+      })
+      .catch((error) => {
+        this.annotationSyncRetries.set(id, { generation, operation });
+        const annotation = this.findAnnotation(id);
+        if (annotation) annotation.syncState = 'error';
+        const message = errorMessage(error);
+        this.showError(`标注自动保存失败: ${message}`);
+        if (message.includes('409')) void this.refreshSharedAnnotations();
+        this.render();
+        this.updateUi();
+      })
+      .finally(() => {
+        if (this.annotationSyncQueues.get(id) === next) this.annotationSyncQueues.delete(id);
+      });
+    this.annotationSyncQueues.set(id, next);
+  }
+
+  private retryAnnotationSync(): void {
+    const retries = [...this.annotationSyncRetries.entries()];
+    this.annotationSyncRetries.clear();
+    for (const [id, retry] of retries) {
+      const annotation = this.findAnnotation(id);
+      if (annotation) annotation.syncState = 'pending';
+      this.queueAnnotationSync(id, retry.generation, retry.operation);
+    }
+    this.render();
+    this.updateUi();
+  }
+
+  private async saveSharedAnnotation(
+    key: string,
+    annotation: Annotation,
+    create: boolean,
+  ): Promise<void> {
+    const studyUid = this.state?.metadata.study_uid;
+    const seriesUid = this.state?.metadata.series_uid;
+    if (!studyUid || !seriesUid) return;
+    const payload = this.sharedAnnotationPayload(key, annotation);
+    let record: SharedAnnotationRecord;
+    const known = this.sharedAnnotationRecords.get(annotation.id);
+    if (create && !known) {
+      record = await createSharedAnnotation(studyUid, seriesUid, payload);
+    } else {
+      const revision = known?.revision ?? this.findAnnotation(annotation.id)?.revision;
+      if (!revision) throw new Error('共享标注缺少服务端版本，请刷新后重试');
+      record = await updateSharedAnnotation(
+        studyUid,
+        seriesUid,
+        annotation.id,
+        revision,
+        payload.geometry as Record<string, unknown>,
+        false,
+      );
+    }
+    this.acceptSyncedRecord(record, annotation);
+  }
+
+  private async deleteSharedAnnotation(id: string): Promise<void> {
+    const studyUid = this.state?.metadata.study_uid;
+    const seriesUid = this.state?.metadata.series_uid;
+    const record = this.sharedAnnotationRecords.get(id);
+    if (!studyUid || !seriesUid || !record) return;
+    const updated = await updateSharedAnnotation(
+      studyUid,
+      seriesUid,
+      id,
+      record.revision,
+      record.geometry,
+      true,
+    );
+    this.sharedAnnotationRecords.set(id, updated);
+  }
+
+  private sharedAnnotationPayload(
+    key: string,
+    annotation: Annotation,
+  ): Record<string, unknown> {
+    if (!this.state) throw new Error('没有已打开的序列');
+    if (key.startsWith('mpr:')) {
+      if (!this.mpr) throw new Error('MPR 尚未准备完成');
+      const [, rawPlane, rawSlice] = key.split(':');
+      const plane = rawPlane as MprPlane;
+      const sliceIndex = Number(rawSlice);
+      const metadata = requirePlane(this.mpr.metadata, plane);
+      return {
+        id: annotation.id,
+        schema_version: 1,
+        kind: annotation.kind,
+        coordinate_space: 'patient',
+        sop_instance_uid: null,
+        frame_number: null,
+        mpr_plane: plane,
+        geometry: annotationGeometry(annotation, (point) =>
+          patientPointForMprImage(point, sliceIndex, metadata)),
+      };
+    }
+    const frame = this.state.metadata.frames.find((candidate) => candidate.frame_key === key);
+    if (!frame?.sop_instance_uid) throw new Error('当前图像缺少 SOPInstanceUID，不能共享标注');
+    return {
+      id: annotation.id,
+      schema_version: 1,
+      kind: annotation.kind,
+      coordinate_space: 'image',
+      sop_instance_uid: frame.sop_instance_uid,
+      frame_number: frame.source_frame + 1,
+      mpr_plane: null,
+      geometry: annotationGeometry(annotation),
+    };
+  }
+
+  private acceptSyncedRecord(record: SharedAnnotationRecord, saved?: Annotation): void {
+    this.sharedAnnotationRecords.set(record.id, record);
+    const annotation = this.findAnnotation(record.id);
+    if (annotation) {
+      if (saved && annotation.kind === saved.kind) Object.assign(annotation, structuredClone(saved));
+      annotation.revision = record.revision;
+      annotation.syncState = 'synced';
+      if ((annotation.kind === 'point_probe'
+        || annotation.kind === 'ellipse_roi'
+        || annotation.kind === 'rectangle_roi') && !annotation.statistics) {
+        void this.refreshAnnotationStatistics(annotation, record.mpr_plane ?? undefined);
+      }
+    }
+    this.render();
+  }
+
+  private findAnnotation(id: string): Annotation | null {
+    for (const map of [this.measurements, this.mprMeasurements]) {
+      for (const list of map.values()) {
+        const annotation = list.find((candidate) => candidate.id === id);
+        if (annotation) return annotation;
+      }
+    }
+    return null;
+  }
+
+  private removeAnnotationById(id: string): void {
+    for (const map of [this.measurements, this.mprMeasurements]) {
+      for (const [key, list] of map) {
+        const remaining = list.filter((annotation) => annotation.id !== id);
+        if (remaining.length !== list.length) map.set(key, remaining);
+      }
+    }
+  }
+
+  private isCurrentAnnotationKey(key: string): boolean {
+    if (!this.state) return false;
+    if (key.startsWith('mpr:')) {
+      return this.mpr != null && key === this.mprMeasurementKey(this.mpr.activePlane);
+    }
+    return key === this.currentFrame().frame_key;
+  }
+
+  private async refreshAnnotationStatistics(annotation: Annotation, plane?: MprPlane): Promise<void> {
+    if (annotation.kind !== 'point_probe' && annotation.kind !== 'ellipse_roi' && annotation.kind !== 'rectangle_roi') return;
+    // Filled by the native pixel-statistics command. Keep geometry usable if sampling is unavailable.
+    try {
+      annotation.statistics = await this.measureAnnotation(annotation, plane);
+      annotation.measurementError = undefined;
+      this.render();
+    } catch (error) {
+      annotation.measurementError = '测量不可用';
+      this.render();
+    }
+  }
+
+  private ensureCurrentStatistics(plane?: MprPlane): void {
+    const annotations = plane ? this.currentMprMeasurements(plane) : this.currentMeasurements();
+    for (const annotation of annotations) {
+      if (
+        (annotation.kind === 'point_probe'
+          || annotation.kind === 'ellipse_roi'
+          || annotation.kind === 'rectangle_roi')
+        && !annotation.statistics
+        && !annotation.measurementError
+      ) {
+        void this.refreshAnnotationStatistics(annotation, plane);
+      }
+    }
+  }
+
+  private async measureAnnotation(
+    annotation: Annotation,
+    plane?: MprPlane,
+  ): Promise<import('./types').RoiStatistics> {
+    if (!this.state) throw new Error('没有已打开的序列');
+    const shape = annotation.kind === 'point_probe'
+      ? 'point'
+      : annotation.kind === 'ellipse_roi' ? 'ellipse' : 'rectangle';
+    const startPoint = annotation.kind === 'point_probe' ? annotation.point : annotation.start;
+    const endPoint = annotation.kind === 'point_probe' ? annotation.point : annotation.end;
+    const start: [number, number] = [startPoint.x, startPoint.y];
+    const end: [number, number] = [endPoint.x, endPoint.y];
+    if (plane && this.mpr) {
+      return measureMprRoi(
+        this.state.metadata.handle,
+        plane,
+        this.mpr.viewports[plane].sliceIndex,
+        shape,
+        start,
+        end,
+      );
+    }
+    return measureFrameRoi(
+      this.state.metadata.handle,
+      this.state.metadata.active_stack,
+      this.state.currentFrame,
+      shape,
+      start,
+      end,
+    );
   }
 
   private setupResizeObserver(): void {
@@ -2056,6 +2786,7 @@ export class App {
       this.currentMeasurements(),
       this.draft,
       this.selectedMeasurementId,
+      this.annotationsVisible,
     );
   }
 
@@ -2068,6 +2799,7 @@ export class App {
       this.mprDraft?.plane === plane ? this.mprDraft.measurement : null,
       this.selectedMeasurementId,
       this.mprCrosshairImagePoint(plane),
+      this.annotationsVisible,
     );
   }
 
@@ -2080,6 +2812,7 @@ export class App {
       this.mprDraft?.plane === plane ? this.mprDraft.measurement : null,
       this.selectedMeasurementId,
       this.mprCrosshairImagePoint(plane),
+      this.annotationsVisible,
     );
   }
 
@@ -2093,7 +2826,7 @@ export class App {
     }
     setText(
       'annotation-count',
-      `${this.currentMprMeasurements(this.mpr.activePlane).length} 项标注`,
+      this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane)),
     );
     setText(
       'zoom-readout',
@@ -2137,6 +2870,30 @@ export class App {
       button.classList.toggle('active', button.dataset.tool === this.state?.tool);
       button.setAttribute('aria-pressed', String(button.dataset.tool === this.state?.tool));
     }
+    requiredElement<HTMLButtonElement>('undo-annotation').disabled = !hasSeries || !this.annotationHistory.canUndo;
+    requiredElement<HTMLButtonElement>('redo-annotation').disabled = !hasSeries || !this.annotationHistory.canRedo;
+    requiredElement<HTMLButtonElement>('retry-annotation-sync').disabled = !hasSeries
+      || this.annotationSyncRetries.size === 0;
+    const visibility = requiredElement<HTMLButtonElement>('toggle-annotations');
+    visibility.classList.toggle('active', this.annotationsVisible);
+    visibility.setAttribute('aria-pressed', String(this.annotationsVisible));
+    const view = this.activeViewTransform();
+    const invert = requiredElement<HTMLButtonElement>('invert-btn');
+    invert.classList.toggle('active', view?.inverted === true);
+    invert.setAttribute('aria-pressed', String(view?.inverted === true));
+    const horizontal = requiredElement<HTMLButtonElement>('flip-horizontal-btn');
+    horizontal.classList.toggle('active', view?.flipHorizontal === true);
+    horizontal.setAttribute('aria-pressed', String(view?.flipHorizontal === true));
+    const vertical = requiredElement<HTMLButtonElement>('flip-vertical-btn');
+    vertical.classList.toggle('active', view?.flipVertical === true);
+    vertical.setAttribute('aria-pressed', String(view?.flipVertical === true));
+    const currentCount = this.mpr && this.viewerMode === 'mpr'
+      ? this.currentMprMeasurements(this.mpr.activePlane).length
+      : this.currentMeasurements().length;
+    requiredElement<HTMLButtonElement>('clear-current-annotations').disabled = !hasSeries || currentCount === 0;
+    const annotationMap = this.viewerMode === 'mpr' ? this.mprMeasurements : this.measurements;
+    requiredElement<HTMLButtonElement>('clear-all-annotations').disabled = !hasSeries
+      || ![...annotationMap.values()].some((annotations) => annotations.length > 0);
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-view-mode]')) {
       const active = button.dataset.viewMode === this.viewerMode;
       button.classList.toggle('active', active);
@@ -2209,10 +2966,21 @@ export class App {
         const metadata = requirePlane(this.mpr.metadata, plane);
         setText(`${plane}-slice-counter`, `${viewport.sliceIndex + 1} / ${metadata.slice_count}`);
       }
-      setText('annotation-count', `${this.currentMprMeasurements(this.mpr.activePlane).length} 项标注`);
+      setText('annotation-count', this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane)));
     } else {
-      setText('annotation-count', `${this.currentMeasurements().length} 项标注`);
+      setText('annotation-count', this.annotationCountText(this.currentMeasurements()));
     }
+  }
+
+  private annotationCountText(annotations: Annotation[]): string {
+    const pending = annotations.filter((annotation) => annotation.syncState === 'pending').length;
+    const errors = annotations.filter((annotation) => annotation.syncState === 'error').length;
+    const suffix = !this.remoteSeriesOpen
+      ? ' · 本地会话，未同步'
+      : errors ? ` · ${errors} 项同步失败`
+        : pending ? ` · ${pending} 项保存中`
+          : ' · 已同步';
+    return `${annotations.length} 项标注${suffix}`;
   }
 
   private updateImageStackOptions(): void {
@@ -2267,19 +3035,29 @@ export class App {
   }
 
   private updatePresetOptions(frame: FrameMetadata): void {
+    const isCt = this.state?.metadata.patient.modality?.trim().toUpperCase() === 'CT';
+    const presets = isCt ? [...frame.window_presets, ...CT_WINDOW_PRESETS] : frame.window_presets;
     const previousCount = this.presetSelect.options.length;
-    const signature = frame.window_presets.map(presetSignature).join('|');
+    const signature = `${isCt}:${presets.map(presetSignature).join('|')}`;
     if (this.presetSelect.dataset.signature !== signature || previousCount === 0) {
       this.presetSelect.replaceChildren();
       frame.window_presets.forEach((preset, index) => {
         const option = document.createElement('option');
-        option.value = String(index);
-        option.textContent = preset.explanation?.trim() || `窗 ${index + 1}`;
+        option.value = `dicom:${index}`;
+        option.textContent = `DICOM · ${preset.explanation?.trim() || `窗 ${index + 1}`}`;
         this.presetSelect.append(option);
       });
+      if (isCt) {
+        CT_WINDOW_PRESETS.forEach((preset, index) => {
+          const option = document.createElement('option');
+          option.value = `ct:${index}`;
+          option.textContent = `CT · ${preset.explanation}`;
+          this.presetSelect.append(option);
+        });
+      }
       this.presetSelect.dataset.signature = signature;
     }
-    const match = frame.window_presets.findIndex(
+    const match = presets.findIndex(
       (preset) =>
         Math.abs(preset.center - this.state!.windowCenter) < 0.001 &&
         Math.abs(preset.width - this.state!.windowWidth) < 0.001 &&
@@ -2293,7 +3071,7 @@ export class App {
     return this.state.metadata.frames[this.state.currentFrame];
   }
 
-  private currentMeasurements(): LengthMeasurement[] {
+  private currentMeasurements(): Annotation[] {
     if (!this.state) return [];
     return this.measurements.get(this.currentFrame().frame_key) ?? [];
   }
@@ -2303,7 +3081,7 @@ export class App {
     return `mpr:${plane}:${this.mpr.viewports[plane].sliceIndex}`;
   }
 
-  private currentMprMeasurements(plane: MprPlane): LengthMeasurement[] {
+  private currentMprMeasurements(plane: MprPlane): Annotation[] {
     return this.mprMeasurements.get(this.mprMeasurementKey(plane)) ?? [];
   }
 
@@ -2331,6 +3109,65 @@ export class App {
     if (!this.state?.metadata.warnings.length) return;
     this.showError(this.state.metadata.warnings.join('；'));
   }
+}
+
+function annotationGeometry(
+  annotation: Annotation,
+  map: (point: Point) => Point | PatientPoint3D = (point) => ({ ...point }),
+): Record<string, unknown> {
+  if (annotation.kind === 'point_probe') return { point: map(annotation.point) };
+  if (annotation.kind === 'angle') {
+    return {
+      start: map(annotation.start),
+      vertex: map(annotation.vertex),
+      end: map(annotation.end),
+    };
+  }
+  return { start: map(annotation.start), end: map(annotation.end) };
+}
+
+function annotationFromGeometry(
+  id: string,
+  kind: AnnotationKind,
+  geometry: Record<string, unknown>,
+  map: (value: unknown) => Point | null,
+): Annotation | null {
+  if (kind === 'point_probe') {
+    const point = map(geometry.point);
+    return point ? { id, kind, point } : null;
+  }
+  if (kind === 'angle') {
+    const start = map(geometry.start);
+    const vertex = map(geometry.vertex);
+    const end = map(geometry.end);
+    return start && vertex && end ? { id, kind, start, vertex, end } : null;
+  }
+  const start = map(geometry.start);
+  const end = map(geometry.end);
+  if (!start || !end) return null;
+  if (kind === 'length' || kind === 'arrow') return { id, kind, start, end };
+  if (kind === 'ellipse_roi' || kind === 'rectangle_roi') return { id, kind, start, end };
+  return null;
+}
+
+function pointFromUnknown(value: unknown): Point | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.x === 'number' && Number.isFinite(candidate.x)
+    && typeof candidate.y === 'number' && Number.isFinite(candidate.y)
+    ? { x: candidate.x, y: candidate.y }
+    : null;
+}
+
+function patientPointFromUnknown(value: unknown): PatientPoint3D | null {
+  const point = pointFromUnknown(value);
+  if (!point || !value || typeof value !== 'object') return null;
+  const z = (value as Record<string, unknown>).z;
+  return typeof z === 'number' && Number.isFinite(z) ? { ...point, z } : null;
+}
+
+function firstGeometryPoint(geometry: Record<string, unknown>): unknown {
+  return geometry.point ?? geometry.start ?? geometry.vertex ?? geometry.end;
 }
 
 function requiredElement<T extends HTMLElement>(id: string): T {
@@ -2396,7 +3233,14 @@ function revisionKindLabel(kind: DicomRevision['derivation_kind']): string {
 }
 
 function makeId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `measurement-${Date.now()}-${Math.random()}`;
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function presetSignature(preset: WindowPreset): string {
