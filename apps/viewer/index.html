@@ -396,7 +396,7 @@
       <header class="dialog-heading">
         <div>
           <h2 id="dicom-router-title">DICOM Router</h2>
-          <span id="router-summary">0 个已接入站点</span>
+          <span id="router-summary">0 个在线站点</span>
         </div>
         <div class="dialog-heading-actions">
           <button id="router-refresh" class="icon-button" type="button" title="刷新路由状态" aria-label="刷新路由状态"><i data-lucide="refresh-cw"></i></button>
@@ -405,13 +405,12 @@
       </header>
       <p id="router-error" class="dialog-error" role="alert" hidden></p>
       <section class="router-view">
-        <div class="router-section-heading"><strong>已接入站点</strong><span id="router-peer-count">0 个站点</span></div>
+        <div class="router-section-heading"><strong>在线站点</strong><span id="router-peer-count">0 个在线站点</span></div>
         <div class="router-topology-shell">
           <canvas id="router-topology-canvas" class="router-topology-canvas" role="img"></canvas>
           <div class="router-topology-footer">
             <div class="router-topology-legend" aria-label="节点状态">
-              <span data-status="online">在线</span><span data-status="recent">最近连接</span>
-              <span data-status="offline">离线</span><span data-status="unknown">未检测</span>
+              <span data-status="online">在线</span>
             </div>
             <div id="router-topology-detail" class="router-topology-detail">暂无 DICOM 节点</div>
           </div>

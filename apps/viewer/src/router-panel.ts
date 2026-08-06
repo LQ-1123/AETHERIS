@@ -3,6 +3,7 @@ import {
   deleteRouteDestination,
   getLocalDicomNode,
   listRouteDestinations,
+  testRouteDestination,
 } from './api';
 import { RouterTopologyCanvas, type RouterTopologyNode } from './router-topology';
 import type { LocalDicomNode, RouteDestination } from './types';
@@ -16,20 +17,26 @@ export class RouterPanel {
   private localNode: LocalDicomNode | null = null;
   private destinations: RouteDestination[] = [];
   private busy = false;
+  private pollingTimer: number | null = null;
 
   constructor(private readonly reportError: (message: string) => void) {
     element<HTMLButtonElement>('dicom-router-btn').addEventListener('click', () => void this.open());
     element<HTMLButtonElement>('router-close').addEventListener('click', () => this.dialog.close());
     element<HTMLButtonElement>('router-refresh').addEventListener('click', () => void this.refresh());
+    this.dialog.addEventListener('close', () => this.stopPolling());
   }
 
   setAvailable(available: boolean): void {
     element<HTMLButtonElement>('dicom-router-btn').hidden = !available;
-    if (!available && this.dialog.open) this.dialog.close();
+    if (!available) {
+      this.stopPolling();
+      if (this.dialog.open) this.dialog.close();
+    }
   }
 
   async open(): Promise<void> {
     if (!this.dialog.open) this.dialog.showModal();
+    this.startPolling();
     await this.refresh();
   }
 
@@ -38,10 +45,27 @@ export class RouterPanel {
     const ownsBusy = !this.busy;
     if (ownsBusy) this.setBusy(true);
     try {
-      [this.localNode, this.destinations] = await Promise.all([
+      const [localNode, destinations] = await Promise.all([
         getLocalDicomNode(),
         listRouteDestinations(),
       ]);
+      const testable = destinations.filter(
+        (entry) => entry.approval_status === 'approved' && entry.enabled,
+      );
+      const results = await Promise.allSettled(
+        testable.map((entry) => testRouteDestination(entry.id)),
+      );
+      const failedTests = new Map<string, string>();
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          failedTests.set(testable[index].id, message(result.reason));
+        }
+      });
+      const latest = await listRouteDestinations();
+      this.localNode = localNode;
+      this.destinations = latest.map((entry) => failedTests.has(entry.id)
+        ? { ...entry, status: 'offline', last_error: failedTests.get(entry.id) ?? entry.last_error }
+        : entry);
       this.render();
       this.clearError();
     } catch (error) {
@@ -53,15 +77,16 @@ export class RouterPanel {
 
   private render(): void {
     const approved = this.destinations.filter((entry) => entry.approval_status === 'approved');
+    const online = approved.filter((entry) => entry.enabled && entry.status === 'online');
     const pending = this.destinations.filter((entry) => entry.approval_status === 'pending');
-    this.renderTopology(approved);
+    this.renderTopology(online);
     this.renderRequests(pending);
-    text('router-summary', `${approved.length} 个已接入站点 · ${pending.length} 个待确认`);
-    text('router-peer-count', `${approved.length} 个站点`);
+    text('router-summary', `${online.length} 个在线站点 · ${pending.length} 个待确认`);
+    text('router-peer-count', `${online.length} 个在线站点`);
     text('router-request-count', `${pending.length} 个待确认`);
   }
 
-  private renderTopology(approved: RouteDestination[]): void {
+  private renderTopology(online: RouteDestination[]): void {
     const nodes: RouterTopologyNode[] = [];
     if (this.localNode) {
       nodes.push({
@@ -73,7 +98,7 @@ export class RouterPanel {
         summary: `${this.localNode.ae_title} · PACS 本机 · DIMSE ${this.localNode.listen_host}:${this.localNode.listen_port}`,
       });
     }
-    for (const destination of approved) {
+    for (const destination of online) {
       const endpoint = destinationEndpoint(destination);
       nodes.push({
         id: `site:${destination.id}`,
@@ -85,6 +110,19 @@ export class RouterPanel {
       });
     }
     this.topology.update(nodes);
+  }
+
+  private startPolling(): void {
+    if (this.pollingTimer !== null) return;
+    this.pollingTimer = window.setInterval(() => {
+      if (this.dialog.open) void this.refresh();
+    }, 5_000);
+  }
+
+  private stopPolling(): void {
+    if (this.pollingTimer === null) return;
+    window.clearInterval(this.pollingTimer);
+    this.pollingTimer = null;
   }
 
   private renderRequests(pending: RouteDestination[]): void {
