@@ -1,4 +1,4 @@
-//! PACS 查看器 - Tauri 2 桌面客户端
+//! AETHERIS Medical Imaging Cloud - Tauri 2 桌面客户端
 //!
 //! 核心设计:
 //! - 帧数据通过自定义协议 `pacs-frame://` 直传,不走 JSON IPC

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PACS 查看器",
+  "productName": "AETHERIS",
   "version": "0.1.0",
   "identifier": "cn.local.remote-pacs.viewer",
   "build": {
@@ -11,7 +11,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "PACS 查看器",
+        "title": "AETHERIS | Medical Imaging Cloud",
         "width": 1280,
         "height": 860,
         "minWidth": 900,
@@ -48,8 +48,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "copyright": "自建 PACS",
-    "shortDescription": "DICOM 影像查看器",
-    "longDescription": "自建 PACS 的桌面查看器,可连接服务端或直接打开本地 DICOM 文件。"
+    "copyright": "AETHERIS Medical Imaging Cloud",
+    "shortDescription": "AETHERIS DICOM 影像查看器",
+    "longDescription": "AETHERIS Medical Imaging Cloud 的桌面查看器,可连接服务端或直接打开本地 DICOM 文件。"
   }
 }

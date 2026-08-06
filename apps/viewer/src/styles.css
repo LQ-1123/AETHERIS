@@ -79,10 +79,18 @@ input:disabled {
   padding-bottom: 6px;
 }
 
-.login-brand .brand-mark {
+.brand-logo {
+  display: block;
+  object-fit: cover;
+  background: #020b13;
+}
+
+.login-logo {
   width: 38px;
   height: 38px;
-  font-size: 12px;
+  border: 1px solid #58b8c7;
+  border-radius: 4px;
+  object-position: 50% 35%;
 }
 
 .login-brand h1 {
@@ -92,7 +100,7 @@ input:disabled {
   letter-spacing: 0;
 }
 
-.login-brand span:not(.brand-mark) {
+.login-brand span:not(.login-logo) {
   color: #8f989c;
   font-size: 11px;
 }
@@ -172,6 +180,14 @@ input:disabled {
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
+}
+
+.toolbar-logo {
+  width: 27px;
+  height: 27px;
+  border: 1px solid #58b8c7;
+  border-radius: 3px;
+  object-position: 50% 35%;
 }
 
 .brand-mark {
