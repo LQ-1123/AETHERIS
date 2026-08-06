@@ -7,6 +7,10 @@ import type {
   RoiStatistics,
   RemoteSeriesSummary,
   RemoteUser,
+  CreatedSegmentationProject,
+  SegmentationMaskRecord,
+  SegmentationProject,
+  SegmentationSegment,
   LocalDicomNode,
   LegalHold,
   LifecycleEvent,
@@ -273,6 +277,98 @@ export async function updateSharedAnnotation(
     expectedRevision,
     geometry,
     deleted,
+  });
+}
+
+export async function listSegmentationProjects(
+  studyUid: string,
+  seriesUid: string,
+): Promise<SegmentationProject[]> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationProject[]>('list_segmentation_projects', { studyUid, seriesUid });
+}
+
+export async function createSegmentationProject(
+  studyUid: string,
+  seriesUid: string,
+  input: Record<string, unknown>,
+): Promise<CreatedSegmentationProject> {
+  const invoke = await getInvoke();
+  return invoke<CreatedSegmentationProject>('create_segmentation_project', { studyUid, seriesUid, input });
+}
+
+export async function listSegmentationSegments(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+): Promise<SegmentationSegment[]> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationSegment[]>('list_segmentation_segments', { studyUid, seriesUid, projectId });
+}
+
+export async function listSegmentationMasks(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+  sopInstanceUid: string,
+  frameNumber: number,
+): Promise<SegmentationMaskRecord[]> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationMaskRecord[]>('list_segmentation_masks', {
+    studyUid,
+    seriesUid,
+    projectId,
+    sopInstanceUid,
+    frameNumber,
+  });
+}
+
+export async function upsertSegmentationMask(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+  segmentId: string,
+  input: Record<string, unknown>,
+): Promise<SegmentationMaskRecord> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationMaskRecord>('upsert_segmentation_mask', {
+    studyUid,
+    seriesUid,
+    projectId,
+    segmentId,
+    input,
+  });
+}
+
+export async function listSegmentationVolume(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+  segmentId: string,
+): Promise<SegmentationMaskRecord[]> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationMaskRecord[]>('list_segmentation_volume', {
+    studyUid,
+    seriesUid,
+    projectId,
+    segmentId,
+  });
+}
+
+export async function upsertSegmentationMasks(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+  segmentId: string,
+  updates: Array<Record<string, unknown>>,
+): Promise<SegmentationMaskRecord[]> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationMaskRecord[]>('upsert_segmentation_masks', {
+    studyUid,
+    seriesUid,
+    projectId,
+    segmentId,
+    updates,
   });
 }
 

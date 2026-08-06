@@ -216,6 +216,125 @@ input:disabled {
   background: #3b4043;
 }
 
+.mask-menu-button {
+  display: flex;
+  align-items: center;
+  width: 82px;
+  height: 32px;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 7px;
+  flex: 0 0 auto;
+  color: #dce1e3;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mask-menu-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mask-menu-button.active,
+.mask-menu-button[aria-expanded="true"] {
+  border-color: #58b8c7;
+  color: #dffafd;
+  background: #26383b;
+}
+
+.mask-menu-panel {
+  position: fixed;
+  z-index: 70;
+  top: 43px;
+  display: grid;
+  width: 262px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #485053;
+  border-radius: 5px;
+  background: #202426;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 48%);
+}
+
+.mask-segment-control {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.mask-color-swatch {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border: 1px solid #c9f5f3;
+  border-radius: 3px;
+  background: #37d5d8;
+}
+
+#mask-segment-select {
+  min-width: 0;
+  width: 100%;
+  height: 31px;
+  border: 1px solid #42474a;
+  border-radius: 4px;
+  padding: 0 22px 0 7px;
+  color: #e7e9eb;
+  background: #292d30;
+  font-size: 11px;
+}
+
+.mask-mode-control {
+  justify-self: end;
+}
+
+.mask-range-control {
+  display: flex;
+  align-items: center;
+  grid-column: 1 / -1;
+  gap: 7px;
+  height: 31px;
+  padding: 0 6px;
+  border: 1px solid #42474a;
+  border-radius: 4px;
+  color: #aeb5b8;
+  background: #292d30;
+}
+
+.mask-range-control > span:first-child,
+.mask-range-control svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  text-align: center;
+}
+
+.mask-range-control input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+#mask-brush-size-value,
+#mask-opacity-value {
+  min-width: 42px;
+  color: #d7dcde;
+  font-size: 10px;
+  text-align: right;
+}
+
+.mask-statistics {
+  grid-column: 1 / -1;
+  min-height: 20px;
+  padding: 4px 2px 0;
+  border-top: 1px solid #373d40;
+  color: #aeb7ba;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 button {
   display: inline-flex;
   align-items: center;

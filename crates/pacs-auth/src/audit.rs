@@ -37,6 +37,8 @@ pub enum Action {
     AnnotationCreated,
     AnnotationUpdated,
     AnnotationDeleted,
+    SegmentationCreated,
+    SegmentationMaskUpdated,
 }
 
 impl Action {
@@ -57,6 +59,8 @@ impl Action {
             Self::AnnotationCreated => "annotation_created",
             Self::AnnotationUpdated => "annotation_updated",
             Self::AnnotationDeleted => "annotation_deleted",
+            Self::SegmentationCreated => "segmentation_created",
+            Self::SegmentationMaskUpdated => "segmentation_mask_updated",
         }
     }
 }
@@ -215,6 +219,8 @@ mod tests {
             Action::AnnotationCreated,
             Action::AnnotationUpdated,
             Action::AnnotationDeleted,
+            Action::SegmentationCreated,
+            Action::SegmentationMaskUpdated,
         ];
         let unique: std::collections::HashSet<_> = actions.iter().map(|a| a.as_str()).collect();
         assert_eq!(unique.len(), actions.len(), "动作名有重复,统计会串");

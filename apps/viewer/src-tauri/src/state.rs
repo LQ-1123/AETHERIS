@@ -72,6 +72,8 @@ struct ImageStackPlan {
 
 #[derive(Clone)]
 struct LoadedFrame {
+    frame_key: String,
+    sop_instance_uid: Option<String>,
     path: PathBuf,
     source_frame: u32,
     pipeline: Pipeline,
@@ -553,6 +555,9 @@ impl ViewerState {
                     progress(completed, frame_count * 2);
                 }
                 Ok(SourceSlice {
+                    frame_key: frame.frame_key,
+                    sop_instance_uid: frame.sop_instance_uid,
+                    source_frame: frame.source_frame,
                     rows: frame.rows,
                     cols: frame.cols,
                     bits_allocated: frame.bits_allocated,
@@ -834,7 +839,7 @@ fn build_loaded_image_stack(
             );
             frame_metadata.push(FrameMetadata {
                 logical_index,
-                frame_key,
+                frame_key: frame_key.clone(),
                 sop_instance_uid: file.sop_uid.clone(),
                 source_frame,
                 instance_number: file.instance_number,
@@ -845,6 +850,8 @@ fn build_loaded_image_stack(
                 spacing: spacing_info(file.spacing),
             });
             frames.push(LoadedFrame {
+                frame_key,
+                sop_instance_uid: file.sop_uid.clone(),
                 path: file.path.clone(),
                 source_frame,
                 pipeline: file.pipeline.clone(),

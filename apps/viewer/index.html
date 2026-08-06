@@ -95,6 +95,11 @@
             <i data-lucide="scan-line"></i>
           </button>
         </div>
+        <button id="mask-menu-button" class="mask-menu-button" data-requires-series type="button" title="Mask 标注" aria-haspopup="dialog" aria-expanded="false">
+          <i data-lucide="layers-3"></i>
+          <span id="mask-menu-label">Mask</span>
+          <i data-lucide="chevron-down"></i>
+        </button>
         <div class="segmented" role="group" aria-label="标注历史">
           <button id="undo-annotation" data-requires-series type="button" title="撤销标注 (Ctrl/Cmd+Z)" aria-label="撤销标注">
             <i data-lucide="undo-2"></i>
@@ -163,6 +168,34 @@
           <i data-lucide="log-out"></i>
         </button>
       </header>
+
+      <section id="mask-menu-panel" class="mask-menu-panel" role="dialog" aria-label="Mask 标注" hidden>
+        <div class="mask-segment-control">
+          <span id="mask-color-swatch" class="mask-color-swatch" title="当前 Segment 颜色" aria-hidden="true"></span>
+          <select id="mask-segment-select" data-requires-series aria-label="选择 Mask Segment">
+            <option value="">Mask Segment</option>
+          </select>
+        </div>
+        <div class="segmented mask-mode-control" role="group" aria-label="Mask 编辑模式">
+          <button data-tool="mask_brush" data-requires-series type="button" title="画笔" aria-label="Mask 画笔">
+            <i data-lucide="paintbrush"></i>
+          </button>
+          <button data-tool="mask_eraser" data-requires-series type="button" title="橡皮" aria-label="Mask 橡皮">
+            <i data-lucide="eraser"></i>
+          </button>
+        </div>
+        <label class="mask-range-control" title="画笔直径">
+          <span>Ø</span>
+          <input id="mask-brush-size" data-requires-series type="range" min="1" max="64" value="10" aria-label="Mask 画笔直径（毫米）" />
+          <output id="mask-brush-size-value">10 mm</output>
+        </label>
+        <label class="mask-range-control" title="Mask 透明度">
+          <i data-lucide="blend"></i>
+          <input id="mask-opacity" data-requires-series type="range" min="10" max="80" value="38" aria-label="Mask 透明度" />
+          <output id="mask-opacity-value">38%</output>
+        </label>
+        <div id="mask-statistics" class="mask-statistics" aria-live="polite">0 voxel · 最大径 --</div>
+      </section>
 
       <div id="error-banner" class="status-banner" role="alert" hidden>
         <i data-lucide="info"></i>

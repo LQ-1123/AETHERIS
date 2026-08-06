@@ -7,6 +7,7 @@ import {
   type ViewportSize,
 } from './geometry';
 import { angleDegrees, annotationLabel, annotationPoints } from './annotations';
+import type { MaskLayer } from './masks';
 import type { Annotation, FrameMetadata, Point, ViewState, ViewTransform } from './types';
 
 export class Renderer {
@@ -15,6 +16,8 @@ export class Renderer {
   private sourceCanvas = document.createElement('canvas');
   private sourceContext: CanvasRenderingContext2D;
   private sourceImageData: ImageData | null = null;
+  private maskCanvas = document.createElement('canvas');
+  private maskContext: CanvasRenderingContext2D;
   private frameData: Uint8Array | Uint16Array | null = null;
   private frame: FrameMetadata | null = null;
   private viewport: ViewportSize = { width: 1, height: 1 };
@@ -26,12 +29,14 @@ export class Renderer {
     const imageContext = imageCanvas.getContext('2d');
     const overlayContext = overlayCanvas.getContext('2d');
     const sourceContext = this.sourceCanvas.getContext('2d');
-    if (!imageContext || !overlayContext || !sourceContext) {
+    const maskContext = this.maskCanvas.getContext('2d');
+    if (!imageContext || !overlayContext || !sourceContext || !maskContext) {
       throw new Error('Canvas 2D 上下文不可用');
     }
     this.imageContext = imageContext;
     this.overlayContext = overlayContext;
     this.sourceContext = sourceContext;
+    this.maskContext = maskContext;
   }
 
   resize(width: number, height: number): void {
@@ -98,6 +103,7 @@ export class Renderer {
     draft: Annotation | null,
     selectedId: string | null,
     annotationsVisible = true,
+    masks: MaskLayer[] = [],
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.imageContext.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -107,7 +113,7 @@ export class Renderer {
     const frame = state.metadata.frames[state.currentFrame];
     if (!frame || !this.frameData) return;
 
-    this.renderView(state, frame, annotations, draft, selectedId, null, annotationsVisible);
+    this.renderView(state, frame, annotations, draft, selectedId, null, annotationsVisible, masks);
   }
 
   renderMpr(
@@ -118,6 +124,7 @@ export class Renderer {
     selectedId: string | null,
     crosshair: Point,
     annotationsVisible = true,
+    masks: MaskLayer[] = [],
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.imageContext.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -125,7 +132,7 @@ export class Renderer {
     this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
     if (!this.frameData) return;
-    this.renderView(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible);
+    this.renderView(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks);
   }
 
   renderMprOverlay(
@@ -136,11 +143,12 @@ export class Renderer {
     selectedId: string | null,
     crosshair: Point,
     annotationsVisible = true,
+    masks: MaskLayer[] = [],
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
-    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible);
+    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks);
   }
 
   private renderView(
@@ -151,6 +159,7 @@ export class Renderer {
     selectedId: string | null,
     crosshair: Point | null,
     annotationsVisible: boolean,
+    masks: MaskLayer[],
   ): void {
 
     const image = imageGeometry(frame);
@@ -172,7 +181,7 @@ export class Renderer {
     );
     this.imageContext.restore();
 
-    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible);
+    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks);
   }
 
   private renderOverlay(
@@ -183,7 +192,9 @@ export class Renderer {
     selectedId: string | null,
     crosshair: Point | null,
     annotationsVisible: boolean,
+    masks: MaskLayer[] = [],
   ): void {
+    if (masks.length) this.drawMasks(masks, frame, view);
     if (annotationsVisible) {
       for (const annotation of annotations) {
         this.drawAnnotation(annotation, frame, view, annotation.id === selectedId, false);
@@ -191,6 +202,42 @@ export class Renderer {
       if (draft) this.drawAnnotation(draft, frame, view, false, true);
     }
     if (crosshair) this.drawCrosshair(crosshair, frame, view);
+  }
+
+  private drawMasks(masks: MaskLayer[], frame: FrameMetadata, view: ViewTransform): void {
+    if (this.maskCanvas.width !== frame.cols || this.maskCanvas.height !== frame.rows) {
+      this.maskCanvas.width = frame.cols;
+      this.maskCanvas.height = frame.rows;
+    }
+    const pixels = this.maskContext.createImageData(frame.cols, frame.rows);
+    for (const layer of masks) {
+      if (layer.rows !== frame.rows || layer.cols !== frame.cols || layer.data.length !== frame.rows * frame.cols) {
+        continue;
+      }
+      const alpha = Math.round(Math.max(0, Math.min(1, layer.opacity)) * 255);
+      for (let index = 0; index < layer.data.length; index += 1) {
+        if (!layer.data[index]) continue;
+        const offset = index * 4;
+        pixels.data[offset] = layer.color[0];
+        pixels.data[offset + 1] = layer.color[1];
+        pixels.data[offset + 2] = layer.color[2];
+        pixels.data[offset + 3] = alpha;
+      }
+    }
+    this.maskContext.clearRect(0, 0, frame.cols, frame.rows);
+    this.maskContext.putImageData(pixels, 0, 0);
+    const image = imageGeometry(frame);
+    const transform = renderTransform(this.viewport, image, view);
+    const context = this.overlayContext;
+    context.save();
+    context.imageSmoothingEnabled = false;
+    context.translate(transform.centerX, transform.centerY);
+    context.scale(transform.scale, transform.scale);
+    context.rotate(view.rotation * Math.PI / 180);
+    context.scale(view.flipHorizontal ? -1 : 1, view.flipVertical ? -1 : 1);
+    context.scale(image.columnOverRow, 1);
+    context.drawImage(this.maskCanvas, -frame.cols / 2, -frame.rows / 2, frame.cols, frame.rows);
+    context.restore();
   }
 
   toImage(point: Point, state: ViewState): Point {

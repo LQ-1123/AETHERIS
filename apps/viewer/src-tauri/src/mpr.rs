@@ -16,6 +16,9 @@ type SliceKey = (Plane, u32);
 
 #[derive(Clone)]
 pub struct SourceSlice {
+    pub frame_key: String,
+    pub sop_instance_uid: Option<String>,
+    pub source_frame: u32,
     pub rows: u32,
     pub cols: u32,
     pub bits_allocated: u16,
@@ -60,10 +63,22 @@ pub struct MprMetadata {
     pub stack_index: u32,
     pub dimensions: [u32; 3],
     pub source_spacing_mm: [f64; 3],
+    pub source_origin: [f64; 3],
+    pub source_x_axis: [f64; 3],
+    pub source_y_axis: [f64; 3],
+    pub source_normal: [f64; 3],
+    pub source_slices: Vec<MprSourceSlice>,
     pub patient_bounds_min: [f64; 3],
     pub patient_bounds_max: [f64; 3],
     pub initial_crosshair: [f64; 3],
     pub planes: Vec<PlaneMetadata>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct MprSourceSlice {
+    pub frame_key: String,
+    pub sop_instance_uid: Option<String>,
+    pub frame_number: u32,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -101,6 +116,7 @@ pub struct Volume {
     bounds_min: Vec3,
     bounds_max: Vec3,
     planes: [PlaneMetadata; 3],
+    source_slices: Vec<MprSourceSlice>,
     slice_cache: Mutex<SliceCache>,
 }
 
@@ -277,6 +293,14 @@ impl Volume {
         let (bounds_min, bounds_max) = volume_bounds(&geometry);
         let output_spacing = row_spacing.min(col_spacing).min(slice_spacing);
         let planes = build_planes(bounds_min, bounds_max, output_spacing);
+        let source_slices = sources
+            .iter()
+            .map(|source| MprSourceSlice {
+                frame_key: source.frame_key.clone(),
+                sop_instance_uid: source.sop_instance_uid.clone(),
+                frame_number: source.source_frame,
+            })
+            .collect();
 
         Ok(Self {
             stack_index,
@@ -295,6 +319,7 @@ impl Volume {
             bounds_min,
             bounds_max,
             planes,
+            source_slices,
             slice_cache: Mutex::new(SliceCache::new(SLICE_CACHE_LIMIT)),
         })
     }
@@ -304,6 +329,11 @@ impl Volume {
             stack_index: self.stack_index,
             dimensions: [self.cols as u32, self.rows as u32, self.slices as u32],
             source_spacing_mm: [self.col_spacing, self.row_spacing, self.slice_spacing],
+            source_origin: array(self.origin),
+            source_x_axis: array(self.row_direction),
+            source_y_axis: array(self.column_direction),
+            source_normal: array(self.normal),
+            source_slices: self.source_slices.clone(),
             patient_bounds_min: array(self.bounds_min),
             patient_bounds_max: array(self.bounds_max),
             initial_crosshair: [
@@ -827,6 +857,9 @@ mod tests {
 
     fn source(z: f64, values: [u16; 4]) -> SourceSlice {
         SourceSlice {
+            frame_key: format!("frame-{z}"),
+            sop_instance_uid: Some(format!("1.2.3.{}", z as u32 + 1)),
+            source_frame: 1,
             rows: 2,
             cols: 2,
             bits_allocated: 16,

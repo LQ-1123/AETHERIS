@@ -19,6 +19,7 @@ mod jobs;
 mod lifecycle;
 pub mod retrieve;
 mod router;
+mod segmentations;
 mod transfers;
 mod transformations;
 pub mod worklist;
@@ -70,6 +71,12 @@ pub use router::{
     observe_dicom_association_closed, observe_dicom_association_opened, record_destination_health,
     replay_route_delivery, reset_observed_dicom_associations, retry_delivery, route_source_by_sop,
     route_sources_for_scope, update_route_destination, update_route_rule,
+};
+pub use segmentations::{
+    NewSegmentationProject, SegmentationMask, SegmentationMaskUpdate, SegmentationProject,
+    SegmentationSegment, UpsertSegmentationMask, create_segmentation_project,
+    list_segmentation_masks, list_segmentation_projects, list_segmentation_segment_masks,
+    list_segmentation_segments, upsert_segmentation_mask, upsert_segmentation_masks_batch,
 };
 pub use transfers::{
     ExportArtifact, ExportSource, ImportUpload, UploadStatus, advance_upload, create_import_upload,

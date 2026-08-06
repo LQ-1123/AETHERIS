@@ -144,6 +144,20 @@
 - [ ] 阶段五：Mask 标注与高级查询。
 - [ ] 阶段六：Viewer 多模态与 3D。
 
+### 阶段五首个交付（Mask 编辑闭环，2026-08-06）
+
+- 已增加 `0017_segmentations` 迁移：分割项目、Segment 元数据和逐帧 `rle-v1`
+  二进制 Mask 独立存储，按机构、Series 和来源 SOP/帧隔离。
+- Viewer 已将每个 Segment 维护为三维稀疏体数据，支持逐层 Brush/Eraser、三平面
+  MPR 同步显示、透明叠加和独立 Undo/Redo；工具栏通过 Mask 下拉菜单切换 Segment
+  与编辑模式，全部 Segment 可同时显示。
+- Mask 数据按来源 SOP/帧以 `rle-v1` 保存，Tauri 与 HTTP API 已接入体数据读取和
+  批量更新；批量请求使用 `expected_revision` 做逐层乐观并发控制，冲突返回 409。
+- Viewer 会显示当前 Segment 的 voxel 数、体积和三维最大径（基于有效体素包围范围），
+  并在 MPR 构建后使用来源体素间距计算物理单位。
+- 当前交付不包含填充、Mask 插帧、半自动/自动分割、DICOM SEG 发布/导入、形态学
+  修整和高级查询，这些继续作为阶段五后续验收项。
+
 ### 阶段一验收记录（2026-08-05）
 
 - 数据库迁移 `0009`/`0010` 在真实 PostgreSQL 应用成功。
@@ -250,5 +264,3 @@
   集成测试覆盖预演约束、Hold、宽限期暂停与恢复、Study 清除、冷层重传、隔离可见性、
   过期 Hold 和审计；
   Viewer 22 项 TypeScript 测试、生产构建、Tauri 17 项测试和严格 Clippy 均通过。
-
-

@@ -6,7 +6,8 @@ export type AnnotationKind =
   | 'rectangle_roi'
   | 'angle'
   | 'point_probe';
-export type ToolMode = 'window' | 'pan' | 'crosshair' | AnnotationKind;
+export type MaskTool = 'mask_brush' | 'mask_eraser';
+export type ToolMode = 'window' | 'pan' | 'crosshair' | AnnotationKind | MaskTool;
 export type ViewerMode = '2d' | 'mpr';
 export type MprPlane = 'axial' | 'coronal' | 'sagittal';
 
@@ -152,6 +153,51 @@ export interface SharedAnnotationRecord {
   updated_at: string;
 }
 
+export interface SegmentationProject {
+  id: string;
+  study_instance_uid: string;
+  series_instance_uid: string;
+  name: string;
+  status: 'draft' | 'published' | 'archived';
+  revision: number;
+  created_by: number | null;
+  modified_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SegmentationSegment {
+  id: string;
+  project_id: string;
+  segment_number: number;
+  label: string;
+  description: string | null;
+  color_r: number;
+  color_g: number;
+  color_b: number;
+  algorithm_type: 'manual' | 'semiautomatic' | 'automatic';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SegmentationMaskRecord {
+  segment_id: string;
+  sop_instance_uid: string;
+  frame_number: number;
+  rows: number;
+  cols: number;
+  encoding: 'rle-v1';
+  data_base64: string;
+  revision: number;
+  modified_by: number | null;
+  updated_at: string;
+}
+
+export interface CreatedSegmentationProject {
+  project: SegmentationProject;
+  segment: SegmentationSegment;
+}
+
 export interface PatientPoint3D {
   x: number;
   y: number;
@@ -175,10 +221,21 @@ export interface MprMetadata {
   stack_index: number;
   dimensions: [number, number, number];
   source_spacing_mm: [number, number, number];
+  source_origin: [number, number, number];
+  source_x_axis: [number, number, number];
+  source_y_axis: [number, number, number];
+  source_normal: [number, number, number];
+  source_slices: MprSourceSlice[];
   patient_bounds_min: [number, number, number];
   patient_bounds_max: [number, number, number];
   initial_crosshair: [number, number, number];
   planes: MprPlaneMetadata[];
+}
+
+export interface MprSourceSlice {
+  frame_key: string;
+  sop_instance_uid: string | null;
+  frame_number: number;
 }
 
 export interface MprViewportState extends ViewTransform {

@@ -121,6 +121,10 @@ async fn main() -> Result<()> {
             api_state.clone(),
             auth_service.clone(),
         ))
+        .merge(pacs_web::segmentation_routes(
+            api_state.clone(),
+            auth_service.clone(),
+        ))
         .nest(
             "/dicom",
             pacs_web::dicom_transformation_routes(api_state.clone(), auth_service.clone()),

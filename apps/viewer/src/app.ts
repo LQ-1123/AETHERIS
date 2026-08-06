@@ -10,6 +10,7 @@ import {
   closeSeries,
   closeMpr,
   confirmTransform,
+  createSegmentationProject,
   exportFromPacs,
   createSharedAnnotation,
   getTransformSchema,
@@ -17,6 +18,9 @@ import {
   listPatientStudies,
   listPatients,
   listRouteDestinations,
+  listSegmentationProjects,
+  listSegmentationSegments,
+  listSegmentationVolume,
   listStudySeries,
   listSharedAnnotations,
   listTransformJobs,
@@ -35,6 +39,7 @@ import {
   selectImageStack,
   sendRouteScope,
   updateSharedAnnotation,
+  upsertSegmentationMasks,
 } from './api';
 import { Download, Edit3, Share2, createIcons } from 'lucide';
 import {
@@ -48,6 +53,22 @@ import {
   type AnnotationHit,
 } from './annotations';
 import { clampToImage, zoomAt } from './geometry';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  calculateMaskStatistics,
+  createMaskVolume,
+  decodeMaskRle,
+  encodeMaskRle,
+  paintMaskSourcePlane,
+  paintMaskVolumePlane,
+  renderMaskPlane,
+  restoreMaskSlices,
+  snapshotMaskSlices,
+  type MaskLayer,
+  type MaskSliceSnapshot,
+  type MaskVolume,
+} from './masks';
 import { ByteLruCache } from './lru';
 import { LifecyclePanel } from './lifecycle-panel';
 import { imageGeometry, Renderer } from './renderer';
@@ -65,11 +86,14 @@ import type {
   MprPlane,
   MprPlaneMetadata,
   MprViewportState,
+  MaskTool,
   PatientSummary,
   PatientPoint3D,
   Point,
   RemoteSeriesSummary,
   RemoteUser,
+  SegmentationProject,
+  SegmentationSegment,
   SeriesMetadata,
   SharedAnnotationRecord,
   StudySummary,
@@ -103,6 +127,16 @@ type DragState =
     }
   | { kind: 'annotation-create'; pointerId: number }
   | {
+      kind: 'mask-paint';
+      pointerId: number;
+      segmentId: string;
+      sourceSlice: number;
+      previous: Point;
+      before: MaskSliceSnapshot;
+      changedSlices: Set<number>;
+      value: 0 | 1;
+    }
+  | {
       kind: 'annotation-edit';
       pointerId: number;
       key: string;
@@ -132,6 +166,16 @@ type MprDragState =
     }
   | { kind: 'crosshair' | 'annotation-create'; plane: MprPlane; pointerId: number }
   | {
+      kind: 'mask-paint';
+      plane: MprPlane;
+      pointerId: number;
+      segmentId: string;
+      previous: Point;
+      before: MaskSliceSnapshot;
+      changedSlices: Set<number>;
+      value: 0 | 1;
+    }
+  | {
       kind: 'annotation-edit';
       plane: MprPlane;
       pointerId: number;
@@ -157,6 +201,12 @@ interface TagEditorContext {
   scope: TransformScope;
   title: string;
   values: Record<string, string | number | null | undefined>;
+}
+
+interface MaskHistoryEntry {
+  segmentId: string;
+  before: MaskSliceSnapshot;
+  after: MaskSliceSnapshot;
 }
 
 const FRONTEND_CACHE_BYTES = 128 * 1024 * 1024;
@@ -238,6 +288,18 @@ export class App {
   private annotationSyncQueues = new Map<string, Promise<void>>();
   private annotationSyncRetries = new Map<string, { generation: number; operation: () => Promise<void> }>();
   private annotationSyncGeneration = 0;
+  private segmentationProjects: SegmentationProject[] = [];
+  private segmentationSegments: SegmentationSegment[] = [];
+  private segmentationSegment: SegmentationSegment | null = null;
+  private maskVolumes = new Map<string, MaskVolume>();
+  private maskUndoEntries: MaskHistoryEntry[] = [];
+  private maskRedoEntries: MaskHistoryEntry[] = [];
+  private maskDirtySlices = new Map<string, Set<number>>();
+  private maskSyncingSegments = new Set<string>();
+  private maskSyncErrors = new Set<string>();
+  private maskWorkspacePromise: Promise<void> | null = null;
+  private maskBrushSize = 10;
+  private maskOpacity = 0.38;
   private drag: DragState | null = null;
   private frameRequests = new RequestVersion();
   private lutRequests = new RequestVersion();
@@ -333,6 +395,10 @@ export class App {
     const previousRemoteSeriesOpen = this.remoteSeriesOpen;
     const previousSharedRecords = new Map(this.sharedAnnotationRecords);
     const previousSyncCursor = this.annotationSyncCursor;
+    const previousSegmentationProjects = this.segmentationProjects;
+    const previousSegmentationSegments = this.segmentationSegments;
+    const previousSegmentationSegment = this.segmentationSegment;
+    const previousMaskVolumes = this.maskVolumes;
     let openedHandle: number | null = null;
     this.remoteDownloadActive = remoteDownload;
     try {
@@ -353,6 +419,15 @@ export class App {
       this.sharedAnnotationRecords.clear();
       this.annotationSyncCursor = null;
       this.annotationHistory.clear();
+      this.segmentationProjects = [];
+      this.segmentationSegments = [];
+      this.segmentationSegment = null;
+      this.maskVolumes = new Map();
+      this.maskUndoEntries = [];
+      this.maskRedoEntries = [];
+      this.maskDirtySlices.clear();
+      this.maskSyncingSegments.clear();
+      this.maskSyncErrors.clear();
       this.angleAwaitingEnd = false;
       this.draft = null;
       this.mprDraft = null;
@@ -378,6 +453,7 @@ export class App {
       };
       this.remoteSeriesOpen = remoteDownload;
       await this.loadCurrentFrame();
+      await this.loadSegmentationWorkspace();
       if (remoteDownload) {
         await this.refreshSharedAnnotations();
         this.startAnnotationSync();
@@ -397,6 +473,10 @@ export class App {
         this.remoteSeriesOpen = previousRemoteSeriesOpen;
         this.sharedAnnotationRecords = previousSharedRecords;
         this.annotationSyncCursor = previousSyncCursor;
+        this.segmentationProjects = previousSegmentationProjects;
+        this.segmentationSegments = previousSegmentationSegments;
+        this.segmentationSegment = previousSegmentationSegment;
+        this.maskVolumes = previousMaskVolumes;
         if (previousRemoteSeriesOpen) this.startAnnotationSync();
         this.frameCache.clear();
         this.pendingFrames.clear();
@@ -435,6 +515,7 @@ export class App {
     const previousMode = this.viewerMode;
     const previousMpr = this.mpr;
     const previousMprMeasurements = this.mprMeasurements;
+    const previousMaskVolumes = this.maskVolumes;
     let changed = false;
     try {
       this.setBusy(true, '正在切换图像组...');
@@ -453,6 +534,9 @@ export class App {
       this.viewerMode = '2d';
       this.mpr = null;
       this.mprMeasurements = new Map();
+      this.maskVolumes = new Map();
+      this.maskUndoEntries = [];
+      this.maskRedoEntries = [];
       this.invalidateMprRequests();
       this.state = {
         metadata,
@@ -473,6 +557,7 @@ export class App {
       changed = true;
       this.updateUi();
       await this.loadCurrentFrame();
+      await this.loadSegmentationVolumes();
       await closeMpr(previous.metadata.handle).catch(() => undefined);
       this.showSeriesWarning();
     } catch (error) {
@@ -485,6 +570,7 @@ export class App {
         this.viewerMode = previousMode;
         this.mpr = previousMpr;
         this.mprMeasurements = previousMprMeasurements;
+        this.maskVolumes = previousMaskVolumes;
         await this.loadCurrentFrame().catch(console.error);
       }
       this.showError(errorMessage(error));
@@ -578,16 +664,7 @@ export class App {
         throw new Error('当前图像组不是可用于 MPR 的薄层断层序列');
       }
       if (!this.mpr || this.mpr.metadata.stack_index !== this.state.metadata.active_stack) {
-        this.mprBuildActive = true;
-        this.setBusy(true, '正在构建三维体数据...', true);
-        this.updateUi();
-        const metadata = await prepareMpr(
-          this.state.metadata.handle,
-          this.state.metadata.active_stack,
-        );
-        this.mprMeasurements = new Map();
-        this.mpr = this.createMprSession(metadata);
-        this.applyAllSharedAnnotations();
+        await this.prepareMprSession();
       }
       this.viewerMode = 'mpr';
       this.state.tool = 'crosshair';
@@ -602,6 +679,59 @@ export class App {
       this.setBusy(false);
       this.updateUi();
     }
+  }
+
+  private async ensureMaskGeometry(): Promise<void> {
+    if (this.mpr || !this.canAttemptMpr()) return;
+    await this.prepareMprSession();
+  }
+
+  private async prepareMprSession(): Promise<void> {
+    if (!this.state || this.mpr?.metadata.stack_index === this.state.metadata.active_stack) return;
+    this.mprBuildActive = true;
+    this.setBusy(true, '正在构建三维体数据...', true);
+    this.updateUi();
+    try {
+      const metadata = await prepareMpr(
+        this.state.metadata.handle,
+        this.state.metadata.active_stack,
+      );
+      this.alignMaskVolumesToMpr(metadata);
+      this.mprMeasurements = new Map();
+      this.mpr = this.createMprSession(metadata);
+      this.applyAllSharedAnnotations();
+    } finally {
+      this.mprBuildActive = false;
+      this.setBusy(false);
+      this.updateUi();
+    }
+  }
+
+  private alignMaskVolumesToMpr(metadata: MprMetadata): void {
+    if (!this.state || !this.maskVolumes.size) return;
+    const destinationByFrameKey = new Map(
+      metadata.source_slices.map((source, index) => [source.frame_key, index]),
+    );
+    const aligned = new Map<string, MaskVolume>();
+    for (const [segmentId, volume] of this.maskVolumes) {
+      const next = createMaskVolume(metadata.dimensions[1], metadata.dimensions[0], metadata.dimensions[2]);
+      for (let source = 0; source < volume.slices; source += 1) {
+        const frameKey = this.state.metadata.frames[source]?.frame_key;
+        const destination = frameKey == null ? undefined : destinationByFrameKey.get(frameKey);
+        if (destination == null) continue;
+        const data = volume.sourceSlices.get(source);
+        if (data) next.sourceSlices.set(destination, data);
+        const revision = volume.revisions.get(source);
+        if (revision != null) next.revisions.set(destination, revision);
+        const syncState = volume.syncStates.get(source);
+        if (syncState) next.syncStates.set(destination, syncState);
+      }
+      next.generation = volume.generation;
+      aligned.set(segmentId, next);
+    }
+    this.maskVolumes = aligned;
+    this.maskUndoEntries = [];
+    this.maskRedoEntries = [];
   }
 
   private createMprSession(metadata: MprMetadata): MprSession {
@@ -814,9 +944,18 @@ export class App {
     }
   }
 
-  private setTool(tool: ToolMode): void {
+  private async setTool(tool: ToolMode): Promise<void> {
     if (!this.state) return;
     if (tool === 'crosshair' && this.viewerMode !== 'mpr') return;
+    if (isMaskTool(tool)) {
+      try {
+        await this.ensureSegmentationWorkspace();
+        await this.ensureMaskGeometry();
+      } catch (error) {
+        this.showError(errorMessage(error));
+        return;
+      }
+    }
     this.state.tool = tool;
     this.draft = null;
     this.mprDraft = null;
@@ -824,6 +963,312 @@ export class App {
     this.angleAwaitingEnd = false;
     this.updateUi();
     this.render();
+  }
+
+  private async loadSegmentationWorkspace(): Promise<void> {
+    const studyUid = this.state?.metadata.study_uid;
+    const seriesUid = this.state?.metadata.series_uid;
+    if (!this.remoteSeriesOpen || !studyUid || !seriesUid) {
+      const segment = localSegmentationSegment();
+      this.segmentationProjects = [];
+      this.segmentationSegments = [segment];
+      this.segmentationSegment = segment;
+      this.maskVolumes.set(segment.id, this.createEmptyMaskVolume());
+      return;
+    }
+    const selectedId = this.segmentationSegment?.id;
+    const projects = await listSegmentationProjects(studyUid, seriesUid);
+    const segmentGroups = await Promise.all(
+      projects.map((project) => listSegmentationSegments(studyUid, seriesUid, project.id)),
+    );
+    this.segmentationProjects = projects;
+    this.segmentationSegments = segmentGroups.flat().sort(
+      (left, right) => left.segment_number - right.segment_number || left.label.localeCompare(right.label),
+    );
+    this.segmentationSegment = this.segmentationSegments.find((segment) => segment.id === selectedId)
+      ?? this.segmentationSegments[0]
+      ?? null;
+    await this.loadSegmentationVolumes();
+  }
+
+  private updateMaskSegmentOptions(): void {
+    const select = requiredElement<HTMLSelectElement>('mask-segment-select');
+    const signature = this.segmentationSegments
+      .map((segment) => `${segment.id}:${segment.segment_number}:${segment.label}`)
+      .join('|');
+    if (select.dataset.signature !== signature) {
+      select.replaceChildren();
+      for (const segment of this.segmentationSegments) {
+        const option = document.createElement('option');
+        option.value = segment.id;
+        option.textContent = `${segment.segment_number}. ${segment.label}`;
+        select.append(option);
+      }
+      select.dataset.signature = signature;
+    }
+    select.value = this.segmentationSegment?.id ?? '';
+    const label = requiredElement<HTMLElement>('mask-menu-label');
+    label.textContent = this.segmentationSegment?.label || 'Mask';
+    const swatch = requiredElement<HTMLElement>('mask-color-swatch');
+    const color = this.segmentationSegment ? maskSegmentColor(this.segmentationSegment) : [55, 213, 216];
+    swatch.style.backgroundColor = `rgb(${color[0]} ${color[1]} ${color[2]})`;
+  }
+
+  private async selectMaskSegment(segmentId: string): Promise<void> {
+    const segment = this.segmentationSegments.find((candidate) => candidate.id === segmentId);
+    if (!segment) return;
+    this.segmentationSegment = segment;
+    if (!this.maskVolumes.has(segment.id)) await this.loadSegmentationVolumes();
+    this.updateMaskSegmentOptions();
+    this.render();
+    this.updateUi();
+  }
+
+  private async ensureSegmentationWorkspace(): Promise<void> {
+    if (this.segmentationSegment) return;
+    if (this.maskWorkspacePromise) return this.maskWorkspacePromise;
+    this.maskWorkspacePromise = (async () => {
+      if (!this.remoteSeriesOpen) {
+        const segment = localSegmentationSegment();
+        this.segmentationSegments = [segment];
+        this.segmentationSegment = segment;
+        this.maskVolumes.set(segment.id, this.createEmptyMaskVolume());
+        return;
+      }
+      const studyUid = this.state?.metadata.study_uid;
+      const seriesUid = this.state?.metadata.series_uid;
+      if (!studyUid || !seriesUid) throw new Error('当前序列缺少 DICOM UID，不能创建分割项目');
+      const color: [number, number, number] = [55, 213, 216];
+      const created = await createSegmentationProject(studyUid, seriesUid, {
+        id: makeId(),
+        segment_id: makeId(),
+        name: '手工分割',
+        segment_label: 'Segment 1',
+        color,
+      });
+      this.segmentationProjects.push(created.project);
+      this.segmentationSegments.push(created.segment);
+      this.segmentationSegment = created.segment;
+      this.maskVolumes.set(created.segment.id, this.createEmptyMaskVolume());
+    })().finally(() => {
+      this.maskWorkspacePromise = null;
+      this.updateUi();
+    });
+    return this.maskWorkspacePromise;
+  }
+
+  private async loadSegmentationVolumes(): Promise<void> {
+    if (!this.state) return;
+    if (!this.remoteSeriesOpen) {
+      for (const segment of this.segmentationSegments) {
+        if (!this.maskVolumes.has(segment.id)) {
+          this.maskVolumes.set(segment.id, this.createEmptyMaskVolume());
+        }
+      }
+      return;
+    }
+    const studyUid = this.state.metadata.study_uid;
+    const seriesUid = this.state.metadata.series_uid;
+    if (!studyUid || !seriesUid) return;
+    const state = this.state;
+    const entries = await Promise.all(this.segmentationSegments.map(async (segment) => {
+      const volume = this.createEmptyMaskVolume();
+      const records = await listSegmentationVolume(studyUid, seriesUid, segment.project_id, segment.id);
+      for (const record of records) {
+        const sourceSlice = this.maskSourceIndex(record.sop_instance_uid, record.frame_number);
+        if (sourceSlice == null) continue;
+        if (record.rows !== volume.rows || record.cols !== volume.cols) {
+          throw new Error(`Segment ${segment.label} 的 Mask 尺寸与来源序列不一致`);
+        }
+        const data = decodeMaskRle(base64ToBytes(record.data_base64), volume.rows * volume.cols);
+        if (data.some(Boolean)) volume.sourceSlices.set(sourceSlice, data);
+        volume.revisions.set(sourceSlice, record.revision);
+        volume.syncStates.set(sourceSlice, 'synced');
+      }
+      return [segment.id, volume] as const;
+    }));
+    if (this.state !== state) return;
+    this.maskVolumes = new Map(entries);
+    this.render();
+  }
+
+  private createEmptyMaskVolume(): MaskVolume {
+    if (!this.state) throw new Error('没有已打开的序列');
+    const frame = this.state.metadata.frames[0];
+    const slices = this.mpr?.metadata.dimensions[2] ?? this.state.metadata.frames.length;
+    return createMaskVolume(frame.rows, frame.cols, slices);
+  }
+
+  private selectedMaskVolume(): MaskVolume | null {
+    const segment = this.segmentationSegment;
+    if (!segment) return null;
+    let volume = this.maskVolumes.get(segment.id);
+    if (!volume && this.state) {
+      volume = this.createEmptyMaskVolume();
+      this.maskVolumes.set(segment.id, volume);
+    }
+    return volume ?? null;
+  }
+
+  private maskSourceIndex(sopInstanceUid: string, frameNumber: number): number | null {
+    const descriptors = this.mpr?.metadata.source_slices;
+    if (descriptors) {
+      const index = descriptors.findIndex(
+        (source) => source.sop_instance_uid === sopInstanceUid && source.frame_number === frameNumber,
+      );
+      return index >= 0 ? index : null;
+    }
+    const index = this.state?.metadata.frames.findIndex(
+      (frame) => frame.sop_instance_uid === sopInstanceUid && frame.source_frame === frameNumber,
+    ) ?? -1;
+    return index >= 0 ? index : null;
+  }
+
+  private currentMaskSourceIndex(): number {
+    if (!this.state) return 0;
+    const frame = this.currentFrame();
+    const sourceIndex = this.mpr?.metadata.source_slices.findIndex(
+      (source) => source.frame_key === frame.frame_key,
+    ) ?? this.state.currentFrame;
+    return sourceIndex >= 0 ? sourceIndex : this.state.currentFrame;
+  }
+
+  private currentMaskLayers(): MaskLayer[] {
+    if (!this.state || this.viewerMode !== '2d') return [];
+    const sourceSlice = this.currentMaskSourceIndex();
+    const layers: MaskLayer[] = [];
+    for (const segment of this.segmentationSegments) {
+      const volume = this.maskVolumes.get(segment.id);
+      const data = volume?.sourceSlices.get(sourceSlice);
+      if (!volume || !data?.some(Boolean)) continue;
+      layers.push({
+        data,
+        rows: volume.rows,
+        cols: volume.cols,
+        color: maskSegmentColor(segment),
+        opacity: this.maskOpacity,
+      });
+    }
+    return layers;
+  }
+
+  private currentMprMaskLayers(plane: MprPlane): MaskLayer[] {
+    if (!this.mpr || this.viewerMode !== 'mpr') return [];
+    const metadata = requirePlane(this.mpr.metadata, plane);
+    const sliceIndex = this.mpr.viewports[plane].sliceIndex;
+    const layers: MaskLayer[] = [];
+    for (const segment of this.segmentationSegments) {
+      const volume = this.maskVolumes.get(segment.id);
+      if (!volume) continue;
+      const data = renderMaskPlane(volume, this.mpr.metadata, plane, sliceIndex);
+      if (!data.some(Boolean)) continue;
+      layers.push({
+        data,
+        rows: metadata.rows,
+        cols: metadata.cols,
+        color: maskSegmentColor(segment),
+        opacity: this.maskOpacity,
+      });
+    }
+    return layers;
+  }
+
+  private recordMaskChange(
+    segmentId: string,
+    before: MaskSliceSnapshot,
+    changedSlices: Set<number>,
+  ): void {
+    const volume = this.maskVolumes.get(segmentId);
+    if (!volume || !changedSlices.size) return;
+    const after = snapshotMaskSlices(volume, changedSlices);
+    this.maskUndoEntries.push({ segmentId, before: cloneMaskSnapshot(before), after });
+    if (this.maskUndoEntries.length > 100) this.maskUndoEntries.shift();
+    this.maskRedoEntries = [];
+    this.queueMaskSync(segmentId, changedSlices);
+  }
+
+  private queueMaskSync(segmentId: string, slices: Iterable<number>): void {
+    if (!this.remoteSeriesOpen) return;
+    const dirty = this.maskDirtySlices.get(segmentId) ?? new Set<number>();
+    for (const slice of slices) dirty.add(slice);
+    this.maskDirtySlices.set(segmentId, dirty);
+    this.maskSyncErrors.delete(segmentId);
+    void this.drainMaskSync(segmentId);
+  }
+
+  private async drainMaskSync(segmentId: string): Promise<void> {
+    if (this.maskSyncingSegments.has(segmentId)) return;
+    const segment = this.segmentationSegments.find((candidate) => candidate.id === segmentId);
+    const volume = this.maskVolumes.get(segmentId);
+    if (!this.remoteSeriesOpen || !this.state || !segment || !volume) return;
+    const studyUid = this.state.metadata.study_uid;
+    const seriesUid = this.state.metadata.series_uid;
+    if (!studyUid || !seriesUid) return;
+    const state = this.state;
+    const mpr = this.mpr;
+    let inFlightSlices: number[] = [];
+    this.maskSyncingSegments.add(segmentId);
+    try {
+      while (this.maskDirtySlices.get(segmentId)?.size) {
+        const dirty = this.maskDirtySlices.get(segmentId)!;
+        const slices = [...dirty].sort((left, right) => left - right);
+        dirty.clear();
+        inFlightSlices = slices;
+        const saved = snapshotMaskSlices(volume, slices);
+        const updates = slices.map((slice) => {
+          const source = this.maskSourceDescriptor(slice);
+          if (!source?.sop_instance_uid) {
+            throw new Error(`来源层 ${slice + 1} 缺少 SOPInstanceUID`);
+          }
+          volume.syncStates.set(slice, 'pending');
+          const data = saved.get(slice) ?? new Uint8Array(volume.rows * volume.cols);
+          return {
+            sop_instance_uid: source.sop_instance_uid,
+            frame_number: source.frame_number,
+            rows: volume.rows,
+            cols: volume.cols,
+            encoding: 'rle-v1',
+            data_base64: bytesToBase64(encodeMaskRle(data)),
+            expected_revision: volume.revisions.get(slice) ?? 0,
+          };
+        });
+        this.updateUi();
+        const records = await upsertSegmentationMasks(
+          studyUid,
+          seriesUid,
+          segment.project_id,
+          segmentId,
+          updates,
+        );
+        if (this.state !== state || this.mpr !== mpr) return;
+        for (const record of records) {
+          const slice = this.maskSourceIndex(record.sop_instance_uid, record.frame_number);
+          if (slice == null) continue;
+          volume.revisions.set(slice, record.revision);
+          volume.syncStates.set(slice, 'synced');
+        }
+      }
+    } catch (error) {
+      if (this.state !== state || this.mpr !== mpr) return;
+      for (const slice of [...inFlightSlices, ...(this.maskDirtySlices.get(segmentId) ?? [])]) {
+        const dirty = this.maskDirtySlices.get(segmentId) ?? new Set<number>();
+        dirty.add(slice);
+        this.maskDirtySlices.set(segmentId, dirty);
+        volume.syncStates.set(slice, 'error');
+      }
+      this.maskSyncErrors.add(segmentId);
+      this.showError(`Mask 保存失败: ${errorMessage(error)}`);
+    } finally {
+      this.maskSyncingSegments.delete(segmentId);
+      this.render();
+      this.updateUi();
+    }
+  }
+
+  private maskSourceDescriptor(slice: number): { sop_instance_uid: string | null; frame_number: number } | null {
+    if (this.mpr) return this.mpr.metadata.source_slices[slice] ?? null;
+    const frame = this.state?.metadata.frames[slice];
+    return frame ? { sop_instance_uid: frame.sop_instance_uid, frame_number: frame.source_frame } : null;
   }
 
   private resetView(): void {
@@ -917,6 +1362,33 @@ export class App {
     document.addEventListener('click', (event) => {
       if (!importMenu.contains(event.target as Node)) closeImportMenu();
     });
+    const maskMenuButton = requiredElement<HTMLButtonElement>('mask-menu-button');
+    const maskMenuPanel = requiredElement<HTMLElement>('mask-menu-panel');
+    const positionMaskMenu = (): void => {
+      const rect = maskMenuButton.getBoundingClientRect();
+      const width = maskMenuPanel.offsetWidth || 262;
+      maskMenuPanel.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    };
+    const closeMaskMenu = (): void => {
+      maskMenuPanel.hidden = true;
+      maskMenuButton.setAttribute('aria-expanded', 'false');
+    };
+    maskMenuButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      maskMenuPanel.hidden = !maskMenuPanel.hidden;
+      maskMenuButton.setAttribute('aria-expanded', String(!maskMenuPanel.hidden));
+      if (!maskMenuPanel.hidden) {
+        positionMaskMenu();
+        this.updateMaskSegmentOptions();
+      }
+    });
+    maskMenuPanel.addEventListener('click', (event) => event.stopPropagation());
+    document.addEventListener('click', (event) => {
+      if (!maskMenuPanel.contains(event.target as Node) && event.target !== maskMenuButton) closeMaskMenu();
+    });
+    requiredElement<HTMLSelectElement>('mask-segment-select').addEventListener('change', (event) => {
+      void this.selectMaskSegment((event.currentTarget as HTMLSelectElement).value);
+    });
     requiredElement<HTMLButtonElement>('cancel-transfer').addEventListener('click', () => {
       if (this.transferKind) void cancelTransfer(this.transferKind).catch((error) => this.showError(errorMessage(error)));
     });
@@ -1008,8 +1480,20 @@ export class App {
     });
 
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
-      button.addEventListener('click', () => this.setTool(button.dataset.tool as ToolMode));
+      button.addEventListener('click', () => void this.setTool(button.dataset.tool as ToolMode));
     }
+    requiredElement<HTMLInputElement>('mask-brush-size').addEventListener('input', (event) => {
+      this.maskBrushSize = Number((event.currentTarget as HTMLInputElement).value);
+      const calibrated = this.state
+        && this.currentFrame().spacing.row_mm != null
+        && this.currentFrame().spacing.col_mm != null;
+      setText('mask-brush-size-value', `${this.maskBrushSize} ${calibrated ? 'mm' : 'px'}`);
+    });
+    requiredElement<HTMLInputElement>('mask-opacity').addEventListener('input', (event) => {
+      this.maskOpacity = Number((event.currentTarget as HTMLInputElement).value) / 100;
+      setText('mask-opacity-value', `${Math.round(this.maskOpacity * 100)}%`);
+      this.render();
+    });
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-view-mode]')) {
       button.addEventListener('click', () => {
         void this.setViewerMode(button.dataset.viewMode as ViewerMode);
@@ -1990,6 +2474,38 @@ export class App {
         center: this.state.windowCenter,
         width: this.state.windowWidth,
       };
+    } else if (isMaskTool(this.state.tool)) {
+      const segment = this.segmentationSegment;
+      const volume = this.selectedMaskVolume();
+      if (!segment || !volume) return;
+      const frame = this.mprFrame(plane);
+      const imagePoint = clampToImage(
+        this.mprRenderers[plane].toImageFor(point, frame, viewport),
+        imageGeometry(frame),
+      );
+      const before: MaskSliceSnapshot = new Map();
+      const value = this.state.tool === 'mask_eraser' ? 0 : 1;
+      const changedSlices = paintMaskVolumePlane(
+        volume,
+        this.mpr.metadata,
+        plane,
+        viewport.sliceIndex,
+        imagePoint,
+        imagePoint,
+        this.maskBrushSize,
+        value,
+        before,
+      );
+      this.mprDrag = {
+        kind: 'mask-paint',
+        plane,
+        pointerId: event.pointerId,
+        segmentId: segment.id,
+        previous: imagePoint,
+        before,
+        changedSlices,
+        value,
+      };
     } else if (this.state.tool === 'crosshair') {
       this.mprDrag = { kind: 'crosshair', plane, pointerId: event.pointerId };
       this.moveMprCrosshairFromScreen(plane, point);
@@ -2073,6 +2589,29 @@ export class App {
       this.scheduleMprRefresh();
     } else if (this.mprDrag.kind === 'crosshair') {
       this.moveMprCrosshairFromScreen(plane, point);
+    } else if (this.mprDrag.kind === 'mask-paint') {
+      const drag = this.mprDrag;
+      const volume = this.maskVolumes.get(drag.segmentId);
+      if (!volume) return;
+      const frame = this.mprFrame(plane);
+      const imagePoint = clampToImage(
+        this.mprRenderers[plane].toImageFor(point, frame, viewport),
+        imageGeometry(frame),
+      );
+      const changed = paintMaskVolumePlane(
+        volume,
+        this.mpr.metadata,
+        plane,
+        viewport.sliceIndex,
+        drag.previous,
+        imagePoint,
+        this.maskBrushSize,
+        drag.value,
+        drag.before,
+      );
+      for (const slice of changed) drag.changedSlices.add(slice);
+      drag.previous = imagePoint;
+      this.render();
     } else if (this.mprDrag.kind === 'annotation-edit') {
       const drag = this.mprDrag;
       const list = this.currentMprMeasurements(plane);
@@ -2102,7 +2641,10 @@ export class App {
     event: PointerEvent,
   ): void {
     if (!this.mpr || !this.mprDrag || this.mprDrag.pointerId !== event.pointerId) return;
-    if (this.mprDrag.kind === 'annotation-create' && this.mprDraft?.plane === plane) {
+    if (this.mprDrag.kind === 'mask-paint') {
+      const drag = this.mprDrag;
+      this.recordMaskChange(drag.segmentId, drag.before, drag.changedSlices);
+    } else if (this.mprDrag.kind === 'annotation-create' && this.mprDraft?.plane === plane) {
       const frame = this.mprFrame(plane);
       const viewport = this.mpr.viewports[plane];
       const draft = this.mprDraft.measurement;
@@ -2243,6 +2785,44 @@ export class App {
       return;
     }
 
+    if (isMaskTool(this.state.tool)) {
+      const segment = this.segmentationSegment;
+      const volume = this.selectedMaskVolume();
+      if (!segment || !volume) return;
+      const imagePoint = clampToImage(
+        this.renderer.toImage(point, this.state),
+        imageGeometry(this.currentFrame()),
+      );
+      const before: MaskSliceSnapshot = new Map();
+      const sourceSlice = this.currentMaskSourceIndex();
+      const value = this.state.tool === 'mask_eraser' ? 0 : 1;
+      const changedSlices = paintMaskSourcePlane(
+        volume,
+        sourceSlice,
+        imagePoint,
+        imagePoint,
+        this.maskBrushSize,
+        {
+          rowMm: this.currentFrame().spacing.row_mm,
+          colMm: this.currentFrame().spacing.col_mm,
+        },
+        value,
+        before,
+      );
+      this.drag = {
+        kind: 'mask-paint',
+        pointerId: event.pointerId,
+        segmentId: segment.id,
+        sourceSlice,
+        previous: imagePoint,
+        before,
+        changedSlices,
+        value,
+      };
+      this.render();
+      return;
+    }
+
     const hit = this.hitTest(point);
     if (hit) {
       const imagePoint = clampToImage(
@@ -2298,6 +2878,32 @@ export class App {
       this.scheduleLutRefresh();
       return;
     }
+    if (this.drag.kind === 'mask-paint') {
+      const drag = this.drag;
+      const volume = this.maskVolumes.get(drag.segmentId);
+      if (!volume) return;
+      const imagePoint = clampToImage(
+        this.renderer.toImage(point, this.state),
+        imageGeometry(this.currentFrame()),
+      );
+      const changed = paintMaskSourcePlane(
+        volume,
+        drag.sourceSlice,
+        drag.previous,
+        imagePoint,
+        this.maskBrushSize,
+        {
+          rowMm: this.currentFrame().spacing.row_mm,
+          colMm: this.currentFrame().spacing.col_mm,
+        },
+        drag.value,
+        drag.before,
+      );
+      for (const slice of changed) drag.changedSlices.add(slice);
+      drag.previous = imagePoint;
+      this.render();
+      return;
+    }
     if (this.drag.kind === 'annotation-edit') {
       const drag = this.drag;
       const annotation = this.currentMeasurements().find(
@@ -2322,7 +2928,10 @@ export class App {
 
   private pointerUp(event: PointerEvent): void {
     if (!this.state || !this.drag || this.drag.pointerId !== event.pointerId) return;
-    if (this.drag.kind === 'annotation-create' && this.draft) {
+    if (this.drag.kind === 'mask-paint') {
+      const drag = this.drag;
+      this.recordMaskChange(drag.segmentId, drag.before, drag.changedSlices);
+    } else if (this.drag.kind === 'annotation-create' && this.draft) {
       const draft = this.draft;
       const extent = this.annotationScreenExtent(draft, (value) => this.renderer.toScreen(value, this.state!));
       if (draft.kind === 'angle' && !this.angleAwaitingEnd && extent >= 4) {
@@ -2496,6 +3105,10 @@ export class App {
   }
 
   private undoAnnotation(): void {
+    if (isMaskTool(this.state?.tool)) {
+      this.undoMask();
+      return;
+    }
     const entry = this.annotationHistory.undo();
     if (!entry) return;
     if ('changes' in entry) {
@@ -2506,6 +3119,10 @@ export class App {
   }
 
   private redoAnnotation(): void {
+    if (isMaskTool(this.state?.tool)) {
+      this.redoMask();
+      return;
+    }
     const entry = this.annotationHistory.redo();
     if (!entry) return;
     if ('changes' in entry) {
@@ -2513,6 +3130,38 @@ export class App {
       this.render();
       this.updateUi();
     } else this.setAnnotationList(entry.key, entry.after);
+  }
+
+  private undoMask(): void {
+    const entry = this.maskUndoEntries.pop();
+    if (!entry) return;
+    const volume = this.maskVolumes.get(entry.segmentId);
+    if (!volume) return;
+    restoreMaskSlices(volume, entry.before);
+    this.maskRedoEntries.push({
+      segmentId: entry.segmentId,
+      before: cloneMaskSnapshot(entry.before),
+      after: cloneMaskSnapshot(entry.after),
+    });
+    this.queueMaskSync(entry.segmentId, entry.before.keys());
+    this.render();
+    this.updateUi();
+  }
+
+  private redoMask(): void {
+    const entry = this.maskRedoEntries.pop();
+    if (!entry) return;
+    const volume = this.maskVolumes.get(entry.segmentId);
+    if (!volume) return;
+    restoreMaskSlices(volume, entry.after);
+    this.maskUndoEntries.push({
+      segmentId: entry.segmentId,
+      before: cloneMaskSnapshot(entry.before),
+      after: cloneMaskSnapshot(entry.after),
+    });
+    this.queueMaskSync(entry.segmentId, entry.after.keys());
+    this.render();
+    this.updateUi();
   }
 
   private setAnnotationList(key: string, annotations: Annotation[], render = true): void {
@@ -3000,6 +3649,7 @@ export class App {
       this.draft,
       this.selectedMeasurementId,
       this.annotationsVisible,
+      this.currentMaskLayers(),
     );
   }
 
@@ -3013,6 +3663,7 @@ export class App {
       this.selectedMeasurementId,
       this.mprCrosshairImagePoint(plane),
       this.annotationsVisible,
+      this.currentMprMaskLayers(plane),
     );
   }
 
@@ -3026,6 +3677,7 @@ export class App {
       this.selectedMeasurementId,
       this.mprCrosshairImagePoint(plane),
       this.annotationsVisible,
+      this.currentMprMaskLayers(plane),
     );
   }
 
@@ -3039,7 +3691,7 @@ export class App {
     }
     setText(
       'annotation-count',
-      this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane)),
+      `${this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane))}${this.maskStatusText()}`,
     );
     setText(
       'zoom-readout',
@@ -3083,8 +3735,11 @@ export class App {
       button.classList.toggle('active', button.dataset.tool === this.state?.tool);
       button.setAttribute('aria-pressed', String(button.dataset.tool === this.state?.tool));
     }
-    requiredElement<HTMLButtonElement>('undo-annotation').disabled = !hasSeries || !this.annotationHistory.canUndo;
-    requiredElement<HTMLButtonElement>('redo-annotation').disabled = !hasSeries || !this.annotationHistory.canRedo;
+    const maskMode = isMaskTool(this.state?.tool);
+    requiredElement<HTMLButtonElement>('undo-annotation').disabled = !hasSeries
+      || (maskMode ? this.maskUndoEntries.length === 0 : !this.annotationHistory.canUndo);
+    requiredElement<HTMLButtonElement>('redo-annotation').disabled = !hasSeries
+      || (maskMode ? this.maskRedoEntries.length === 0 : !this.annotationHistory.canRedo);
     requiredElement<HTMLButtonElement>('retry-annotation-sync').disabled = !hasSeries
       || this.annotationSyncRetries.size === 0;
     const visibility = requiredElement<HTMLButtonElement>('toggle-annotations');
@@ -3118,6 +3773,12 @@ export class App {
     for (const control of document.querySelectorAll<HTMLElement>('[data-mpr-tool]')) {
       control.hidden = this.viewerMode !== 'mpr';
     }
+    this.updateMaskSegmentOptions();
+    const maskButton = requiredElement<HTMLButtonElement>('mask-menu-button');
+    const maskPanel = requiredElement<HTMLElement>('mask-menu-panel');
+    if (!hasSeries) maskPanel.hidden = true;
+    maskButton.classList.toggle('active', maskMode);
+    maskButton.setAttribute('aria-expanded', String(!maskPanel.hidden));
     requiredElement<HTMLButtonElement>('revision-history-btn').hidden = !(
       hasSeries && this.remoteSeriesOpen && this.canViewDicomRevisions()
     );
@@ -3126,6 +3787,10 @@ export class App {
 
     const frame = this.currentFrame();
     const total = frameCount;
+    setText(
+      'mask-brush-size-value',
+      `${this.maskBrushSize} ${frame.spacing.row_mm != null && frame.spacing.col_mm != null ? 'mm' : 'px'}`,
+    );
     setText('frame-counter', `${this.state.currentFrame + 1} / ${total}`);
     setText('window-readout', `WL ${this.state.windowCenter.toFixed(0)}  WW ${this.state.windowWidth.toFixed(0)}`);
     const activeZoom = this.mpr && this.viewerMode === 'mpr'
@@ -3179,10 +3844,34 @@ export class App {
         const metadata = requirePlane(this.mpr.metadata, plane);
         setText(`${plane}-slice-counter`, `${viewport.sliceIndex + 1} / ${metadata.slice_count}`);
       }
-      setText('annotation-count', this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane)));
+      setText('annotation-count', `${this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane))}${this.maskStatusText()}`);
     } else {
-      setText('annotation-count', this.annotationCountText(this.currentMeasurements()));
+      setText('annotation-count', `${this.annotationCountText(this.currentMeasurements())}${this.maskStatusText()}`);
     }
+  }
+
+  private maskStatusText(): string {
+    const segment = this.segmentationSegment;
+    const volume = segment ? this.maskVolumes.get(segment.id) : null;
+    if (!segment || !volume) {
+      setText('mask-statistics', '0 voxel · 最大径 --');
+      return '';
+    }
+    const spacing = this.mpr?.metadata.source_spacing_mm ?? null;
+    const statistics = calculateMaskStatistics(volume, spacing);
+    const pending = [...volume.syncStates.values()].some((state) => state === 'pending')
+      || this.maskSyncingSegments.has(segment.id);
+    const error = this.maskSyncErrors.has(segment.id)
+      || [...volume.syncStates.values()].some((state) => state === 'error');
+    const diameter = statistics.maximumDiameterMm == null ? '--' : `${statistics.maximumDiameterMm.toFixed(1)} mm`;
+    const volumeText = statistics.volumeMm3 == null ? '' : ` · ${(statistics.volumeMm3 / 1000).toFixed(2)} mL`;
+    setText(
+      'mask-statistics',
+      `${statistics.voxelCount} voxel${volumeText} · 最大径 ${diameter}${pending ? ' · 保存中' : error ? ' · 同步失败' : ''}`,
+    );
+    return statistics.voxelCount
+      ? ` · ${segment.label} ${statistics.voxelCount} voxel · 最大径 ${diameter}`
+      : '';
   }
 
   private annotationCountText(annotations: Annotation[]): string {
@@ -3662,4 +4351,35 @@ function mprSeriesScore(entry: RemoteSeriesSummary): number {
   const description = entry.description?.toLowerCase() ?? '';
   const preferred = /(original|primary|axial|thin|薄层|轴位)/i.test(description) ? 10_000 : 0;
   return preferred + entry.instance_count;
+}
+
+function isMaskTool(tool: ToolMode | null | undefined): tool is MaskTool {
+  return tool === 'mask_brush' || tool === 'mask_eraser';
+}
+
+function localSegmentationSegment(): SegmentationSegment {
+  const timestamp = new Date().toISOString();
+  return {
+    id: 'local-segment-1',
+    project_id: 'local-project',
+    segment_number: 1,
+    label: 'Segment 1',
+    description: '本地手工标注',
+    color_r: 55,
+    color_g: 213,
+    color_b: 216,
+    algorithm_type: 'manual',
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+function maskSegmentColor(segment: SegmentationSegment): [number, number, number] {
+  return [segment.color_r, segment.color_g, segment.color_b];
+}
+
+function cloneMaskSnapshot(snapshot: MaskSliceSnapshot): MaskSliceSnapshot {
+  const clone: MaskSliceSnapshot = new Map();
+  for (const [slice, data] of snapshot) clone.set(slice, data?.slice() ?? null);
+  return clone;
 }

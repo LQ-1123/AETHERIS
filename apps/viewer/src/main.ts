@@ -1,5 +1,6 @@
 import {
   ArchiveRestore,
+  Blend,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -26,6 +27,7 @@ import {
   MousePointer2,
   Network,
   PanelRightClose,
+  Paintbrush,
   RotateCcw,
   RotateCw,
   Redo2,
@@ -52,6 +54,7 @@ window.addEventListener('DOMContentLoaded', () => {
   createIcons({
     icons: {
       ArchiveRestore,
+      Blend,
       ChevronDown,
       ChevronLeft,
       ChevronRight,
@@ -78,6 +81,7 @@ window.addEventListener('DOMContentLoaded', () => {
       MousePointer2,
       Network,
       PanelRightClose,
+      Paintbrush,
       RotateCcw,
       RotateCw,
       Redo2,

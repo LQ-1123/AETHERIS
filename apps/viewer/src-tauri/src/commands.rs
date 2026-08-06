@@ -271,6 +271,109 @@ pub async fn update_shared_annotation(
 }
 
 #[tauri::command]
+pub async fn list_segmentation_projects(
+    study_uid: String,
+    series_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .list_segmentation_projects(&study_uid, &series_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn create_segmentation_project(
+    study_uid: String,
+    series_uid: String,
+    input: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .create_segmentation_project(&study_uid, &series_uid, input)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_segmentation_segments(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .list_segmentation_segments(&study_uid, &series_uid, &project_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_segmentation_masks(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    sop_instance_uid: String,
+    frame_number: i32,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .list_segmentation_masks(
+            &study_uid,
+            &series_uid,
+            &project_id,
+            &sop_instance_uid,
+            frame_number,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn upsert_segmentation_mask(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    segment_id: String,
+    input: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .upsert_segmentation_mask(&study_uid, &series_uid, &project_id, &segment_id, input)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_segmentation_volume(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    segment_id: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .list_segmentation_volume(&study_uid, &series_uid, &project_id, &segment_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn upsert_segmentation_masks(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    segment_id: String,
+    updates: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .upsert_segmentation_masks(&study_uid, &series_uid, &project_id, &segment_id, updates)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn transform_schema(state: State<'_, RemoteState>) -> Result<serde_json::Value, String> {
     state
         .transform_schema()

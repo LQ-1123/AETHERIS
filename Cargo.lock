@@ -2763,6 +2763,7 @@ name = "pacs-web"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "chrono",
  "compress-tools",
  "dicom",

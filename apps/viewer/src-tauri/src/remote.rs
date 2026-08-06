@@ -297,6 +297,149 @@ impl RemoteState {
         .await
     }
 
+    pub async fn list_segmentation_projects(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations"
+            ))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn create_segmentation_project(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations"
+            ))
+            .await?;
+        self.authorized_json(Method::POST, url, Some(input)).await
+    }
+
+    pub async fn list_segmentation_segments(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        project_id: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        uuid::Uuid::parse_str(project_id)
+            .map_err(|_| RemoteError::InvalidResponse("分割项目 ID 无效".to_owned()))?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/segments"
+            ))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn list_segmentation_masks(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        project_id: &str,
+        sop_instance_uid: &str,
+        frame_number: i32,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        validate_uid(sop_instance_uid)?;
+        uuid::Uuid::parse_str(project_id)
+            .map_err(|_| RemoteError::InvalidResponse("分割项目 ID 无效".to_owned()))?;
+        let mut url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/masks"
+            ))
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("sop_instance_uid", sop_instance_uid)
+            .append_pair("frame_number", &frame_number.to_string());
+        self.get_json(url).await
+    }
+
+    pub async fn upsert_segmentation_mask(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        project_id: &str,
+        segment_id: &str,
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        uuid::Uuid::parse_str(project_id)
+            .map_err(|_| RemoteError::InvalidResponse("分割项目 ID 无效".to_owned()))?;
+        uuid::Uuid::parse_str(segment_id)
+            .map_err(|_| RemoteError::InvalidResponse("Segment ID 无效".to_owned()))?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/segments/{segment_id}/mask"
+            ))
+            .await?;
+        self.authorized_json(Method::PUT, url, Some(input)).await
+    }
+
+    pub async fn list_segmentation_volume(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        project_id: &str,
+        segment_id: &str,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        uuid::Uuid::parse_str(project_id)
+            .map_err(|_| RemoteError::InvalidResponse("分割项目 ID 无效".to_owned()))?;
+        uuid::Uuid::parse_str(segment_id)
+            .map_err(|_| RemoteError::InvalidResponse("Segment ID 无效".to_owned()))?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/segments/{segment_id}/masks"
+            ))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn upsert_segmentation_masks(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        project_id: &str,
+        segment_id: &str,
+        updates: serde_json::Value,
+    ) -> Result<serde_json::Value, RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        uuid::Uuid::parse_str(project_id)
+            .map_err(|_| RemoteError::InvalidResponse("分割项目 ID 无效".to_owned()))?;
+        uuid::Uuid::parse_str(segment_id)
+            .map_err(|_| RemoteError::InvalidResponse("Segment ID 无效".to_owned()))?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/segments/{segment_id}/masks"
+            ))
+            .await?;
+        self.authorized_json(
+            Method::PUT,
+            url,
+            Some(serde_json::json!({ "updates": updates })),
+        )
+        .await
+    }
+
     pub async fn transform_schema(&self) -> Result<serde_json::Value, RemoteError> {
         let url = self.session_url("api/dicom/schema").await?;
         self.get_json(url).await
