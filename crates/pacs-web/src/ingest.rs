@@ -2,9 +2,13 @@
 
 use std::io::Cursor;
 
-use pacs_db::{StorageRecord, ingest_instance_for_institution};
+use pacs_db::{
+    IngestPreflight, StorageRecord, ingest_instance_for_institution,
+    preflight_instance_for_institution,
+};
 use pacs_store::{InstanceKey, StoreOutcome};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,6 +88,35 @@ pub async fn ingest_dicom_from(
         .sop_class_uid
         .as_ref()
         .map(ToString::to_string);
+    let sha256: [u8; 32] = Sha256::digest(bytes).into();
+    match preflight_instance_for_institution(pool, &metadata, &sha256, institution_id).await {
+        Ok(IngestPreflight::Accept) => {}
+        Ok(IngestPreflight::Duplicate) => {
+            return IngestOutcome {
+                disposition: IngestDisposition::Duplicate,
+                study_instance_uid: Some(study),
+                series_instance_uid: Some(series),
+                sop_class_uid: class,
+                sop_instance_uid: Some(sop),
+                error: None,
+            };
+        }
+        Err(error) => {
+            let disposition = if matches!(error, pacs_db::DbError::Conflict(_)) {
+                IngestDisposition::Conflict
+            } else {
+                IngestDisposition::Failed
+            };
+            return IngestOutcome {
+                disposition,
+                study_instance_uid: Some(study),
+                series_instance_uid: Some(series),
+                sop_class_uid: class,
+                sop_instance_uid: Some(sop),
+                error: Some(error.to_string()),
+            };
+        }
+    }
     let stored = match store
         .store(
             InstanceKey {

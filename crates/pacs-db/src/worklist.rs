@@ -100,7 +100,8 @@ pub async fn list_patients(
                 COALESCE(SUM(st.number_of_instances), 0)::BIGINT,
                 MAX(st.study_date)
          FROM patients p
-         LEFT JOIN studies st ON st.patient_fk = p.id AND st.institution_id = $1
+         JOIN studies st ON st.patient_fk = p.id AND st.institution_id = $1
+              AND st.storage_tier <> 'quarantine'
          WHERE p.institution_id = $1
            AND ($2 = '' OR p.patient_id ILIKE $3 ESCAPE '\\'
                 OR p.name_normalized LIKE $4 ESCAPE '\\')
@@ -162,6 +163,7 @@ pub async fn list_patient_studies(
          WHERE p.id = $1
            AND p.institution_id = $2
            AND st.institution_id = $2
+           AND st.storage_tier <> 'quarantine'
          ORDER BY st.study_date DESC NULLS LAST,
                   st.study_time DESC NULLS LAST,
                   st.study_instance_uid",
@@ -215,6 +217,7 @@ pub async fn list_study_series(
          JOIN patients p ON st.patient_fk = p.id
          WHERE st.study_instance_uid = $1
            AND st.institution_id = $2
+           AND st.storage_tier <> 'quarantine'
            AND p.institution_id = $2
          ORDER BY se.series_number NULLS LAST, se.series_instance_uid",
     )

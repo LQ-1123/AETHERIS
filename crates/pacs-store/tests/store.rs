@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use pacs_core::Uid;
-use pacs_store::{InstanceKey, Store, StoreError, StoreOutcome, TEMP_DIR};
+use pacs_store::{InstanceKey, StorageTier, Store, StoreError, StoreOutcome, TEMP_DIR};
 
 fn uid(s: &str) -> Uid {
     Uid::parse(s).expect("测试 UID 应合法")
@@ -317,6 +317,103 @@ async fn read_returns_the_stored_bytes() {
 
     let read_back = f.store.read(&stored.relative_path).await.expect("应能读回");
     assert_eq!(read_back, bytes, "读回的字节必须与写入完全一致");
+}
+
+#[tokio::test]
+async fn lifecycle_copy_keeps_source_until_verified_deletion() {
+    let f = Fixture::new().await;
+    let stored = f.store.store(f.key(), b"lifecycle-payload").await.unwrap();
+
+    let copied = f
+        .store
+        .copy_to_tier(&stored.relative_path, StorageTier::Cold, &stored.sha256)
+        .await
+        .unwrap();
+
+    assert!(copied.destination_relative_path.starts_with("cold/"));
+    assert_eq!(
+        f.store.read(&stored.relative_path).await.unwrap(),
+        b"lifecycle-payload"
+    );
+    assert_eq!(
+        f.store
+            .read(&copied.destination_relative_path)
+            .await
+            .unwrap(),
+        b"lifecycle-payload"
+    );
+
+    f.store
+        .remove_after_verified_copy(
+            &stored.relative_path,
+            &copied.destination_relative_path,
+            &stored.sha256,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.store.read(&stored.relative_path).await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert_eq!(
+        f.store
+            .tier_relative_path(&copied.destination_relative_path, StorageTier::Hot)
+            .unwrap(),
+        stored.relative_path
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_copy_rejects_a_wrong_database_digest() {
+    let f = Fixture::new().await;
+    let stored = f.store.store(f.key(), b"original").await.unwrap();
+    let error = f
+        .store
+        .copy_to_tier(&stored.relative_path, StorageTier::Quarantine, &[7_u8; 32])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, StoreError::ContentConflict { .. }));
+    assert_eq!(
+        f.store.read(&stored.relative_path).await.unwrap(),
+        b"original"
+    );
+}
+
+#[tokio::test]
+async fn physical_purge_only_accepts_verified_quarantine_files() {
+    let f = Fixture::new().await;
+    let stored = f.store.store(f.key(), b"purge-me").await.unwrap();
+    assert!(matches!(
+        f.store
+            .remove_quarantined(&stored.relative_path, &stored.sha256)
+            .await,
+        Err(StoreError::PathEscape { .. })
+    ));
+    let quarantined = f
+        .store
+        .copy_to_tier(
+            &stored.relative_path,
+            StorageTier::Quarantine,
+            &stored.sha256,
+        )
+        .await
+        .unwrap();
+    f.store
+        .remove_quarantined(&quarantined.destination_relative_path, &stored.sha256)
+        .await
+        .unwrap();
+    f.store
+        .remove_quarantined(&quarantined.destination_relative_path, &stored.sha256)
+        .await
+        .expect("物理删除完成后重试应保持幂等");
+    assert!(matches!(
+        f.store.read(&quarantined.destination_relative_path).await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert_eq!(
+        f.store.read(&stored.relative_path).await.unwrap(),
+        b"purge-me"
+    );
 }
 
 #[tokio::test]

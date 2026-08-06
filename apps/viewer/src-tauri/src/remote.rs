@@ -570,6 +570,33 @@ impl RemoteState {
         Ok(())
     }
 
+    pub async fn lifecycle_get(&self, path: &str) -> Result<serde_json::Value, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/lifecycle/{path}"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn lifecycle_write(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/lifecycle/{path}"))
+            .await?;
+        self.authorized_json(method, url, body).await
+    }
+
+    pub async fn lifecycle_delete(&self, path: &str) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/lifecycle/{path}"))
+            .await?;
+        self.authorized_request(Method::DELETE, url, None).await?;
+        Ok(())
+    }
+
     pub async fn begin_transfer(&self, job: Uuid) {
         *self.transfer_job.lock().await = Some(job);
     }

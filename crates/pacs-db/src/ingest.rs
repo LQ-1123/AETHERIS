@@ -29,6 +29,43 @@ pub struct Ingested {
     pub instance_created: bool,
 }
 
+/// Result of checking an incoming object before writing it to the hot tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestPreflight {
+    Accept,
+    Duplicate,
+}
+
+/// Check UID ownership, immutable-content conflicts and the Study storage tier before disk I/O.
+///
+/// The ingest transaction repeats these checks after the file is durable. This early check avoids
+/// creating a hot-tier copy when an identical SOP is retransmitted while its Study is cold or
+/// quarantined.
+pub async fn preflight_instance_for_institution(
+    pool: &PgPool,
+    metadata: &InstanceMetadata,
+    sha256: &[u8],
+    institution_id: i64,
+) -> Result<IngestPreflight, DbError> {
+    let mut tx = pool.begin().await?;
+    validate_uid_ownership(&mut tx, metadata, institution_id).await?;
+    if let Some((_, _, _, _, archived_sha)) =
+        find_instance_by_version_uid(&mut tx, metadata.instance.uid.as_str()).await?
+    {
+        if archived_sha.as_slice() != sha256 {
+            return Err(DbError::Conflict(format!(
+                "SOPInstanceUID {} 已归档为不同内容",
+                metadata.instance.uid
+            )));
+        }
+        tx.commit().await?;
+        return Ok(IngestPreflight::Duplicate);
+    }
+    ensure_study_accepts_new_instances(&mut tx, metadata, institution_id).await?;
+    tx.commit().await?;
+    Ok(IngestPreflight::Accept)
+}
+
 /// 把一个实例写进数据库。
 ///
 /// 同一个 SOPInstanceUID 重复入库是幂等的:设备重传很常见,不该报错。
@@ -74,6 +111,8 @@ pub async fn ingest_instance_for_institution(
         });
     }
 
+    ensure_study_accepts_new_instances(&mut tx, metadata, institution_id).await?;
+
     // Study/Series UIDs are remapped by immutable revisions. If a modality continues a Study
     // under one of its archived UIDs, attach the new SOP to the stable hierarchy without reverting
     // the current clinical projection to a historical UID.
@@ -109,6 +148,32 @@ pub async fn ingest_instance_for_institution(
         instance_id,
         instance_created,
     })
+}
+
+async fn ensure_study_accepts_new_instances(
+    tx: &mut Transaction<'_, Postgres>,
+    metadata: &InstanceMetadata,
+    institution_id: i64,
+) -> Result<(), DbError> {
+    let tier: Option<String> = sqlx::query_scalar(
+        r#"SELECT st.storage_tier FROM studies st
+           WHERE st.institution_id=$1 AND (
+             st.study_instance_uid=$2 OR EXISTS(
+               SELECT 1 FROM series se JOIN instances i ON i.series_fk=se.id
+               JOIN dicom_instance_versions v ON v.instance_fk=i.id
+               WHERE se.study_fk=st.id AND v.study_instance_uid=$2))
+           LIMIT 1"#,
+    )
+    .bind(institution_id)
+    .bind(metadata.study.uid.as_str())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if tier.as_deref().is_some_and(|value| value != "hot") {
+        return Err(DbError::Conflict(
+            "Study 已进入冷存储或隔离区，请先恢复到热存储再接收新实例".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// DICOM UID 理论上全局唯一,数据库也按全局唯一约束保存。若一个 UID 已属于

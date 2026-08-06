@@ -181,6 +181,7 @@ pub async fn list_export_sources(
          JOIN studies st ON st.id = se.study_fk JOIN patients p ON p.id = st.patient_fk
          JOIN dicom_instance_versions v ON v.id = i.current_version_id
          WHERE p.institution_id = $1 AND st.institution_id = $1
+           AND st.storage_tier <> 'quarantine'
            AND st.study_instance_uid = $2 AND ($3::text IS NULL OR se.series_instance_uid = $3)
          ORDER BY se.series_instance_uid, i.instance_number NULLS LAST, i.sop_instance_uid",
     )

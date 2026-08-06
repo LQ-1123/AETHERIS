@@ -128,7 +128,6 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 - **命令集永远是 Implicit VR Little Endian**，与数据集协商出的传输语法无关
   （PS3.7 §6.3.1）。按协商结果去解命令集，遇到显式 VR 的连接就会解出乱码。
 - **落盘的数据集字节与发送方原样一致。** 只在前面拼文件元信息，不解码再重编码
-  —— 影像资料的保真性不该被我们的编码器改写。
 - **CT 序列排序不能用 `InstanceNumber`。** 要按 `ImagePositionPatient` 在切片
   法向量上的投影排。
 

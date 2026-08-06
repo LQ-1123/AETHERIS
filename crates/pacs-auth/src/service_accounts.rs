@@ -362,7 +362,7 @@ async fn service_whoami(Extension(identity): Extension<ServiceIdentity>) -> Json
 }
 
 async fn openapi_document() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
+    let mut document = serde_json::json!({
         "openapi": "3.1.0",
         "info": {
             "title": "Remote PACS API",
@@ -428,7 +428,71 @@ async fn openapi_document() -> Json<serde_json::Value> {
                 }
             }
         }
-    }))
+    });
+    document["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths must be an object")
+        .extend(lifecycle_openapi_paths());
+    Json(document)
+}
+
+fn lifecycle_openapi_paths() -> serde_json::Map<String, serde_json::Value> {
+    let serde_json::Value::Object(paths) = serde_json::json!({
+        "/api/v1/lifecycle/summary": {
+            "get": {"summary": "Get storage tier and governance totals", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Lifecycle summary"}}}
+        },
+        "/api/v1/lifecycle/policies": {
+            "get": {"summary": "List lifecycle policies", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Policy list"}}},
+            "post": {"summary": "Create a disabled lifecycle policy", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Policy created"}}}
+        },
+        "/api/v1/lifecycle/policies/{id}": {
+            "put": {"summary": "Update, enable or disable a lifecycle policy", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Policy updated"}, "409": {"description": "Current definition has not been previewed"}}},
+            "delete": {"summary": "Delete a lifecycle policy", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"204": {"description": "Policy deleted"}}}
+        },
+        "/api/v1/lifecycle/policies/{id}/preview": {
+            "post": {"summary": "Preview policy matches and storage impact", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Preview summary"}}}
+        },
+        "/api/v1/lifecycle/policies/{id}/run": {
+            "post": {"summary": "Queue an enabled lifecycle policy", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"202": {"description": "Lifecycle job queued"}}}
+        },
+        "/api/v1/lifecycle/studies": {
+            "get": {"summary": "List Study storage tiers, sizes and Legal Hold state", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Lifecycle Study list"}}}
+        },
+        "/api/v1/lifecycle/studies/{study_uid}/move": {
+            "post": {"summary": "Queue a Study move to cold storage or quarantine", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"202": {"description": "Lifecycle job queued"}}}
+        },
+        "/api/v1/lifecycle/studies/{study_uid}/restore": {
+            "post": {"summary": "Queue a Study restore to hot storage", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"202": {"description": "Restore job queued"}}}
+        },
+        "/api/v1/lifecycle/studies/{study_uid}/holds": {
+            "post": {"summary": "Create a Study Legal Hold", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Legal Hold created"}}}
+        },
+        "/api/v1/lifecycle/holds": {
+            "get": {"summary": "List Study Legal Holds", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Legal Hold list"}}}
+        },
+        "/api/v1/lifecycle/holds/{id}": {
+            "delete": {"summary": "Release a Study Legal Hold", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Legal Hold released"}}}
+        },
+        "/api/v1/lifecycle/purge-requests": {
+            "get": {"summary": "List Study purge requests", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Purge request list"}}},
+            "post": {"summary": "Request purge for a quarantined Study", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Purge request created"}}}
+        },
+        "/api/v1/lifecycle/purge-requests/{id}/approve": {
+            "post": {"summary": "Approve purge with a grace period", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Purge approved"}, "409": {"description": "Legal Hold or invalid request state"}}}
+        },
+        "/api/v1/lifecycle/purge-requests/{id}/reject": {
+            "post": {"summary": "Reject a pending purge request", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Purge rejected"}}}
+        },
+        "/api/v1/lifecycle/jobs": {
+            "get": {"summary": "List lifecycle background jobs", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Lifecycle job list"}}}
+        },
+        "/api/v1/lifecycle/events": {
+            "get": {"summary": "List append-only lifecycle audit events", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Lifecycle event list"}}}
+        }
+    }) else {
+        unreachable!("lifecycle OpenAPI paths must be an object")
+    };
+    paths
 }
 
 async fn authenticate_api_key(

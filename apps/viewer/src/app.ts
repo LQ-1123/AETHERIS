@@ -49,6 +49,7 @@ import {
 } from './annotations';
 import { clampToImage, zoomAt } from './geometry';
 import { ByteLruCache } from './lru';
+import { LifecyclePanel } from './lifecycle-panel';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
@@ -265,6 +266,7 @@ export class App {
   private selectedRollbackRevision: DicomRevision | null = null;
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
+  private lifecyclePanel: LifecyclePanel;
   private shareStudyUid: string | null = null;
 
   private viewport = requiredElement<HTMLElement>('viewport');
@@ -280,6 +282,7 @@ export class App {
 
   constructor() {
     this.routerPanel = new RouterPanel((message) => this.showError(message));
+    this.lifecyclePanel = new LifecyclePanel((message) => this.showError(message));
     this.renderer = new Renderer(
       requiredElement<HTMLCanvasElement>('image-canvas'),
       this.overlayCanvas,
@@ -1078,6 +1081,7 @@ export class App {
       localStorage.setItem('remote-pacs.ca-cert-path', caCertPath);
       setText('current-user', user.display_name?.trim() || user.username);
       this.routerPanel.setAvailable(user.role === 'admin');
+      this.lifecyclePanel.setAvailable(user.role === 'admin');
       requiredElement<HTMLElement>('login-screen').hidden = true;
       requiredElement<HTMLElement>('app-shell').removeAttribute('aria-hidden');
       await this.initializeTransformTools();
@@ -1113,6 +1117,7 @@ export class App {
       this.closeTransformTasks();
       this.closeRevisionHistory();
       this.routerPanel.setAvailable(false);
+      this.lifecyclePanel.setAvailable(false);
       requiredElement<HTMLButtonElement>('transform-tasks-btn').hidden = true;
       setText('worklist-status', '');
       this.renderPatients();

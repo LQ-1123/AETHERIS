@@ -90,6 +90,7 @@ pub struct TransformSource {
     pub sop_class_uid: Option<String>,
     pub transfer_syntax_uid: String,
     pub apply_rules: bool,
+    pub storage_tier: String,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -123,7 +124,7 @@ const SOURCE_SELECT: &str = r#"
            i.logical_instance_id,
            v.id AS current_version_id, v.version_number, v.storage_path, v.file_sha256,
            v.study_instance_uid, v.series_instance_uid, v.sop_instance_uid,
-           i.sop_class_uid, v.transfer_syntax_uid,
+           i.sop_class_uid, v.transfer_syntax_uid, st.storage_tier,
            CASE
              WHEN $3 = 'patient' THEN p.id::text = $2
              WHEN $3 = 'study' THEN st.study_instance_uid = $2

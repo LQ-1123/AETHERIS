@@ -58,6 +58,7 @@ pub async fn retrieve_instance(
         .read(&instance.storage_path)
         .await
         .map_err(|error| classify_store_error(error, &instance.storage_path))?;
+    record_access(&state, identity.institution_id, study.as_str()).await;
 
     Ok((
         StatusCode::OK,
@@ -92,6 +93,7 @@ pub async fn retrieve_metadata(
         .resolve_for_read(&instance.storage_path)
         .await
         .map_err(|error| classify_store_error(error, &instance.storage_path))?;
+    record_access(&state, identity.institution_id, study.as_str()).await;
 
     // 解析 DICOM 是 CPU 活,挪出 async executor
     let json = tokio::task::spawn_blocking(move || -> Result<String, WadoError> {
@@ -152,6 +154,7 @@ pub async fn retrieve_frames(
         .resolve_for_read(&instance.storage_path)
         .await
         .map_err(|error| classify_store_error(error, &instance.storage_path))?;
+    record_access(&state, identity.institution_id, study.as_str()).await;
 
     // 解码整个实例一次,多帧共用 —— 每帧重新解码的代价是帧数的倍数
     let parts = tokio::task::spawn_blocking(move || -> Result<Vec<Vec<u8>>, WadoError> {
@@ -311,6 +314,12 @@ fn classify_store_error(error: StoreError, relative: &str) -> WadoError {
             tracing::error!(%source, path = %path.display(), "读取影像文件失败");
             WadoError::Internal
         }
+    }
+}
+
+async fn record_access(state: &WebState, institution_id: i64, study_uid: &str) {
+    if let Err(error) = pacs_db::record_study_access(&state.pool, institution_id, study_uid).await {
+        tracing::warn!(%error, study_uid, "记录 Study 最后访问时间失败");
     }
 }
 

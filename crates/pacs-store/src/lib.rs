@@ -20,12 +20,12 @@
 pub mod layout;
 
 use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 pub use layout::{InstanceKey, derived_relative_path};
@@ -57,6 +57,31 @@ pub struct StoredFile {
 pub struct StagedFile {
     temp_path: PathBuf,
     pub relative_path: String,
+    pub size: u64,
+    pub sha256: [u8; 32],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageTier {
+    Hot,
+    Cold,
+    Quarantine,
+}
+
+impl StorageTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::Cold => "cold",
+            Self::Quarantine => "quarantine",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TierCopy {
+    pub source_relative_path: String,
+    pub destination_relative_path: String,
     pub size: u64,
     pub sha256: [u8; 32],
 }
@@ -121,6 +146,198 @@ impl Store {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn tier_relative_path(
+        &self,
+        relative: &str,
+        tier: StorageTier,
+    ) -> Result<String, StoreError> {
+        let path = Path::new(relative);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(StoreError::PathEscape {
+                relative: relative.to_owned(),
+            });
+        }
+        let mut components = path.components();
+        let first = components.next();
+        let base = if matches!(
+            first,
+            Some(Component::Normal(value)) if value == "cold" || value == "quarantine"
+        ) {
+            components.as_path()
+        } else {
+            path
+        };
+        if base.as_os_str().is_empty() {
+            return Err(StoreError::PathEscape {
+                relative: relative.to_owned(),
+            });
+        }
+        Ok(match tier {
+            StorageTier::Hot => base.to_path_buf(),
+            StorageTier::Cold => Path::new("cold").join(base),
+            StorageTier::Quarantine => Path::new("quarantine").join(base),
+        }
+        .to_string_lossy()
+        .into_owned())
+    }
+
+    /// Copy one immutable object to another local tier without removing its readable source.
+    pub async fn copy_to_tier(
+        &self,
+        relative: &str,
+        tier: StorageTier,
+        expected_sha256: &[u8],
+    ) -> Result<TierCopy, StoreError> {
+        let source = self.resolve_for_read(relative).await?;
+        let destination_relative = self.tier_relative_path(relative, tier)?;
+        if destination_relative == relative {
+            let (size, sha256) = hash_file(&source).await?;
+            verify_digest(relative, &sha256, expected_sha256)?;
+            return Ok(TierCopy {
+                source_relative_path: relative.to_owned(),
+                destination_relative_path: destination_relative,
+                size,
+                sha256,
+            });
+        }
+
+        let destination = self.resolve(&destination_relative)?;
+        if fs::metadata(&destination).await.is_ok() {
+            let (size, sha256) = hash_file(&destination).await?;
+            verify_digest(&destination_relative, &sha256, expected_sha256)?;
+            return Ok(TierCopy {
+                source_relative_path: relative.to_owned(),
+                destination_relative_path: destination_relative,
+                size,
+                sha256,
+            });
+        }
+
+        let temp_path = self
+            .root
+            .join(TEMP_DIR)
+            .join(format!("{}.lifecycle", Uuid::new_v4()));
+        let mut input = fs::File::open(&source)
+            .await
+            .map_err(StoreError::at(&source))?;
+        let mut output = fs::File::create(&temp_path)
+            .await
+            .map_err(StoreError::at(&temp_path))?;
+        let mut digest = Sha256::new();
+        let mut size = 0_u64;
+        let mut buffer = vec![0_u8; 1024 * 1024];
+        loop {
+            let read = input
+                .read(&mut buffer)
+                .await
+                .map_err(StoreError::at(&source))?;
+            if read == 0 {
+                break;
+            }
+            output
+                .write_all(&buffer[..read])
+                .await
+                .map_err(StoreError::at(&temp_path))?;
+            digest.update(&buffer[..read]);
+            size += read as u64;
+        }
+        output
+            .sync_all()
+            .await
+            .map_err(StoreError::at(&temp_path))?;
+        let sha256: [u8; 32] = digest.finalize().into();
+        if let Err(error) = verify_digest(relative, &sha256, expected_sha256) {
+            let _ = fs::remove_file(&temp_path).await;
+            return Err(error);
+        }
+        let parent = destination.parent().expect("生命周期目标路径必须有父目录");
+        self.create_dirs_synced(parent).await?;
+        fs::rename(&temp_path, &destination)
+            .await
+            .map_err(StoreError::at(&destination))?;
+        sync_dir(parent).await.map_err(StoreError::at(parent))?;
+        self.verify_sha256(&destination_relative, expected_sha256)
+            .await?;
+        Ok(TierCopy {
+            source_relative_path: relative.to_owned(),
+            destination_relative_path: destination_relative,
+            size,
+            sha256,
+        })
+    }
+
+    pub async fn verify_sha256(
+        &self,
+        relative: &str,
+        expected_sha256: &[u8],
+    ) -> Result<(), StoreError> {
+        let path = self.resolve_for_read(relative).await?;
+        let (_, actual) = hash_file(&path).await?;
+        verify_digest(relative, &actual, expected_sha256)
+    }
+
+    /// Remove a source only while an independently verified destination remains readable.
+    pub async fn remove_after_verified_copy(
+        &self,
+        source_relative: &str,
+        destination_relative: &str,
+        expected_sha256: &[u8],
+    ) -> Result<(), StoreError> {
+        if source_relative == destination_relative {
+            return Ok(());
+        }
+        self.verify_sha256(destination_relative, expected_sha256)
+            .await?;
+        let source = self.resolve(source_relative)?;
+        match fs::remove_file(&source).await {
+            Ok(()) => {
+                if let Some(parent) = source.parent() {
+                    sync_dir(parent).await.map_err(StoreError::at(parent))?;
+                }
+                Ok(())
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(StoreError::at(source)(error)),
+        }
+    }
+
+    /// Physical purge is restricted to the quarantine namespace.
+    pub async fn remove_quarantined(
+        &self,
+        relative: &str,
+        expected_sha256: &[u8],
+    ) -> Result<(), StoreError> {
+        if !matches!(
+            Path::new(relative).components().next(),
+            Some(Component::Normal(value)) if value == "quarantine"
+        ) {
+            return Err(StoreError::PathEscape {
+                relative: relative.to_owned(),
+            });
+        }
+        match self.verify_sha256(relative, expected_sha256).await {
+            Ok(()) => {}
+            // A worker may stop after unlinking the file but before persisting its deletion
+            // marker. Treat an already-absent quarantine object as an idempotent retry.
+            Err(StoreError::NotFound { .. }) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        let path = self.resolve(relative)?;
+        match fs::remove_file(&path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(StoreError::at(&path)(error)),
+        }
+        if let Some(parent) = path.parent() {
+            sync_dir(parent).await.map_err(StoreError::at(parent))?;
+        }
+        Ok(())
     }
 
     /// 把一个实例落盘,返回后内容已确实持久化。
@@ -425,6 +642,32 @@ impl Store {
             tracing::info!(removed, "清理了上次未完成落盘留下的临时文件");
         }
         Ok(removed)
+    }
+}
+
+async fn hash_file(path: &Path) -> Result<(u64, [u8; 32]), StoreError> {
+    let mut file = fs::File::open(path).await.map_err(StoreError::at(path))?;
+    let mut digest = Sha256::new();
+    let mut size = 0_u64;
+    let mut buffer = vec![0_u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer).await.map_err(StoreError::at(path))?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        size += read as u64;
+    }
+    Ok((size, digest.finalize().into()))
+}
+
+fn verify_digest(relative: &str, actual: &[u8; 32], expected: &[u8]) -> Result<(), StoreError> {
+    if actual.as_slice() == expected {
+        Ok(())
+    } else {
+        Err(StoreError::ContentConflict {
+            relative: relative.to_owned(),
+        })
     }
 }
 

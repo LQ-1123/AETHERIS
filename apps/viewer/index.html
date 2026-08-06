@@ -155,6 +155,9 @@
         <button id="dicom-router-btn" class="icon-button" type="button" title="DICOM Router" aria-label="打开 DICOM Router" hidden>
           <i data-lucide="network"></i>
         </button>
+        <button id="lifecycle-btn" class="icon-button" type="button" title="DICOM 生命周期" aria-label="打开 DICOM 生命周期管理" hidden>
+          <i data-lucide="archive-restore"></i>
+        </button>
         <span id="current-user" class="current-user"></span>
         <button id="logout-btn" class="icon-button" type="button" title="退出登录" aria-label="退出登录">
           <i data-lucide="log-out"></i>
@@ -418,6 +421,90 @@
         <div class="router-section-heading"><strong>接入申请</strong><span id="router-request-count">0 个待确认</span></div>
         <div id="router-request-list" class="router-list router-request-list"></div>
       </section>
+    </dialog>
+
+    <dialog id="lifecycle-dialog" class="operational-dialog lifecycle-dialog" aria-labelledby="lifecycle-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="lifecycle-title">DICOM 生命周期</h2>
+          <span id="lifecycle-summary">0 个 Legal Hold · 0 个待处理清除</span>
+        </div>
+        <div class="dialog-heading-actions">
+          <button id="lifecycle-refresh" class="icon-button" type="button" title="刷新生命周期状态" aria-label="刷新生命周期状态"><i data-lucide="refresh-cw"></i></button>
+          <button id="lifecycle-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+      </header>
+      <p id="lifecycle-notice" class="lifecycle-notice" role="status" hidden></p>
+      <div class="lifecycle-metrics" aria-label="存储概览">
+        <div><span>热存储</span><strong id="lifecycle-hot-value">0 个 · 0 B</strong></div>
+        <div><span>冷存储</span><strong id="lifecycle-cold-value">0 个 · 0 B</strong></div>
+        <div><span>隔离区</span><strong id="lifecycle-quarantine-value">0 个 · 0 B</strong></div>
+      </div>
+      <nav class="segmented lifecycle-tabs" aria-label="生命周期视图">
+        <button class="active" data-lifecycle-tab="storage" type="button">存储</button>
+        <button data-lifecycle-tab="policies" type="button">策略</button>
+        <button data-lifecycle-tab="governance" type="button">审批审计</button>
+      </nav>
+      <section class="lifecycle-panel" data-lifecycle-panel="storage">
+        <div class="lifecycle-section-heading"><strong>Study 存储层级</strong><span>按最近变更排序</span></div>
+        <div id="lifecycle-study-list" class="lifecycle-list"></div>
+      </section>
+      <section class="lifecycle-panel" data-lifecycle-panel="policies" hidden>
+        <div class="lifecycle-section-heading">
+          <strong>自动策略</strong>
+          <button id="lifecycle-policy-add" class="command-button" type="button"><i data-lucide="plus"></i><span>新建</span></button>
+        </div>
+        <form id="lifecycle-policy-form" class="lifecycle-policy-form" hidden>
+          <div class="lifecycle-form-heading"><strong id="lifecycle-policy-form-title">新建策略</strong><span>保存后需预演</span></div>
+          <label><span>名称</span><input id="lifecycle-policy-name" maxlength="100" required /></label>
+          <label><span>动作</span><select id="lifecycle-policy-target"><option value="cold">转冷</option><option value="quarantine">隔离</option></select></label>
+          <label><span>模态</span><input id="lifecycle-policy-modalities" placeholder="CT, MR" /></label>
+          <label><span>检查早于</span><input id="lifecycle-policy-date" type="date" /></label>
+          <label><span>最后访问早于</span><input id="lifecycle-policy-access" type="datetime-local" /></label>
+          <label><span>Study 最小容量 (GB)</span><input id="lifecycle-policy-min-gb" type="number" min="0" step="0.1" /></label>
+          <label><span>存储占用至少 (%)</span><input id="lifecycle-policy-used" type="number" min="0" max="100" step="1" /></label>
+          <label><span>优先级</span><input id="lifecycle-policy-priority" type="number" value="100" required /></label>
+          <label class="lifecycle-tags-field"><span>DICOM Tag 条件</span><textarea id="lifecycle-policy-tags" rows="3" spellcheck="false">{}</textarea></label>
+          <footer class="dialog-actions lifecycle-form-actions">
+            <button id="lifecycle-policy-cancel" type="button">取消</button>
+            <button class="command-button" type="submit"><i data-lucide="save"></i><span>保存</span></button>
+          </footer>
+        </form>
+        <div id="lifecycle-policy-list" class="lifecycle-list"></div>
+      </section>
+      <section class="lifecycle-panel" data-lifecycle-panel="governance" hidden>
+        <div class="lifecycle-section-heading"><strong>后台任务</strong></div>
+        <div id="lifecycle-job-list" class="lifecycle-list lifecycle-governance-list"></div>
+        <div class="lifecycle-section-heading"><strong>清除审批</strong></div>
+        <div id="lifecycle-purge-list" class="lifecycle-list lifecycle-governance-list"></div>
+        <div class="lifecycle-section-heading"><strong>不可变审计</strong></div>
+        <div id="lifecycle-event-list" class="lifecycle-list lifecycle-governance-list"></div>
+      </section>
+    </dialog>
+
+    <dialog id="lifecycle-action-dialog" class="operational-dialog lifecycle-action-dialog" aria-labelledby="lifecycle-action-title">
+      <form id="lifecycle-action-form">
+        <header class="dialog-heading">
+          <div>
+            <h2 id="lifecycle-action-title">生命周期操作</h2>
+            <span id="lifecycle-action-target"></span>
+          </div>
+          <button id="lifecycle-action-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </header>
+        <label id="lifecycle-action-reason-field" class="reason-field lifecycle-action-field">
+          <span id="lifecycle-action-reason-label">操作原因</span>
+          <textarea id="lifecycle-action-reason" rows="3" minlength="2" maxlength="1024" required></textarea>
+        </label>
+        <label id="lifecycle-action-hours-field" class="lifecycle-number-field" hidden>
+          <span>宽限期（小时）</span>
+          <input id="lifecycle-action-hours" type="number" min="0" max="8760" step="1" value="168" disabled required />
+        </label>
+        <p id="lifecycle-action-error" class="dialog-error" role="alert" hidden></p>
+        <footer class="dialog-actions">
+          <button id="lifecycle-action-cancel" type="button">取消</button>
+          <button id="lifecycle-action-submit" class="command-button" type="submit"><i data-lucide="check"></i><span id="lifecycle-action-submit-label">确认</span></button>
+        </footer>
+      </form>
     </dialog>
 
     <dialog id="study-share-dialog" class="operational-dialog share-dialog" aria-labelledby="study-share-title">

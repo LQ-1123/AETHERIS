@@ -13,6 +13,7 @@
 
 pub mod annotations;
 pub mod ingest;
+pub mod lifecycle;
 pub mod qido;
 pub mod router;
 pub mod routes;
@@ -23,6 +24,7 @@ pub mod wado;
 pub mod worklist;
 
 pub use annotations::annotation_routes;
+pub use lifecycle::{routes as lifecycle_routes, start_lifecycle_worker};
 pub use router::{routes as router_routes, start_worker as start_router_worker};
 pub use routes::{WebState, dicomweb_routes};
 pub use transfers::{start_transfer_worker, transfer_routes};

@@ -392,6 +392,13 @@ async fn find_inner(
     // —— WHERE ——
     let mut conditions: Vec<String> = Vec::new();
     let mut binds: Vec<Bind> = Vec::new();
+    if level == QueryLevel::Patient {
+        conditions.push(
+            "EXISTS (SELECT 1 FROM studies visible_study WHERE visible_study.patient_fk=p.id AND visible_study.storage_tier<>'quarantine')".to_owned(),
+        );
+    } else {
+        conditions.push("s.storage_tier <> 'quarantine'".to_owned());
+    }
     if let Some(institution_id) = institution_id {
         binds.push(Bind::BigInt(institution_id));
         conditions.push("p.institution_id = $1".to_owned());

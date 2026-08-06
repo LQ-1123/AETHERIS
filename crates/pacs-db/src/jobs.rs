@@ -43,6 +43,7 @@ impl JobKind {
 pub enum JobStatus {
     Queued,
     Running,
+    Paused,
     Succeeded,
     Failed,
     Cancelled,
@@ -103,6 +104,7 @@ impl JobStatus {
         match raw {
             "queued" => Ok(Self::Queued),
             "running" => Ok(Self::Running),
+            "paused" => Ok(Self::Paused),
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
@@ -238,6 +240,24 @@ pub async fn get_job(
         .await?
         .ok_or(DbError::NotFound)?;
     decode_job(&row)
+}
+
+pub async fn list_jobs(
+    pool: &PgPool,
+    institution_id: i64,
+    kind: JobKind,
+    limit: i64,
+) -> Result<Vec<BackgroundJob>, DbError> {
+    let rows = sqlx::query(
+        "SELECT * FROM background_jobs WHERE institution_id=$1 AND kind=$2
+         ORDER BY created_at DESC,id LIMIT $3",
+    )
+    .bind(institution_id)
+    .bind(kind.as_str())
+    .bind(limit.clamp(1, 500))
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(decode_job).collect()
 }
 
 /// Atomically lease the oldest runnable job of the requested kind.
@@ -477,7 +497,7 @@ pub async fn start_job_item(
          SET status = 'running', attempts = attempts + 1,
              started_at = COALESCE(started_at, now()),
              completed_at = NULL, error_message = NULL
-         WHERE job_fk = $1 AND item_key = $2 AND status IN ('pending', 'failed')
+         WHERE job_fk = $1 AND item_key = $2 AND status IN ('pending', 'running', 'failed')
          RETURNING *",
     )
     .bind(job_id)
@@ -583,7 +603,11 @@ mod tests {
 
     #[test]
     fn enum_values_match_the_migration() {
-        let migration = include_str!("../migrations/0009_background_jobs.sql");
+        let migration = [
+            include_str!("../migrations/0009_background_jobs.sql"),
+            include_str!("../migrations/0016_pause_purge_for_legal_hold.sql"),
+        ]
+        .concat();
         for kind in [
             JobKind::Import,
             JobKind::Export,
@@ -592,7 +616,14 @@ mod tests {
         ] {
             assert!(migration.contains(&format!("'{}'", kind.as_str())));
         }
-        for status in ["queued", "running", "succeeded", "failed", "cancelled"] {
+        for status in [
+            "queued",
+            "running",
+            "paused",
+            "succeeded",
+            "failed",
+            "cancelled",
+        ] {
             assert!(migration.contains(&format!("'{status}'")));
             assert!(JobStatus::parse(status).is_ok());
         }

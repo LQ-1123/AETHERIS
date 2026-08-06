@@ -115,6 +115,7 @@ async fn main() -> Result<()> {
     let _transform_worker = pacs_web::start_transform_worker(transform_state.clone());
     let _transfer_worker = pacs_web::start_transfer_worker(transform_state.clone());
     let _router_worker = pacs_web::start_router_worker(transform_state.clone());
+    let _lifecycle_worker = pacs_web::start_lifecycle_worker(transform_state.clone());
     let api_routes = pacs_web::worklist_routes(api_state.clone(), auth_service.clone())
         .merge(pacs_web::annotation_routes(
             api_state.clone(),
@@ -122,7 +123,7 @@ async fn main() -> Result<()> {
         ))
         .nest(
             "/dicom",
-            pacs_web::dicom_transformation_routes(api_state, auth_service.clone()),
+            pacs_web::dicom_transformation_routes(api_state.clone(), auth_service.clone()),
         );
     let http_app = Router::new()
         .nest("/auth", pacs_auth::http::routes(auth_service.clone()))
@@ -138,6 +139,10 @@ async fn main() -> Result<()> {
                     auth_service.clone(),
                 ))
                 .merge(pacs_web::router_routes(
+                    transform_state.clone(),
+                    auth_service.clone(),
+                ))
+                .merge(pacs_web::lifecycle_routes(
                     transform_state,
                     auth_service.clone(),
                 )),

@@ -65,6 +65,9 @@ fn main() {
             commands::router_get,
             commands::router_write,
             commands::router_delete,
+            commands::lifecycle_get,
+            commands::lifecycle_write,
+            commands::lifecycle_delete,
         ]);
 
     // 注册自定义协议

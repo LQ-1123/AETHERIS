@@ -36,6 +36,7 @@ pub async fn find_instance(
          JOIN series se ON i.series_fk = se.id
          JOIN studies st ON se.study_fk = st.id
          WHERE st.study_instance_uid = $1
+           AND st.storage_tier <> 'quarantine'
            AND se.series_instance_uid = $2
            AND i.sop_instance_uid = $3",
     )
@@ -75,6 +76,7 @@ pub async fn find_instance_for_institution(
          JOIN patients p ON st.patient_fk = p.id
          WHERE p.institution_id = $1
            AND st.institution_id = $1
+           AND st.storage_tier <> 'quarantine'
            AND st.study_instance_uid = $2
            AND se.series_instance_uid = $3
            AND i.sop_instance_uid = $4",
@@ -120,6 +122,7 @@ pub async fn list_series_instances(
          JOIN series se ON i.series_fk = se.id
          JOIN studies st ON se.study_fk = st.id
          WHERE st.study_instance_uid = $1
+           AND st.storage_tier <> 'quarantine'
            AND se.series_instance_uid = $2
          ORDER BY i.instance_number NULLS LAST, i.sop_instance_uid",
     )

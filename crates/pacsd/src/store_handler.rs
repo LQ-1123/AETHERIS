@@ -15,12 +15,15 @@
 //! 第 2 步失败时盘上会留下一个孤儿文件。这是有意的取舍:宁可多一个孤儿文件
 //! (定期核对可以清理),也不能少一份影像。
 
-use pacs_db::{StorageRecord, ingest_instance};
+use pacs_db::{
+    IngestPreflight, StorageRecord, ingest_instance, preflight_instance_for_institution,
+};
 use pacs_dimse::{
     FindFailure, FindHandler, FindRequest, FindResponse, IncomingAssociation, IncomingInstance,
     StoreFailure, StoreHandler,
 };
 use pacs_store::{InstanceKey, Store};
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 pub struct PacsStoreHandler {
@@ -71,6 +74,22 @@ impl StoreHandler for PacsStoreHandler {
         // 元数据在关联线程里就已经解析好了(`pacs-dimse` 收完数据集时提取),
         // 这里不再重新读盘解析一遍 —— 那既慢又可能与已落盘的字节不一致。
         let metadata = instance.metadata;
+
+        let sha256: [u8; 32] = Sha256::digest(instance.file_bytes).into();
+        match preflight_instance_for_institution(&self.pool, metadata, &sha256, 1)
+            .await
+            .map_err(|error| StoreFailure::Processing(error.to_string()))?
+        {
+            IngestPreflight::Duplicate => {
+                tracing::debug!(
+                    calling_ae_title = instance.calling_ae_title,
+                    sop_instance_uid = %metadata.instance.uid,
+                    "重复影像已归档，不在热层创建额外副本"
+                );
+                return Ok(());
+            }
+            IngestPreflight::Accept => {}
+        }
 
         let stored = self
             .store

@@ -586,6 +586,43 @@ pub async fn router_delete(path: String, state: State<'_, RemoteState>) -> Resul
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+pub async fn lifecycle_get(
+    path: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .lifecycle_get(&path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn lifecycle_write(
+    method: String,
+    path: String,
+    body: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| "生命周期 HTTP 方法无效".to_owned())?;
+    if !matches!(method, reqwest::Method::POST | reqwest::Method::PUT) {
+        return Err("生命周期接口只允许 POST 或 PUT".to_owned());
+    }
+    state
+        .lifecycle_write(method, &path, Some(body))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn lifecycle_delete(path: String, state: State<'_, RemoteState>) -> Result<(), String> {
+    state
+        .lifecycle_delete(&path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 async fn poll_transfer(
     state: &RemoteState,
     kind: &str,

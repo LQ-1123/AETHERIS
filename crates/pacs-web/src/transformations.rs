@@ -138,6 +138,7 @@ async fn preview(
         pacs_db::select_transform_sources(&state.pool, identity.institution_id, &request.target)
             .await
             .map_err(TransformApiError::db)?;
+    ensure_hot_sources(&sources)?;
     let aliases = uid_aliases(&state, identity.institution_id, &sources).await?;
     let uid_map = build_uid_map(&sources, &aliases);
     let job_id = Uuid::new_v4();
@@ -215,6 +216,7 @@ async fn rollback_preview(
     let sources = pacs_db::select_transform_sources(&state.pool, identity.institution_id, &target)
         .await
         .map_err(TransformApiError::db)?;
+    ensure_hot_sources(&sources)?;
     let historical = pacs_db::get_version_source(
         &state.pool,
         identity.institution_id,
@@ -668,6 +670,15 @@ async fn read_verified(
         ));
     }
     Ok(bytes)
+}
+
+fn ensure_hot_sources(sources: &[TransformSource]) -> Result<(), TransformApiError> {
+    if sources.iter().any(|source| source.storage_tier != "hot") {
+        return Err(TransformApiError::Conflict(
+            "Study 位于冷存储或隔离区，请先恢复到热存储再修订 DICOM".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 async fn uid_aliases(

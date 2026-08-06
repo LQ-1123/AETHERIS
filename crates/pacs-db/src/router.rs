@@ -260,6 +260,7 @@ pub async fn list_routable_series(
            JOIN studies st ON st.id=se.study_fk
            JOIN patients p ON p.id=st.patient_fk
            WHERE st.institution_id=$1 AND p.institution_id=$1
+             AND st.storage_tier <> 'quarantine'
              AND EXISTS (
                SELECT 1 FROM instances i
                WHERE i.series_fk=se.id AND i.current_version_id IS NOT NULL
@@ -532,7 +533,7 @@ pub async fn route_source_by_sop(
            (COALESCE(st.attributes,'{}') || COALESCE(se.attributes,'{}') || COALESCE(i.attributes,'{}')) AS attributes
            FROM instances i JOIN dicom_instance_versions v ON v.id=i.current_version_id
            JOIN series se ON se.id=i.series_fk JOIN studies st ON st.id=se.study_fk
-           WHERE st.institution_id=$1 AND v.sop_instance_uid=$2"#,
+           WHERE st.institution_id=$1 AND st.storage_tier<>'quarantine' AND v.sop_instance_uid=$2"#,
     ).bind(institution_id).bind(sop_uid).fetch_optional(pool).await?.ok_or(DbError::NotFound)?;
     decode_source(&row)
 }
@@ -552,6 +553,7 @@ pub async fn route_sources_for_scope(
            FROM instances i JOIN dicom_instance_versions v ON v.id=i.current_version_id
            JOIN series se ON se.id=i.series_fk JOIN studies st ON st.id=se.study_fk
            WHERE st.institution_id=$1 AND st.study_instance_uid=$2
+             AND st.storage_tier<>'quarantine'
              AND ($3::text IS NULL OR se.series_instance_uid=$3)
            ORDER BY se.series_instance_uid,i.instance_number NULLS LAST,v.sop_instance_uid"#,
     ).bind(institution_id).bind(study_uid).bind(series_uid).fetch_all(pool).await?;
@@ -645,7 +647,7 @@ pub async fn get_delivery_source(
            FROM dicom_route_deliveries x JOIN dicom_instance_versions v ON v.id=x.version_fk
            JOIN instances i ON i.id=v.instance_fk JOIN series se ON se.id=i.series_fk
            JOIN studies st ON st.id=se.study_fk
-           WHERE x.institution_id=$1 AND x.id=$2"#,
+           WHERE x.institution_id=$1 AND x.id=$2 AND st.storage_tier<>'quarantine'"#,
     )
     .bind(institution_id)
     .bind(delivery_id)

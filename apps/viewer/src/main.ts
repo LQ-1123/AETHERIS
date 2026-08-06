@@ -1,4 +1,5 @@
 import {
+  ArchiveRestore,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -50,6 +51,7 @@ import './styles.css';
 window.addEventListener('DOMContentLoaded', () => {
   createIcons({
     icons: {
+      ArchiveRestore,
       ChevronDown,
       ChevronLeft,
       ChevronRight,

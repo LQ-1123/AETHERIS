@@ -8,6 +8,13 @@ import type {
   RemoteSeriesSummary,
   RemoteUser,
   LocalDicomNode,
+  LegalHold,
+  LifecycleEvent,
+  LifecycleJob,
+  LifecyclePolicy,
+  LifecyclePolicyInput,
+  LifecycleStudy,
+  LifecycleSummary,
   RoutableSeries,
   ObservedDicomPeer,
   RouteDelivery,
@@ -15,6 +22,7 @@ import type {
   RouteDestinationInput,
   RouteRule,
   RouteRuleInput,
+  PurgeRequest,
   SeriesMetadata,
   SharedAnnotationRecord,
   StudySummary,
@@ -123,6 +131,51 @@ export const sendRouteScope = (
     study_instance_uid: studyInstanceUid,
     series_instance_uid: seriesInstanceUid || null,
   });
+
+async function lifecycleGet<T>(path: string): Promise<T> {
+  const invoke = await getInvoke();
+  return invoke<T>('lifecycle_get', { path });
+}
+
+async function lifecycleWrite<T>(method: 'POST' | 'PUT', path: string, body: unknown = {}): Promise<T> {
+  const invoke = await getInvoke();
+  return invoke<T>('lifecycle_write', { method, path, body });
+}
+
+async function lifecycleDelete(path: string): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('lifecycle_delete', { path });
+}
+
+export const getLifecycleSummary = (): Promise<LifecycleSummary> => lifecycleGet('summary');
+export const listLifecycleJobs = (): Promise<LifecycleJob[]> => lifecycleGet('jobs');
+export const listLifecyclePolicies = (): Promise<LifecyclePolicy[]> => lifecycleGet('policies');
+export const createLifecyclePolicy = (input: LifecyclePolicyInput): Promise<LifecyclePolicy> =>
+  lifecycleWrite('POST', 'policies', input);
+export const updateLifecyclePolicy = (id: string, input: LifecyclePolicyInput): Promise<LifecyclePolicy> =>
+  lifecycleWrite('PUT', `policies/${id}`, input);
+export const deleteLifecyclePolicy = (id: string): Promise<void> => lifecycleDelete(`policies/${id}`);
+export const previewLifecyclePolicy = (id: string): Promise<Record<string, unknown>> =>
+  lifecycleWrite('POST', `policies/${id}/preview`);
+export const runLifecyclePolicy = (id: string): Promise<Record<string, unknown>> =>
+  lifecycleWrite('POST', `policies/${id}/run`);
+export const listLifecycleStudies = (): Promise<LifecycleStudy[]> => lifecycleGet('studies');
+export const moveLifecycleStudy = (studyUid: string, targetTier: 'cold' | 'quarantine'): Promise<Record<string, unknown>> =>
+  lifecycleWrite('POST', `studies/${encodeURIComponent(studyUid)}/move`, { target_tier: targetTier });
+export const restoreLifecycleStudy = (studyUid: string): Promise<Record<string, unknown>> =>
+  lifecycleWrite('POST', `studies/${encodeURIComponent(studyUid)}/restore`);
+export const listLegalHolds = (): Promise<LegalHold[]> => lifecycleGet('holds');
+export const createLegalHold = (studyUid: string, reason: string): Promise<LegalHold> =>
+  lifecycleWrite('POST', `studies/${encodeURIComponent(studyUid)}/holds`, { reason, expires_at: null });
+export const releaseLegalHold = (id: string): Promise<void> => lifecycleDelete(`holds/${id}`);
+export const listPurgeRequests = (): Promise<PurgeRequest[]> => lifecycleGet('purge-requests');
+export const createPurgeRequest = (studyUid: string, reason: string): Promise<PurgeRequest> =>
+  lifecycleWrite('POST', 'purge-requests', { study_instance_uid: studyUid, reason });
+export const approvePurgeRequest = (id: string, graceHours: number): Promise<PurgeRequest> =>
+  lifecycleWrite('POST', `purge-requests/${id}/approve`, { grace_hours: graceHours });
+export const rejectPurgeRequest = (id: string): Promise<PurgeRequest> =>
+  lifecycleWrite('POST', `purge-requests/${id}/reject`);
+export const listLifecycleEvents = (): Promise<LifecycleEvent[]> => lifecycleGet('events');
 
 export async function chooseCaCertificate(): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog');

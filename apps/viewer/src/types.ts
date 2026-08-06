@@ -326,6 +326,109 @@ export interface RouteDelivery {
   updated_at: string;
 }
 
+export type StorageTier = 'hot' | 'cold' | 'quarantine';
+
+export interface LifecycleSummary {
+  hot_studies: number;
+  cold_studies: number;
+  quarantine_studies: number;
+  hot_bytes: number;
+  cold_bytes: number;
+  quarantine_bytes: number;
+  active_legal_holds: number;
+  pending_purge_requests: number;
+}
+
+export interface LifecyclePolicy {
+  id: string;
+  name: string;
+  priority: number;
+  enabled: boolean;
+  target_tier: Exclude<StorageTier, 'hot'>;
+  modalities: string[];
+  study_date_before: string | null;
+  last_accessed_before: string | null;
+  tag_matches: Record<string, unknown>;
+  minimum_study_bytes: number | null;
+  minimum_storage_used_percent: number | null;
+  preview_current: boolean;
+  last_preview_at: string | null;
+  last_preview: Record<string, unknown>;
+  last_run_at: string | null;
+}
+
+export interface LifecyclePolicyInput {
+  name: string;
+  priority: number;
+  enabled: boolean;
+  target_tier: Exclude<StorageTier, 'hot'>;
+  modalities: string[];
+  study_date_before?: string;
+  last_accessed_before?: string;
+  tag_matches: Record<string, unknown>;
+  minimum_study_bytes?: number;
+  minimum_storage_used_percent?: number;
+}
+
+export interface LifecycleStudy {
+  study_instance_uid: string;
+  patient_name: string | null;
+  patient_id: string;
+  study_date: string | null;
+  modalities: string[];
+  storage_tier: StorageTier;
+  last_accessed_at: string | null;
+  storage_bytes: number;
+  legal_hold: boolean;
+}
+
+export interface LegalHold {
+  id: string;
+  study_instance_uid: string;
+  reason: string;
+  expires_at: string | null;
+  created_at: string;
+  released_at: string | null;
+}
+
+export interface PurgeRequest {
+  id: string;
+  study_instance_uid: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'paused_hold' | 'executing' | 'completed' | 'rejected' | 'cancelled' | 'failed';
+  grace_until: string | null;
+  grace_remaining_seconds: number | null;
+  job_id: string | null;
+  error_message: string | null;
+  requested_at: string;
+  approved_at: string | null;
+  completed_at: string | null;
+}
+
+export interface LifecycleEvent {
+  id: number;
+  study_instance_uid: string;
+  action: string;
+  from_tier: StorageTier | null;
+  to_tier: StorageTier | null;
+  job_id: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface LifecycleJob {
+  id: string;
+  status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  progress_completed: number;
+  progress_total: number;
+  attempts: number;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export interface PatientSummary {
   id: number;
   patient_id: string;

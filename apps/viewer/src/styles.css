@@ -19,7 +19,8 @@ body {
 
 button,
 select,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -30,6 +31,11 @@ button {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible {
+  outline: 2px solid #58b8c7;
+  outline-offset: 2px;
+}
+
+textarea:focus-visible {
   outline: 2px solid #58b8c7;
   outline-offset: 2px;
 }
@@ -1545,12 +1551,205 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   font-size: 10px;
 }
 
+.lifecycle-dialog {
+  width: min(1040px, calc(100vw - 32px));
+  max-height: min(900px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.lifecycle-action-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.lifecycle-action-field {
+  padding-top: 14px;
+}
+
+.lifecycle-number-field {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  color: #aeb5b8;
+  font-size: 10px;
+}
+
+.lifecycle-number-field input {
+  width: 100%;
+  height: 34px;
+  min-width: 0;
+  border: 1px solid #444b4e;
+  border-radius: 4px;
+  padding: 0 9px;
+  color: #edf0f1;
+  background: #171a1c;
+  font-size: 11px;
+}
+
+.lifecycle-action-dialog [hidden] {
+  display: none;
+}
+
+.lifecycle-notice {
+  margin: 0;
+  padding: 9px 18px;
+  border-bottom: 1px solid #364044;
+  color: #9edbc4;
+  background: #182b25;
+  font-size: 10px;
+}
+
+.lifecycle-notice[data-kind='error'] {
+  color: #e0afb3;
+  background: #321f22;
+}
+
+.lifecycle-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid #3b4144;
+  background: #181c1e;
+}
+
+.lifecycle-metrics > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 18px;
+  border-right: 1px solid #343a3d;
+}
+
+.lifecycle-metrics > div:last-child { border-right: 0; }
+.lifecycle-metrics span { color: #8f999d; font-size: 9px; }
+.lifecycle-metrics strong { overflow: hidden; color: #e5e8e9; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+
+.lifecycle-tabs {
+  width: max-content;
+  margin: 12px 18px 4px;
+}
+
+.lifecycle-tabs button { min-width: 82px; }
+
+.lifecycle-panel {
+  padding: 10px 18px 18px;
+}
+
+.lifecycle-section-heading,
+.lifecycle-form-heading {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #dce0e2;
+  font-size: 11px;
+}
+
+.lifecycle-section-heading > span,
+.lifecycle-form-heading > span { color: #879196; font-size: 9px; }
+.lifecycle-section-heading .command-button { min-height: 28px; padding: 0 9px; font-size: 10px; }
+
+.lifecycle-list {
+  display: grid;
+  gap: 1px;
+  max-height: min(520px, calc(100vh - 290px));
+  overflow: auto;
+  border: 1px solid #3a4043;
+  background: #3a4043;
+}
+
+.lifecycle-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(155px, 0.75fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 8px 10px;
+  background: #1c2022;
+}
+
+.lifecycle-row-main { min-width: 0; }
+.lifecycle-row-main strong,
+.lifecycle-row-main small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lifecycle-row-main strong { color: #e3e6e7; font-size: 10px; }
+.lifecycle-row-main small { margin-top: 4px; color: #909a9e; font-size: 9px; }
+
+.lifecycle-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.lifecycle-action {
+  min-height: 27px;
+  border: 1px solid #475055;
+  border-radius: 4px;
+  padding: 0 8px;
+  color: #cbd1d3;
+  background: #252b2e;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.lifecycle-action:hover { border-color: #647176; background: #30373a; }
+.lifecycle-action:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+.lifecycle-action:disabled:hover {
+  border-color: #4c565a;
+  background: #252b2e;
+}
+.lifecycle-action[data-kind='danger']:disabled:hover {
+  border-color: #7c4349;
+  background: #3a2326;
+}
+.lifecycle-action[data-kind='primary'] { border-color: #367868; color: #a9e1cf; background: #1e3c34; }
+.lifecycle-action[data-kind='warning'] { border-color: #80683c; color: #dfc793; background: #3a301e; }
+.lifecycle-action[data-kind='danger'] { border-color: #7c4349; color: #e1afb3; background: #3a2326; }
+
+.lifecycle-policy-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid #3b4346;
+  background: #191d1f;
+}
+
+.lifecycle-form-heading { grid-column: 1 / -1; min-height: 24px; }
+.lifecycle-policy-form label { display: grid; min-width: 0; gap: 5px; color: #9da6aa; font-size: 9px; }
+.lifecycle-policy-form input,
+.lifecycle-policy-form select,
+.lifecycle-policy-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #454d51;
+  border-radius: 4px;
+  padding: 7px 8px;
+  color: #e3e7e8;
+  background: #121517;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.lifecycle-policy-form input,
+.lifecycle-policy-form select { height: 32px; }
+.lifecycle-tags-field { grid-column: 1 / -1; }
+.lifecycle-policy-form textarea { resize: vertical; }
+.lifecycle-form-actions { grid-column: 1 / -1; min-height: 38px; padding: 7px 0 0; }
+.lifecycle-governance-list { max-height: 230px; margin-bottom: 12px; }
+
 @media (max-width: 820px) {
   .router-row { grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) auto; }
   .router-row-detail { display: none; }
   .router-topology-canvas { height: 300px; }
   .router-topology-footer { grid-template-columns: 1fr; gap: 5px; }
   .router-topology-detail { text-align: left; }
+  .lifecycle-row { grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.7fr); }
+  .lifecycle-row-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  .lifecycle-policy-form { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
 }
 
 .transform-task-list {
@@ -1708,6 +1907,13 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   .transform-task-state progress {
     width: 100%;
   }
+
+  .lifecycle-metrics { grid-template-columns: 1fr; }
+  .lifecycle-metrics > div { border-right: 0; border-bottom: 1px solid #343a3d; }
+  .lifecycle-policy-form { grid-template-columns: minmax(0, 1fr); }
+  .lifecycle-form-heading,
+  .lifecycle-tags-field,
+  .lifecycle-form-actions { grid-column: 1; }
 }
 
 @media (max-width: 1040px) {

@@ -16,6 +16,7 @@ mod annotations;
 pub mod find;
 pub mod ingest;
 mod jobs;
+mod lifecycle;
 pub mod retrieve;
 mod router;
 mod transfers;
@@ -29,17 +30,32 @@ use sqlx::postgres::PgPoolOptions;
 use thiserror::Error;
 
 pub use find::{DEFAULT_LIMIT, FindResults, find, find_for_institution};
-pub use ingest::{Ingested, StorageRecord, ingest_instance, ingest_instance_for_institution};
+pub use ingest::{
+    IngestPreflight, Ingested, StorageRecord, ingest_instance, ingest_instance_for_institution,
+    preflight_instance_for_institution,
+};
 pub use jobs::{
     BackgroundJob, BackgroundJobItem, JobItemStatus, JobKind, JobStatus, NewJob,
     add_job_item as add_background_job_item, claim_job as claim_background_job,
     complete_job as complete_background_job, create_job as create_background_job,
     fail_job as fail_background_job, finish_job_item as finish_background_job_item,
     get_job as get_background_job, heartbeat_job as heartbeat_background_job,
-    list_job_items as list_background_job_items, recover_expired_jobs as recover_background_jobs,
-    release_job as release_background_job, request_job_cancellation,
-    start_job_item as start_background_job_item,
+    list_job_items as list_background_job_items, list_jobs as list_background_jobs,
+    recover_expired_jobs as recover_background_jobs, release_job as release_background_job,
+    request_job_cancellation, start_job_item as start_background_job_item,
     update_job_progress as update_background_job_progress,
+};
+pub use lifecycle::{
+    LegalHold, LifecycleEvent, LifecycleFile, LifecyclePathUpdate, LifecyclePolicy,
+    LifecyclePolicyInput, LifecycleStudy, LifecycleSummary, PurgeFile, PurgeRequest, StorageTier,
+    approve_purge_request, begin_purge, commit_purge_metadata, create_legal_hold,
+    create_lifecycle_policy, create_purge_request, delete_lifecycle_policy, finalize_purge,
+    get_lifecycle_policy, lifecycle_files_for_study, lifecycle_summary,
+    list_due_lifecycle_policies, list_legal_holds, list_lifecycle_events, list_lifecycle_policies,
+    list_lifecycle_studies, list_purge_requests, mark_lifecycle_policy_run,
+    mark_purge_file_deleted, preview_lifecycle_policy, record_lifecycle_preview,
+    record_purge_error, record_study_access, reject_purge_request, release_legal_hold,
+    switch_study_storage_tier, update_lifecycle_policy,
 };
 pub use retrieve::{
     StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
