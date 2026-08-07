@@ -17,18 +17,23 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration as StdDuration, Instant};
 use thiserror::Error;
 
 pub type SeriesHandle = u64;
 type FrameKey = (SeriesHandle, u32, u32);
 
 const FRAME_CACHE_LIMIT: usize = 512 * 1024 * 1024;
+const FRAME_CACHE_TTL: StdDuration = StdDuration::from_secs(3 * 60);
+#[cfg(not(test))]
+const FRAME_CACHE_SWEEP_INTERVAL: StdDuration = StdDuration::from_secs(5);
 const PREFETCH_RADIUS: u32 = 2;
 
 #[derive(Clone)]
 pub struct ViewerState {
     inner: Arc<Mutex<ViewerStateInner>>,
     mpr_cancelled: Arc<AtomicBool>,
+    mpr_prefetch_generation: Arc<AtomicUsize>,
 }
 
 struct ViewerStateInner {
@@ -120,10 +125,16 @@ struct ParsedFile {
 }
 
 struct FrameCache {
-    data: HashMap<FrameKey, Vec<u8>>,
+    data: HashMap<FrameKey, CachedFrame>,
     access_queue: VecDeque<FrameKey>,
     total_bytes: usize,
     limit: usize,
+    ttl: StdDuration,
+}
+
+struct CachedFrame {
+    bytes: Vec<u8>,
+    last_access: Instant,
 }
 
 #[derive(Error, Debug)]
@@ -249,13 +260,16 @@ pub struct SpacingInfo {
 
 impl ViewerState {
     pub fn new() -> Self {
+        let inner = Arc::new(Mutex::new(ViewerStateInner {
+            next_handle: 1,
+            series: HashMap::new(),
+            frame_cache: FrameCache::new(FRAME_CACHE_LIMIT, FRAME_CACHE_TTL),
+        }));
+        start_cache_cleanup(&inner);
         Self {
-            inner: Arc::new(Mutex::new(ViewerStateInner {
-                next_handle: 1,
-                series: HashMap::new(),
-                frame_cache: FrameCache::new(FRAME_CACHE_LIMIT),
-            })),
+            inner,
             mpr_cancelled: Arc::new(AtomicBool::new(false)),
+            mpr_prefetch_generation: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -342,6 +356,7 @@ impl ViewerState {
     }
 
     pub fn close(&self, handle: SeriesHandle) -> Result<(), ViewerError> {
+        self.cancel_mpr_prefetch();
         let mut inner = self.lock();
         inner
             .series
@@ -603,6 +618,7 @@ impl ViewerState {
         stack_index: u32,
         progress: impl Fn(usize, usize) + Sync,
     ) -> Result<MprMetadata, ViewerError> {
+        self.cancel_mpr_prefetch();
         self.mpr_cancelled.store(false, Ordering::Release);
         let frames = {
             let inner = self.lock();
@@ -703,7 +719,49 @@ impl ViewerState {
             .map_err(ViewerError::Unsupported)
     }
 
+    pub fn begin_mpr_prefetch(&self) -> usize {
+        self.mpr_prefetch_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    }
+
+    pub fn prefetch_mpr_slices(
+        &self,
+        handle: SeriesHandle,
+        start_slices: [u32; 3],
+        options: &MprRenderOptions<'_>,
+        generation: usize,
+        progress: impl Fn(usize, usize),
+    ) -> Result<usize, ViewerError> {
+        let volume = {
+            let inner = self.lock();
+            Arc::clone(
+                inner
+                    .series
+                    .get(&handle)
+                    .ok_or(ViewerError::UnknownHandle(handle))?
+                    .mpr
+                    .as_ref()
+                    .ok_or_else(|| ViewerError::Unsupported("尚未构建 MPR 体数据".to_owned()))?,
+            )
+        };
+        let active_generation = Arc::clone(&self.mpr_prefetch_generation);
+        volume
+            .prefetch_rendered_slices(
+                start_slices,
+                options,
+                move || active_generation.load(Ordering::Acquire) != generation,
+                progress,
+            )
+            .map_err(ViewerError::Unsupported)
+    }
+
+    pub fn cancel_mpr_prefetch(&self) {
+        self.mpr_prefetch_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
     pub fn close_mpr(&self, handle: SeriesHandle) -> Result<(), ViewerError> {
+        self.cancel_mpr_prefetch();
         let mut inner = self.lock();
         let series = inner
             .series
@@ -742,6 +800,30 @@ impl Default for ViewerState {
     }
 }
 
+#[cfg(not(test))]
+fn start_cache_cleanup(inner: &Arc<Mutex<ViewerStateInner>>) {
+    let weak = Arc::downgrade(inner);
+    let _cleanup_thread = std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(FRAME_CACHE_SWEEP_INTERVAL);
+            let Some(inner) = weak.upgrade() else {
+                break;
+            };
+            let now = Instant::now();
+            let mut inner = inner.lock().unwrap_or_else(PoisonError::into_inner);
+            inner.frame_cache.remove_expired(now);
+            for series in inner.series.values() {
+                if let Some(volume) = &series.mpr {
+                    volume.purge_expired_cache(now);
+                }
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+fn start_cache_cleanup(_inner: &Arc<Mutex<ViewerStateInner>>) {}
+
 impl LoadedSeries {
     fn metadata(
         &self,
@@ -770,29 +852,50 @@ impl LoadedSeries {
 }
 
 impl FrameCache {
-    fn new(limit: usize) -> Self {
+    fn new(limit: usize, ttl: StdDuration) -> Self {
         Self {
             data: HashMap::new(),
             access_queue: VecDeque::new(),
             total_bytes: 0,
             limit,
+            ttl,
         }
     }
 
     fn get(&mut self, key: &FrameKey) -> Option<&Vec<u8>> {
-        if self.data.contains_key(key) {
-            self.access_queue.retain(|candidate| candidate != key);
-            self.access_queue.push_back(*key);
-            self.data.get(key)
-        } else {
-            None
+        self.get_at(key, Instant::now())
+    }
+
+    fn get_at(&mut self, key: &FrameKey, now: Instant) -> Option<&Vec<u8>> {
+        if self
+            .data
+            .get(key)
+            .is_some_and(|entry| now.saturating_duration_since(entry.last_access) >= self.ttl)
+        {
+            self.remove(key);
+            return None;
         }
+        let entry = self.data.get_mut(key)?;
+        entry.last_access = now;
+        self.access_queue.retain(|candidate| candidate != key);
+        self.access_queue.push_back(*key);
+        Some(&entry.bytes)
     }
 
     fn insert(&mut self, key: FrameKey, data: Vec<u8>) {
+        self.insert_at(key, data, Instant::now());
+    }
+
+    fn insert_at(&mut self, key: FrameKey, data: Vec<u8>, now: Instant) {
         let size = data.len();
-        if let Some(old) = self.data.insert(key, data) {
-            self.total_bytes -= old.len();
+        if let Some(old) = self.data.insert(
+            key,
+            CachedFrame {
+                bytes: data,
+                last_access: now,
+            },
+        ) {
+            self.total_bytes -= old.bytes.len();
             self.access_queue.retain(|candidate| candidate != &key);
         }
         self.total_bytes += size;
@@ -803,15 +906,36 @@ impl FrameCache {
                 break;
             };
             if let Some(evicted) = self.data.remove(&evict_key) {
-                self.total_bytes -= evicted.len();
+                self.total_bytes -= evicted.bytes.len();
             }
         }
+    }
+
+    fn remove(&mut self, key: &FrameKey) {
+        if let Some(removed) = self.data.remove(key) {
+            self.total_bytes -= removed.bytes.len();
+        }
+        self.access_queue.retain(|candidate| candidate != key);
+    }
+
+    fn remove_expired(&mut self, now: Instant) {
+        let ttl = self.ttl;
+        let mut removed_bytes = 0;
+        self.data.retain(|_, entry| {
+            let keep = now.saturating_duration_since(entry.last_access) < ttl;
+            if !keep {
+                removed_bytes += entry.bytes.len();
+            }
+            keep
+        });
+        self.total_bytes -= removed_bytes;
+        self.access_queue.retain(|key| self.data.contains_key(key));
     }
 
     fn remove_series(&mut self, handle: SeriesHandle) {
         self.data.retain(|key, value| {
             if key.0 == handle {
-                self.total_bytes -= value.len();
+                self.total_bytes -= value.bytes.len();
                 false
             } else {
                 true
@@ -2063,7 +2187,7 @@ mod tests {
 
     #[test]
     fn frame_cache_evicts_the_least_recently_used_entry() {
-        let mut cache = FrameCache::new(8);
+        let mut cache = FrameCache::new(8, FRAME_CACHE_TTL);
         cache.insert((1, 0, 0), vec![0; 4]);
         cache.insert((1, 0, 1), vec![1; 4]);
         assert!(cache.get(&(1, 0, 0)).is_some());
@@ -2073,5 +2197,24 @@ mod tests {
         assert!(cache.get(&(1, 0, 1)).is_none());
         assert!(cache.get(&(1, 0, 2)).is_some());
         assert_eq!(cache.total_bytes, 8);
+    }
+
+    #[test]
+    fn frame_cache_removes_entries_after_three_idle_minutes() {
+        let now = Instant::now();
+        let mut cache = FrameCache::new(8, FRAME_CACHE_TTL);
+        cache.insert_at((1, 0, 0), vec![0; 4], now);
+
+        assert!(
+            cache
+                .get_at(&(1, 0, 0), now + StdDuration::from_secs(179))
+                .is_some()
+        );
+        cache.remove_expired(now + StdDuration::from_secs(180));
+        assert_eq!(cache.total_bytes, 4, "访问应刷新缓存期限");
+
+        cache.remove_expired(now + StdDuration::from_secs(359));
+        assert_eq!(cache.total_bytes, 0);
+        assert!(cache.data.is_empty());
     }
 }

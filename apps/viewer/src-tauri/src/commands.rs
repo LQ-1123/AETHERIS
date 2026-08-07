@@ -166,6 +166,56 @@ pub struct RenderMprRequest {
 }
 
 #[tauri::command]
+pub fn begin_mpr_prefetch(state: State<'_, ViewerState>) -> usize {
+    state.begin_mpr_prefetch()
+}
+
+#[tauri::command]
+pub async fn prefetch_mpr_slices(
+    request: PrefetchMprRequest,
+    state: State<'_, ViewerState>,
+) -> Result<usize, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let options = MprRenderOptions {
+            window_center: request.window_center,
+            window_width: request.window_width,
+            voi_function: &request.voi_function,
+            projection: request.projection,
+            slab_thickness_mm: request.slab_thickness_mm,
+        };
+        state.prefetch_mpr_slices(
+            request.handle,
+            request.start_slices,
+            &options,
+            request.generation,
+            |_, _| {},
+        )
+    })
+    .await
+    .map_err(|error| format!("MPR 切片预计算任务失败: {error}"))?
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefetchMprRequest {
+    handle: u64,
+    generation: usize,
+    start_slices: [u32; 3],
+    window_center: f64,
+    window_width: f64,
+    voi_function: String,
+    projection: ProjectionMode,
+    slab_thickness_mm: f64,
+}
+
+#[tauri::command]
+pub fn cancel_mpr_prefetch(state: State<'_, ViewerState>) {
+    state.cancel_mpr_prefetch();
+}
+
+#[tauri::command]
 pub fn close_mpr(handle: u64, state: State<'_, ViewerState>) -> Result<(), String> {
     state.close_mpr(handle).map_err(|error| error.to_string())
 }

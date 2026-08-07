@@ -551,6 +551,41 @@ export async function renderMprSlice(
   return new Uint8Array(result).buffer;
 }
 
+export async function beginMprPrefetch(): Promise<number> {
+  const invoke = await getInvoke();
+  return invoke<number>('begin_mpr_prefetch');
+}
+
+export async function prefetchMprSlices(
+  handle: number,
+  generation: number,
+  startSlices: [number, number, number],
+  windowCenter: number,
+  windowWidth: number,
+  voiFunction: VoiFunction,
+  projection: MprProjectionMode,
+  slabThicknessMm: number,
+): Promise<number> {
+  const invoke = await getInvoke();
+  return invoke<number>('prefetch_mpr_slices', {
+    request: {
+      handle,
+      generation,
+      startSlices,
+      windowCenter,
+      windowWidth,
+      voiFunction,
+      projection,
+      slabThicknessMm,
+    },
+  });
+}
+
+export async function cancelMprPrefetch(): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('cancel_mpr_prefetch');
+}
+
 export async function closeMpr(handle: number): Promise<void> {
   const invoke = await getInvoke();
   await invoke('close_mpr', { handle });

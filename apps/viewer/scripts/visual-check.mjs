@@ -40,6 +40,35 @@ try {
     };
   });
   await page.screenshot({ path: `${outputDirectory}/mpr-toolbar-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 2048, height: 900 });
+  const wideToolbarMetrics = await page.evaluate(() => {
+    const toolbar = document.querySelector('#toolbar');
+    return {
+      viewportWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      toolbarScrollWidth: toolbar.scrollWidth,
+      toolbarWidth: toolbar.clientWidth,
+    };
+  });
+  await page.screenshot({ path: `${outputDirectory}/mpr-toolbar-wide.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => {
+    for (const button of document.querySelectorAll('[data-toolbar-menu-button], .toolbar-menu-panel button')) {
+      button.disabled = false;
+    }
+  });
+  await page.click('#measurement-menu-button');
+  const desktopMenuBounds = await menuBounds(page, '#measurement-menu-panel');
+  await page.screenshot({ path: `${outputDirectory}/toolbar-menu-desktop.png`, fullPage: true });
+  await page.keyboard.press('Escape');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#view-menu-button').scrollIntoViewIfNeeded();
+  await page.click('#view-menu-button');
+  const mobileMenuBounds = await menuBounds(page, '#view-menu-panel');
+  await page.screenshot({ path: `${outputDirectory}/toolbar-menu-mobile.png`, fullPage: true });
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => {
     document.querySelector('#mpr-projection-control').hidden = true;
     document.querySelector('#vr-controls').hidden = false;
@@ -115,8 +144,22 @@ try {
   if (toolbarMetrics.scrollWidth > toolbarMetrics.viewportWidth) {
     throw new Error(`桌面布局出现横向溢出: ${JSON.stringify(toolbarMetrics)}`);
   }
+  if (wideToolbarMetrics.scrollWidth > wideToolbarMetrics.viewportWidth) {
+    throw new Error(`宽屏桌面布局出现横向溢出: ${JSON.stringify(wideToolbarMetrics)}`);
+  }
+  if (!desktopMenuBounds.insideViewport || !mobileMenuBounds.insideViewport) {
+    throw new Error(`工具栏菜单超出视口: ${JSON.stringify({ desktopMenuBounds, mobileMenuBounds })}`);
+  }
   if (browserErrors.length) throw new Error(`浏览器错误: ${browserErrors.join(' | ')}`);
-  console.log(JSON.stringify({ toolbarMetrics, desktopPixels, mobilePixels, outputDirectory }));
+  console.log(JSON.stringify({
+    toolbarMetrics,
+    wideToolbarMetrics,
+    desktopMenuBounds,
+    mobileMenuBounds,
+    desktopPixels,
+    mobilePixels,
+    outputDirectory,
+  }));
 } finally {
   await browser.close();
 }
@@ -135,5 +178,21 @@ async function countVolumePixels(page) {
       if (pixels[index] + pixels[index + 1] + pixels[index + 2] > 45) count += 1;
     }
     return count;
+  });
+}
+
+async function menuBounds(page, selector) {
+  return page.locator(selector).evaluate((panel) => {
+    const rect = panel.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      insideViewport: rect.left >= 0
+        && rect.top >= 0
+        && rect.right <= window.innerWidth
+        && rect.bottom <= window.innerHeight,
+    };
   });
 }

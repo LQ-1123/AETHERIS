@@ -1,6 +1,8 @@
 import {
+  beginMprPrefetch,
   buildLut,
   cancelMprBuild,
+  cancelMprPrefetch,
   cancelRemoteDownload,
   cancelTransfer,
   chooseCaCertificate,
@@ -32,6 +34,7 @@ import {
   openSeries,
   importToPacs,
   prepareMpr,
+  prefetchMprSlices,
   previewClinicalTransform,
   previewRollback,
   remoteLogin,
@@ -55,6 +58,7 @@ import {
   type AnnotationHit,
 } from './annotations';
 import { clampToImage, zoomAt } from './geometry';
+import { framePrefetchGroups } from './frame-prefetch';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -215,6 +219,8 @@ interface MaskHistoryEntry {
 }
 
 const FRONTEND_CACHE_BYTES = 128 * 1024 * 1024;
+const FRAME_CACHE_TTL_MS = 3 * 60 * 1000;
+const FRAME_PREFETCH_CONCURRENCY = 3;
 const PATIENT_PAGE_SIZE = 30;
 const MPR_PLANES: readonly MprPlane[] = ['axial', 'coronal', 'sagittal'];
 const MPR_WHEEL_THRESHOLD = 30;
@@ -277,6 +283,10 @@ export class App {
     sagittal: { x: 0, y: 0 },
   };
   private mprWindowFrameRequest: number | null = null;
+  private mprPrefetchTimer: number | null = null;
+  private mprPrefetchRun = 0;
+  private mprPrefetchActive = false;
+  private mprPrefetchCancellation: Promise<void> = Promise.resolve();
   private mprBuildActive = false;
   private mprProjection: MprProjectionMode = 'slice';
   private mprSlabThicknessMm = 10;
@@ -286,8 +296,12 @@ export class App {
   private volumeQuality: VolumeQuality = 'medium';
   private volumeWindowCenter = 0;
   private volumeWindowWidth = 1;
-  private frameCache = new ByteLruCache(FRONTEND_CACHE_BYTES);
+  private frameCache = new ByteLruCache(FRONTEND_CACHE_BYTES, FRAME_CACHE_TTL_MS);
   private pendingFrames = new Map<string, Promise<ArrayBuffer>>();
+  private framePrefetchGeneration = 0;
+  private framePrefetchKey: string | null = null;
+  private framePrefetchCompletedAt = 0;
+  private framePrefetchAbort: AbortController | null = null;
   private measurements = new Map<string, Annotation[]>();
   private draft: Annotation | null = null;
   private selectedMeasurementId: string | null = null;
@@ -437,6 +451,7 @@ export class App {
 
       this.frameRequests.invalidate();
       this.lutRequests.invalidate();
+      this.cancelFramePrefetch();
       this.frameCache.clear();
       this.pendingFrames.clear();
       this.measurements = new Map();
@@ -512,6 +527,7 @@ export class App {
         this.maskTagFilter = previousMaskTagFilter;
         this.maskMatchedSegmentIds = previousMaskMatchedSegmentIds;
         if (previousRemoteSeriesOpen) this.startAnnotationSync();
+        this.cancelFramePrefetch();
         this.frameCache.clear();
         this.pendingFrames.clear();
         if (previous) {
@@ -564,6 +580,7 @@ export class App {
 
       this.frameRequests.invalidate();
       this.lutRequests.invalidate();
+      this.cancelFramePrefetch();
       this.frameCache.clear();
       this.pendingFrames.clear();
       this.draft = null;
@@ -607,6 +624,7 @@ export class App {
       if (changed) {
         this.frameRequests.invalidate();
         this.lutRequests.invalidate();
+        this.cancelFramePrefetch();
         this.frameCache.clear();
         this.pendingFrames.clear();
         this.state = previous;
@@ -651,7 +669,7 @@ export class App {
       if (lut) this.renderer.applyLut(lut);
       this.render();
       this.ensureCurrentStatistics();
-      this.prefetch(frameIndex);
+      this.prefetchFrames(frameIndex);
     } finally {
       if (this.frameRequests.isCurrent(generation)) this.setBusy(false);
       this.updateUi();
@@ -701,6 +719,7 @@ export class App {
     this.stopCine();
     const previousMode = this.viewerMode;
     if (mode === '2d') {
+      this.stopMprPrefetch();
       this.disposeVolumeRenderer();
       this.viewerMode = '2d';
       if (this.state.tool === 'crosshair') this.state.tool = 'window';
@@ -718,6 +737,7 @@ export class App {
       }
       if (!this.mpr) throw new Error('MPR 体数据尚未准备完成');
       if (mode === 'vr') {
+        this.stopMprPrefetch();
         const reason = volumeCapabilityReason(this.volumeCanvas, this.mpr.metadata.volume_rendering);
         if (reason) throw new Error(`VR 已禁用：${reason}`);
         this.setBusy(true, '正在加载 GPU 体纹理...');
@@ -759,6 +779,7 @@ export class App {
         this.updateUi();
         this.resizeViewport();
         await this.refreshMprSlices();
+        this.scheduleMprPrefetch(0);
       }
     } catch (error) {
       this.disposeVolumeRenderer();
@@ -873,11 +894,12 @@ export class App {
 
   private setMprProjection(mode: MprProjectionMode): void {
     if (!this.mpr || this.viewerMode !== 'mpr' || mode === this.mprProjection) return;
+    this.stopMprPrefetch();
     this.mprProjection = mode;
     this.selectedMeasurementId = null;
     this.mprDraft = null;
     this.updateUi();
-    void this.refreshMprSlices();
+    void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
   }
 
   private setMprSlabThickness(value: number): void {
@@ -885,7 +907,10 @@ export class App {
     if (!Number.isFinite(next) || next === this.mprSlabThicknessMm) return;
     this.mprSlabThicknessMm = next;
     setText('mpr-slab-value', `${next.toFixed(next < 10 ? 1 : 0)} mm`);
-    if (this.mprProjection !== 'slice') void this.refreshMprSlices();
+    if (this.mprProjection !== 'slice') {
+      this.stopMprPrefetch();
+      void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
+    }
   }
 
   private async loadMprPlane(plane: MprPlane): Promise<void> {
@@ -945,6 +970,8 @@ export class App {
   }
 
   private scheduleMprRefresh(): void {
+    this.cancelRunningMprPrefetch();
+    this.scheduleMprPrefetch(400);
     if (this.mprWindowFrameRequest != null) return;
     this.mprWindowFrameRequest = requestAnimationFrame(() => {
       this.mprWindowFrameRequest = null;
@@ -1033,13 +1060,74 @@ export class App {
   }
 
   private invalidateMprRequests(): void {
+    this.stopMprPrefetch();
     for (const plane of MPR_PLANES) {
       this.mprRequests[plane].invalidate();
       this.mprReloadQueued[plane] = false;
     }
   }
 
-  private async getFrame(index: number): Promise<ArrayBuffer> {
+  private scheduleMprPrefetch(delay: number): void {
+    if (!this.state || !this.mpr) return;
+    if (this.mprPrefetchTimer != null) window.clearTimeout(this.mprPrefetchTimer);
+    const state = this.state;
+    const session = this.mpr;
+    this.mprPrefetchTimer = window.setTimeout(async () => {
+      this.mprPrefetchTimer = null;
+      await this.mprPrefetchCancellation;
+      if (this.state !== state || this.mpr !== session) return;
+      const run = ++this.mprPrefetchRun;
+      this.mprPrefetchActive = true;
+      let backendGeneration: number;
+      try {
+        backendGeneration = await beginMprPrefetch();
+      } catch (error) {
+        if (this.mprPrefetchRun === run) this.mprPrefetchActive = false;
+        console.warn('MPR 切片预计算未启动', error);
+        return;
+      }
+      if (
+        this.mprPrefetchRun !== run
+        || this.state !== state
+        || this.mpr !== session
+      ) {
+        this.mprPrefetchCancellation = cancelMprPrefetch().catch(console.error);
+        return;
+      }
+      const startSlices = MPR_PLANES.map(
+        (plane) => session.viewports[plane].sliceIndex,
+      ) as [number, number, number];
+      void prefetchMprSlices(
+        state.metadata.handle,
+        backendGeneration,
+        startSlices,
+        state.windowCenter,
+        state.windowWidth,
+        state.voiFunction,
+        this.mprProjection,
+        this.mprSlabThicknessMm,
+      )
+        .catch((error) => console.warn('MPR 切片预计算未完成', error))
+        .finally(() => {
+          if (this.mprPrefetchRun === run) this.mprPrefetchActive = false;
+        });
+    }, delay);
+  }
+
+  private stopMprPrefetch(): void {
+    if (this.mprPrefetchTimer != null) window.clearTimeout(this.mprPrefetchTimer);
+    this.mprPrefetchTimer = null;
+    this.cancelRunningMprPrefetch();
+  }
+
+  private cancelRunningMprPrefetch(): void {
+    if (!this.mprPrefetchActive) return;
+    this.mprPrefetchRun += 1;
+    this.mprPrefetchActive = false;
+    this.mprPrefetchCancellation = cancelMprPrefetch().catch(console.error);
+  }
+
+  private async getFrame(index: number, signal?: AbortSignal): Promise<ArrayBuffer> {
     const cached = this.frameCache.get(index);
     if (cached) return cached;
     if (!this.state) throw new Error('没有已打开的序列');
@@ -1048,7 +1136,7 @@ export class App {
     const requestKey = `${handle}:${stack}:${index}`;
     const pending = this.pendingFrames.get(requestKey);
     if (pending) return pending;
-    const request = loadFrame(handle, stack, index)
+    const request = loadFrame(handle, stack, index, signal)
       .then((buffer) => {
         if (
           this.state?.metadata.handle === handle &&
@@ -1058,19 +1146,73 @@ export class App {
         }
         return buffer;
       })
-      .finally(() => this.pendingFrames.delete(requestKey));
+      .finally(() => {
+        if (this.pendingFrames.get(requestKey) === request) {
+          this.pendingFrames.delete(requestKey);
+        }
+      });
     this.pendingFrames.set(requestKey, request);
     return request;
   }
 
-  private prefetch(current: number): void {
-    if (!this.state) return;
-    const last = this.state.metadata.frames.length - 1;
-    for (let distance = 1; distance <= 2; distance += 1) {
-      for (const index of [current - distance, current + distance]) {
-        if (index >= 0 && index <= last) void this.getFrame(index).catch(() => undefined);
-      }
+  private prefetchFrames(current: number): void {
+    const state = this.state;
+    if (!state || state.metadata.frames.length < 2) return;
+    const key = `${state.metadata.handle}:${state.metadata.active_stack}`;
+    if (this.framePrefetchKey === key) {
+      if (this.framePrefetchAbort) return;
+      if (Date.now() - this.framePrefetchCompletedAt < FRAME_CACHE_TTL_MS) return;
     }
+
+    this.cancelFramePrefetch();
+    const generation = this.framePrefetchGeneration;
+    const controller = new AbortController();
+    this.framePrefetchKey = key;
+    this.framePrefetchAbort = controller;
+    this.framePrefetchCompletedAt = 0;
+
+    const groups = framePrefetchGroups(
+      state.metadata.frames.length,
+      current,
+      (index) => frameSourceKey(state.metadata.frames[index]),
+    );
+    let groupCursor = 0;
+    let failed = false;
+    const worker = async (): Promise<void> => {
+      while (!controller.signal.aborted && generation === this.framePrefetchGeneration) {
+        const group = groups[groupCursor];
+        groupCursor += 1;
+        if (!group) return;
+        for (const index of group) {
+          try {
+            await this.getFrame(index, controller.signal);
+          } catch {
+            if (!controller.signal.aborted) failed = true;
+          }
+        }
+      }
+    };
+    const workerCount = Math.min(FRAME_PREFETCH_CONCURRENCY, groups.length);
+    void Promise.all(Array.from({ length: workerCount }, worker)).then(async () => {
+      if (
+        controller.signal.aborted
+        || generation !== this.framePrefetchGeneration
+        || this.framePrefetchKey !== key
+      ) {
+        return;
+      }
+      this.framePrefetchAbort = null;
+      this.framePrefetchCompletedAt = failed ? 0 : Date.now();
+      await this.getFrame(current).catch(() => undefined);
+    });
+  }
+
+  private cancelFramePrefetch(): void {
+    this.framePrefetchGeneration += 1;
+    this.framePrefetchAbort?.abort();
+    this.framePrefetchAbort = null;
+    this.framePrefetchKey = null;
+    this.framePrefetchCompletedAt = 0;
   }
 
   private toggleCine(): void {
@@ -1608,8 +1750,12 @@ export class App {
     this.state.windowWidth = preset.width;
     this.state.voiFunction = preset.function;
     this.updateUi();
-    if (this.viewerMode === 'mpr') void this.refreshMprSlices();
-    else void this.refreshLut();
+    if (this.viewerMode === 'mpr') {
+      this.stopMprPrefetch();
+      void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
+    } else {
+      void this.refreshLut();
+    }
   }
 
   private applyVolumePreset(preset: VolumePreset): void {
@@ -1706,8 +1852,70 @@ export class App {
       maskMenuPanel.hidden = true;
       maskMenuButton.setAttribute('aria-expanded', 'false');
     };
+    const toolbarMenuButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-toolbar-menu-button]')];
+    const toolbarMenuPanel = (button: HTMLButtonElement): HTMLElement => {
+      const panelId = button.getAttribute('aria-controls');
+      if (!panelId) throw new Error('工具栏菜单缺少 aria-controls');
+      return requiredElement<HTMLElement>(panelId);
+    };
+    const closeToolbarMenus = (): void => {
+      for (const button of toolbarMenuButtons) {
+        toolbarMenuPanel(button).hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+      }
+    };
+    const positionToolbarMenu = (button: HTMLButtonElement, panel: HTMLElement): void => {
+      const rect = button.getBoundingClientRect();
+      const width = panel.offsetWidth || 196;
+      const height = panel.offsetHeight;
+      const requestedLeft = button.dataset.menuAlign === 'end' ? rect.right - width : rect.left;
+      const left = Math.max(8, Math.min(requestedLeft, window.innerWidth - width - 8));
+      const below = rect.bottom + 6;
+      const top = below + height <= window.innerHeight - 8
+        ? below
+        : Math.max(8, rect.top - height - 6);
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+    };
+    for (const button of toolbarMenuButtons) {
+      const panel = toolbarMenuPanel(button);
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const opening = panel.hidden;
+        closeToolbarMenus();
+        closeMaskMenu();
+        if (!opening) return;
+        panel.hidden = false;
+        button.setAttribute('aria-expanded', 'true');
+        positionToolbarMenu(button, panel);
+      });
+      button.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        if (panel.hidden) button.click();
+        panel.querySelector<HTMLButtonElement>('button:not(:disabled):not([hidden])')?.focus();
+      });
+      panel.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const item = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
+        if (item && !item.disabled) closeToolbarMenus();
+      });
+      panel.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        const items = [...panel.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([hidden])')];
+        if (!items.length) return;
+        event.preventDefault();
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const next = current < 0
+          ? 0
+          : (current + direction + items.length) % items.length;
+        items[next].focus();
+      });
+    }
     maskMenuButton.addEventListener('click', (event) => {
       event.stopPropagation();
+      closeToolbarMenus();
       maskMenuPanel.hidden = !maskMenuPanel.hidden;
       maskMenuButton.setAttribute('aria-expanded', String(!maskMenuPanel.hidden));
       if (!maskMenuPanel.hidden) {
@@ -1718,7 +1926,15 @@ export class App {
     maskMenuPanel.addEventListener('click', (event) => event.stopPropagation());
     document.addEventListener('click', (event) => {
       if (!maskMenuPanel.contains(event.target as Node) && event.target !== maskMenuButton) closeMaskMenu();
+      closeToolbarMenus();
     });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      const expanded = toolbarMenuButtons.find((button) => button.getAttribute('aria-expanded') === 'true');
+      closeToolbarMenus();
+      expanded?.focus();
+    });
+    window.addEventListener('resize', closeToolbarMenus);
     requiredElement<HTMLSelectElement>('mask-segment-select').addEventListener('change', (event) => {
       void this.selectMaskSegment((event.currentTarget as HTMLSelectElement).value);
     });
@@ -4083,6 +4299,25 @@ export class App {
     }
   }
 
+  private updateToolbarMenuStates(): void {
+    for (const trigger of document.querySelectorAll<HTMLButtonElement>('[data-toolbar-menu-button]')) {
+      const panelId = trigger.getAttribute('aria-controls');
+      const panel = panelId ? document.getElementById(panelId) : null;
+      if (!panel) continue;
+      const items = [...panel.querySelectorAll<HTMLButtonElement>('button')]
+        .filter((item) => !item.hidden);
+      if (trigger.hasAttribute('data-requires-series')) {
+        trigger.disabled = items.length === 0 || items.every((item) => item.disabled);
+      }
+      const activeSelector = trigger.dataset.menuActiveSelector;
+      trigger.classList.toggle('active', Boolean(activeSelector && panel.querySelector(activeSelector)));
+      if (trigger.disabled) {
+        panel.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+    }
+  }
+
   private updateUi(): void {
     const hasSeries = this.state != null;
     const frameCount = this.state?.metadata.frames.length ?? 0;
@@ -4125,6 +4360,7 @@ export class App {
     const visibility = requiredElement<HTMLButtonElement>('toggle-annotations');
     visibility.classList.toggle('active', this.annotationsVisible);
     visibility.setAttribute('aria-pressed', String(this.annotationsVisible));
+    setText('toggle-annotations-label', this.annotationsVisible ? '隐藏标注' : '显示标注');
     const view = this.activeViewTransform();
     const invert = requiredElement<HTMLButtonElement>('invert-btn');
     invert.classList.toggle('active', view?.inverted === true);
@@ -4198,6 +4434,7 @@ export class App {
     requiredElement<HTMLButtonElement>('revision-history-btn').hidden = !(
       hasSeries && this.remoteSeriesOpen && this.canViewDicomRevisions()
     );
+    this.updateToolbarMenuStates();
     this.updateMprLayout();
     if (!this.state) return;
 
@@ -4213,6 +4450,7 @@ export class App {
       if (control) control.disabled = !hasSeries || statisticsUnavailable || this.viewerMode === 'vr';
     }
     this.presetSelect.disabled = isColor || this.viewerMode === 'vr';
+    this.updateToolbarMenuStates();
     setText(
       'mask-brush-size-value',
       `${this.maskBrushRadius} mm`,
@@ -4768,6 +5006,10 @@ function normalizeWheelDelta(value: number, mode: number, pageSize: number): num
 function wheelSteps(value: number): number {
   const steps = Math.trunc(value / MPR_WHEEL_THRESHOLD);
   return Math.max(-6, Math.min(steps, 6));
+}
+
+function frameSourceKey(frame: FrameMetadata): string {
+  return frame.sop_instance_uid ?? frame.frame_key.replace(/#\d+$/, '');
 }
 
 function point3(value: [number, number, number]): PatientPoint3D {

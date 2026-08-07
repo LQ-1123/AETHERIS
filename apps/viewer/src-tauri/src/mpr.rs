@@ -5,7 +5,9 @@ use pacs_core::geometry::Vec3;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 const ORIENTATION_TOLERANCE: f64 = 1e-4;
 const SPACING_ABSOLUTE_TOLERANCE_MM: f64 = 0.1;
@@ -13,6 +15,8 @@ const SPACING_RELATIVE_TOLERANCE: f64 = 0.05;
 const MAX_VOLUME_BYTES: usize = 768 * 1024 * 1024;
 const MAX_GPU_VOLUME_BYTES: usize = 256 * 1024 * 1024;
 const SLICE_CACHE_LIMIT: usize = 192 * 1024 * 1024;
+const RENDERED_SLICE_CACHE_LIMIT: usize = 256 * 1024 * 1024;
+const MPR_CACHE_TTL: Duration = Duration::from_secs(3 * 60);
 type SliceKey = (Plane, u32);
 
 #[derive(Clone)]
@@ -39,7 +43,7 @@ pub enum Plane {
     Sagittal,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectionMode {
     Slice,
@@ -147,14 +151,32 @@ pub struct Volume {
     bounds_max: Vec3,
     planes: [PlaneMetadata; 3],
     source_slices: Vec<MprSourceSlice>,
-    slice_cache: Mutex<SliceCache>,
+    slice_cache: Mutex<TimedLruCache<SliceKey, f32>>,
+    rendered_slice_cache: Mutex<TimedLruCache<RenderedSliceKey, u8>>,
 }
 
-struct SliceCache {
-    data: HashMap<SliceKey, Arc<[f32]>>,
-    access_queue: VecDeque<SliceKey>,
+struct TimedLruCache<K, T> {
+    data: HashMap<K, TimedCacheEntry<T>>,
+    access_queue: VecDeque<K>,
     total_bytes: usize,
     limit: usize,
+    ttl: Duration,
+}
+
+struct TimedCacheEntry<T> {
+    value: Arc<[T]>,
+    last_access: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RenderedSliceKey {
+    plane: Plane,
+    slice_index: u32,
+    window_center: u64,
+    window_width: u64,
+    voi_function: u8,
+    projection: ProjectionMode,
+    slab_thickness_mm: u64,
 }
 
 struct SourceGeometry {
@@ -359,7 +381,11 @@ impl Volume {
             bounds_max,
             planes,
             source_slices,
-            slice_cache: Mutex::new(SliceCache::new(SLICE_CACHE_LIMIT)),
+            slice_cache: Mutex::new(TimedLruCache::new(SLICE_CACHE_LIMIT, MPR_CACHE_TTL)),
+            rendered_slice_cache: Mutex::new(TimedLruCache::new(
+                RENDERED_SLICE_CACHE_LIMIT,
+                MPR_CACHE_TTL,
+            )),
         })
     }
 
@@ -434,6 +460,53 @@ impl Volume {
         slice_index: u32,
         options: &MprRenderOptions<'_>,
     ) -> Result<Vec<u8>, String> {
+        self.rendered_slice(plane, slice_index, options)
+            .map(|bytes| bytes.as_ref().to_vec())
+    }
+
+    pub fn prefetch_rendered_slices(
+        &self,
+        start_slices: [u32; 3],
+        options: &MprRenderOptions<'_>,
+        mut cancelled: impl FnMut() -> bool,
+        mut progress: impl FnMut(usize, usize),
+    ) -> Result<usize, String> {
+        let mut queues: [VecDeque<u32>; 3] = std::array::from_fn(|index| {
+            centered_slice_order(self.planes[index].slice_count, start_slices[index])
+        });
+        let total = queues.iter().map(VecDeque::len).sum();
+        let mut completed = 0;
+        loop {
+            let mut found = false;
+            for (index, metadata) in self.planes.iter().enumerate() {
+                let Some(slice_index) = queues[index].pop_front() else {
+                    continue;
+                };
+                found = true;
+                if cancelled() {
+                    return Ok(completed);
+                }
+                self.rendered_slice(metadata.plane, slice_index, options)?;
+                completed += 1;
+                progress(completed, total);
+            }
+            if !found {
+                return Ok(completed);
+            }
+        }
+    }
+
+    pub(crate) fn purge_expired_cache(&self, now: Instant) {
+        self.slice_cache().remove_expired(now);
+        self.rendered_slice_cache().remove_expired(now);
+    }
+
+    fn rendered_slice(
+        &self,
+        plane: Plane,
+        slice_index: u32,
+        options: &MprRenderOptions<'_>,
+    ) -> Result<Arc<[u8]>, String> {
         if !options.window_center.is_finite()
             || !options.window_width.is_finite()
             || options.window_width <= 0.0
@@ -457,12 +530,32 @@ impl Volume {
         {
             return Err("Slab 厚度必须在 0 到 200 mm 之间".to_owned());
         }
-        let function = match options.voi_function.trim().to_ascii_uppercase().as_str() {
-            "LINEAR" => VoiFunction::Linear,
-            "LINEAR_EXACT" => VoiFunction::LinearExact,
-            "SIGMOID" => VoiFunction::Sigmoid,
-            other => return Err(format!("未知 VOI 函数 {other}")),
+        let (function, function_key) =
+            match options.voi_function.trim().to_ascii_uppercase().as_str() {
+                "LINEAR" => (VoiFunction::Linear, 0),
+                "LINEAR_EXACT" => (VoiFunction::LinearExact, 1),
+                "SIGMOID" => (VoiFunction::Sigmoid, 2),
+                other => return Err(format!("未知 VOI 函数 {other}")),
+            };
+        let key = RenderedSliceKey {
+            plane,
+            slice_index,
+            window_center: normalized_float_bits(options.window_center),
+            window_width: normalized_float_bits(options.window_width),
+            voi_function: function_key,
+            projection: options.projection,
+            slab_thickness_mm: if matches!(options.projection, ProjectionMode::Slice) {
+                0
+            } else {
+                normalized_float_bits(options.slab_thickness_mm)
+            },
         };
+        {
+            let mut cache = self.rendered_slice_cache();
+            if let Some(cached) = cache.get(&key) {
+                return Ok(Arc::clone(cached));
+            }
+        }
         let window = Window {
             center: options.window_center,
             width: options.window_width,
@@ -480,7 +573,7 @@ impl Volume {
                 )
                 .into(),
         };
-        Ok(samples
+        let rendered: Arc<[u8]> = samples
             .iter()
             .map(|value| {
                 if value.is_finite() {
@@ -489,7 +582,14 @@ impl Volume {
                     0
                 }
             })
-            .collect())
+            .collect::<Vec<_>>()
+            .into();
+        let mut cache = self.rendered_slice_cache();
+        if let Some(cached) = cache.get(&key) {
+            return Ok(Arc::clone(cached));
+        }
+        cache.insert(key, Arc::clone(&rendered));
+        Ok(rendered)
     }
 
     pub fn measure_roi(
@@ -657,8 +757,16 @@ impl Volume {
         }
     }
 
-    fn slice_cache(&self) -> std::sync::MutexGuard<'_, SliceCache> {
+    fn slice_cache(&self) -> std::sync::MutexGuard<'_, TimedLruCache<SliceKey, f32>> {
         self.slice_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn rendered_slice_cache(
+        &self,
+    ) -> std::sync::MutexGuard<'_, TimedLruCache<RenderedSliceKey, u8>> {
+        self.rendered_slice_cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -805,30 +913,54 @@ struct VoxelPoint {
     z: f64,
 }
 
-impl SliceCache {
-    fn new(limit: usize) -> Self {
+impl<K, T> TimedLruCache<K, T>
+where
+    K: Copy + Eq + Hash,
+{
+    fn new(limit: usize, ttl: Duration) -> Self {
         Self {
             data: HashMap::new(),
             access_queue: VecDeque::new(),
             total_bytes: 0,
             limit,
+            ttl,
         }
     }
 
-    fn get(&mut self, key: &SliceKey) -> Option<&Arc<[f32]>> {
-        if self.data.contains_key(key) {
-            self.access_queue.retain(|candidate| candidate != key);
-            self.access_queue.push_back(*key);
-            self.data.get(key)
-        } else {
-            None
-        }
+    fn get(&mut self, key: &K) -> Option<&Arc<[T]>> {
+        self.get_at(key, Instant::now())
     }
 
-    fn insert(&mut self, key: SliceKey, data: Arc<[f32]>) {
-        let size = data.len() * std::mem::size_of::<f32>();
-        if let Some(previous) = self.data.insert(key, data) {
-            self.total_bytes -= previous.len() * std::mem::size_of::<f32>();
+    fn get_at(&mut self, key: &K, now: Instant) -> Option<&Arc<[T]>> {
+        if self
+            .data
+            .get(key)
+            .is_some_and(|entry| now.saturating_duration_since(entry.last_access) >= self.ttl)
+        {
+            self.remove(key);
+            return None;
+        }
+        let entry = self.data.get_mut(key)?;
+        entry.last_access = now;
+        self.access_queue.retain(|candidate| candidate != key);
+        self.access_queue.push_back(*key);
+        Some(&entry.value)
+    }
+
+    fn insert(&mut self, key: K, value: Arc<[T]>) {
+        self.insert_at(key, value, Instant::now());
+    }
+
+    fn insert_at(&mut self, key: K, value: Arc<[T]>, now: Instant) {
+        let size = value.len() * std::mem::size_of::<T>();
+        if let Some(previous) = self.data.insert(
+            key,
+            TimedCacheEntry {
+                value,
+                last_access: now,
+            },
+        ) {
+            self.total_bytes -= previous.value.len() * std::mem::size_of::<T>();
             self.access_queue.retain(|candidate| candidate != &key);
         }
         self.total_bytes += size;
@@ -838,9 +970,30 @@ impl SliceCache {
                 break;
             };
             if let Some(removed) = self.data.remove(&oldest) {
-                self.total_bytes -= removed.len() * std::mem::size_of::<f32>();
+                self.total_bytes -= removed.value.len() * std::mem::size_of::<T>();
             }
         }
+    }
+
+    fn remove(&mut self, key: &K) {
+        if let Some(removed) = self.data.remove(key) {
+            self.total_bytes -= removed.value.len() * std::mem::size_of::<T>();
+        }
+        self.access_queue.retain(|candidate| candidate != key);
+    }
+
+    fn remove_expired(&mut self, now: Instant) {
+        let ttl = self.ttl;
+        let mut removed_bytes = 0;
+        self.data.retain(|_, entry| {
+            let keep = now.saturating_duration_since(entry.last_access) < ttl;
+            if !keep {
+                removed_bytes += entry.value.len() * std::mem::size_of::<T>();
+            }
+            keep
+        });
+        self.total_bytes -= removed_bytes;
+        self.access_queue.retain(|key| self.data.contains_key(key));
     }
 }
 
@@ -924,6 +1077,29 @@ fn build_planes(min: Vec3, max: Vec3, spacing: f64) -> [PlaneMetadata; 3] {
             normal: [1.0, 0.0, 0.0],
         },
     ]
+}
+
+fn centered_slice_order(slice_count: u32, requested_start: u32) -> VecDeque<u32> {
+    let mut order = VecDeque::with_capacity(slice_count as usize);
+    if slice_count == 0 {
+        return order;
+    }
+    let start = requested_start.min(slice_count - 1);
+    order.push_back(start);
+    for distance in 1..slice_count {
+        if let Some(previous) = start.checked_sub(distance) {
+            order.push_back(previous);
+        }
+        let next = start + distance;
+        if next < slice_count {
+            order.push_back(next);
+        }
+    }
+    order
+}
+
+fn normalized_float_bits(value: f64) -> u64 {
+    if value == 0.0 { 0.0 } else { value }.to_bits()
 }
 
 fn volume_bounds(geometry: &SourceGeometry) -> (Vec3, Vec3) {
@@ -1077,6 +1253,65 @@ mod tests {
         let first = volume.resampled_slice(Plane::Axial, 0, plane);
         let second = volume.resampled_slice(Plane::Axial, 0, plane);
         assert!(Arc::ptr_eq(&first, &second), "再次访问同一切面应命中缓存");
+    }
+
+    #[test]
+    fn precomputes_every_plane_and_random_reads_hit_the_rendered_cache() {
+        let volume = Volume::build(
+            0,
+            vec![
+                source(0.0, [0, 10, 20, 30]),
+                source(1.0, [100, 110, 120, 130]),
+            ],
+            || false,
+            |_, _| {},
+        )
+        .unwrap();
+        let options = MprRenderOptions {
+            window_center: 50.0,
+            window_width: 100.0,
+            voi_function: "LINEAR",
+            projection: ProjectionMode::Slice,
+            slab_thickness_mm: 10.0,
+        };
+        let expected: usize = volume
+            .planes
+            .iter()
+            .map(|plane| plane.slice_count as usize)
+            .sum();
+        let completed = volume
+            .prefetch_rendered_slices([1, 1, 1], &options, || false, |_, _| {})
+            .unwrap();
+
+        assert_eq!(completed, expected);
+        assert_eq!(volume.rendered_slice_cache().data.len(), expected);
+        let first = volume.rendered_slice(Plane::Sagittal, 0, &options).unwrap();
+        let second = volume.rendered_slice(Plane::Sagittal, 0, &options).unwrap();
+        assert!(Arc::ptr_eq(&first, &second), "随机读取应直接命中渲染帧缓存");
+        volume.purge_expired_cache(Instant::now());
+    }
+
+    #[test]
+    fn timed_mpr_cache_expires_after_three_idle_minutes() {
+        let now = Instant::now();
+        let mut cache = TimedLruCache::<u32, u8>::new(8, MPR_CACHE_TTL);
+        cache.insert_at(1, Arc::from([1, 2, 3, 4]), now);
+
+        assert!(cache.get_at(&1, now + Duration::from_secs(179)).is_some());
+        cache.remove_expired(now + Duration::from_secs(180));
+        assert_eq!(cache.total_bytes, 4, "访问应刷新 MPR 缓存期限");
+
+        cache.remove_expired(now + Duration::from_secs(359));
+        assert_eq!(cache.total_bytes, 0);
+        assert!(cache.data.is_empty());
+    }
+
+    #[test]
+    fn centered_slice_order_prioritizes_nearby_random_reads() {
+        assert_eq!(
+            centered_slice_order(6, 3).into_iter().collect::<Vec<_>>(),
+            vec![3, 2, 4, 1, 5, 0]
+        );
     }
 
     #[test]

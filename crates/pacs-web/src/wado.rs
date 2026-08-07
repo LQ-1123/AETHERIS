@@ -178,7 +178,8 @@ pub async fn retrieve_frames(
                         | pacs_codec::FrameError::OutOfRange { .. } => WadoError::BadFrame {
                             detail: error.to_string(),
                         },
-                        pacs_codec::FrameError::Decode { .. } => WadoError::Undecodable,
+                        pacs_codec::FrameError::Decode { .. }
+                        | pacs_codec::FrameError::InvalidPalette(_) => WadoError::Undecodable,
                     })
             })
             .collect()

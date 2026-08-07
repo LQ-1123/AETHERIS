@@ -100,7 +100,7 @@
             <option value="high">高</option>
           </select>
         </div>
-        <div class="segmented" role="group" aria-label="阅片工具">
+        <div class="segmented primary-tool-control" role="group" aria-label="常用阅片工具">
           <button data-tool="window" data-requires-series type="button" title="窗宽窗位" aria-label="窗宽窗位">
             <i data-lucide="sliders-horizontal"></i>
           </button>
@@ -110,69 +110,33 @@
           <button data-tool="crosshair" data-requires-series data-mpr-tool type="button" title="十字定位" aria-label="十字定位">
             <i data-lucide="crosshair"></i>
           </button>
-          <button data-tool="length" data-requires-series type="button" title="测距" aria-label="测距">
-            <i data-lucide="ruler"></i>
-          </button>
-          <button data-tool="arrow" data-requires-series type="button" title="箭头标注" aria-label="箭头标注">
-            <i data-lucide="mouse-pointer-2"></i>
-          </button>
-          <button data-tool="ellipse_roi" data-requires-series type="button" title="椭圆 ROI" aria-label="椭圆 ROI">
-            <i data-lucide="circle"></i>
-          </button>
-          <button data-tool="rectangle_roi" data-requires-series type="button" title="矩形 ROI" aria-label="矩形 ROI">
-            <i data-lucide="square"></i>
-          </button>
-          <button data-tool="angle" data-requires-series type="button" title="角度测量" aria-label="角度测量">
-            <i data-lucide="drafting-compass"></i>
-          </button>
-          <button data-tool="point_probe" data-requires-series type="button" title="CT 值探针" aria-label="CT 值探针">
-            <i data-lucide="scan-line"></i>
-          </button>
         </div>
+        <button id="measurement-menu-button" class="toolbar-menu-trigger" data-toolbar-menu-button data-menu-active-selector="[data-tool].active:not(:disabled)" data-requires-series type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="measurement-menu-panel" title="测量工具">
+          <i data-lucide="ruler"></i>
+          <span>测量</span>
+          <i class="menu-chevron" data-lucide="chevron-down"></i>
+        </button>
+        <button id="annotation-menu-button" class="toolbar-menu-trigger" data-toolbar-menu-button data-menu-active-selector="[data-tool].active:not(:disabled)" data-requires-series type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="annotation-menu-panel" title="标注工具与管理">
+          <i data-lucide="edit-3"></i>
+          <span>标注</span>
+          <i class="menu-chevron" data-lucide="chevron-down"></i>
+        </button>
         <button id="mask-menu-button" class="mask-menu-button" data-requires-series type="button" title="Mask 标注" aria-haspopup="dialog" aria-expanded="false">
           <i data-lucide="layers-3"></i>
           <span id="mask-menu-label">Mask</span>
           <i data-lucide="chevron-down"></i>
         </button>
-        <div class="segmented" role="group" aria-label="标注历史">
+        <div class="segmented annotation-history-control" role="group" aria-label="标注历史">
           <button id="undo-annotation" data-requires-series type="button" title="撤销标注 (Ctrl/Cmd+Z)" aria-label="撤销标注">
             <i data-lucide="undo-2"></i>
           </button>
           <button id="redo-annotation" data-requires-series type="button" title="重做标注 (Ctrl/Cmd+Shift+Z)" aria-label="重做标注">
             <i data-lucide="redo-2"></i>
           </button>
-          <button id="toggle-annotations" data-requires-series type="button" title="显示或隐藏标注 (V)" aria-label="显示或隐藏标注">
-            <i data-lucide="eye"></i>
-          </button>
-          <button id="retry-annotation-sync" data-requires-series type="button" title="重试失败的标注同步" aria-label="重试失败的标注同步">
-            <i data-lucide="refresh-cw"></i>
-          </button>
-          <button id="clear-current-annotations" data-requires-series type="button" title="清除当前图像标注" aria-label="清除当前图像标注">
-            <i data-lucide="eraser"></i>
-          </button>
-          <button id="clear-all-annotations" data-requires-series type="button" title="清除整个序列标注" aria-label="清除整个序列标注">
-            <i data-lucide="trash-2"></i>
-          </button>
         </div>
-        <div class="segmented" role="group" aria-label="图像方向与反色">
-          <button id="invert-btn" data-requires-series type="button" title="反色 (I)" aria-label="反色">
-            <i data-lucide="contrast"></i>
-          </button>
-          <button id="flip-horizontal-btn" data-requires-series type="button" title="水平翻转" aria-label="水平翻转">
-            <i data-lucide="flip-horizontal-2"></i>
-          </button>
-          <button id="flip-vertical-btn" data-requires-series type="button" title="垂直翻转" aria-label="垂直翻转">
-            <i data-lucide="flip-vertical-2"></i>
-          </button>
-          <button id="rotate-left-btn" data-requires-series type="button" title="逆时针旋转 90°" aria-label="逆时针旋转 90°">
-            <i data-lucide="rotate-ccw"></i>
-          </button>
-          <button id="rotate-right-btn" data-requires-series type="button" title="顺时针旋转 90°" aria-label="顺时针旋转 90°">
-            <i data-lucide="rotate-cw"></i>
-          </button>
-        </div>
-        <button id="reset-btn" class="icon-button" data-requires-series type="button" title="重置视图" aria-label="重置视图">
-          <i data-lucide="rotate-ccw"></i>
+        <button id="view-menu-button" class="toolbar-menu-trigger toolbar-menu-trigger-icon" data-toolbar-menu-button data-menu-active-selector=".active:not(:disabled)" data-requires-series type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu-panel" title="视图调整" aria-label="视图调整">
+          <i data-lucide="contrast"></i>
+          <i class="menu-chevron" data-lucide="chevron-down"></i>
         </button>
         <label class="preset-control">
           <span>窗预设</span>
@@ -182,26 +146,97 @@
           <span id="window-readout">WL -- WW --</span>
           <span id="zoom-readout">100%</span>
         </div>
-        <button id="panel-toggle" class="icon-button" type="button" title="检查信息" aria-label="显示或隐藏检查信息">
-          <i data-lucide="panel-right-close"></i>
-        </button>
-        <button id="transform-tasks-btn" class="icon-button" type="button" title="DICOM 转换任务" aria-label="DICOM 转换任务" hidden>
-          <i data-lucide="list-checks"></i>
-        </button>
-        <button id="revision-history-btn" class="icon-button" type="button" title="当前实例修订历史" aria-label="当前实例修订历史" hidden>
-          <i data-lucide="history"></i>
-        </button>
-        <button id="dicom-router-btn" class="icon-button" type="button" title="DICOM Router" aria-label="打开 DICOM Router" hidden>
-          <i data-lucide="network"></i>
-        </button>
-        <button id="lifecycle-btn" class="icon-button" type="button" title="DICOM 生命周期" aria-label="打开 DICOM 生命周期管理" hidden>
-          <i data-lucide="archive-restore"></i>
-        </button>
         <span id="current-user" class="current-user"></span>
-        <button id="logout-btn" class="icon-button" type="button" title="退出登录" aria-label="退出登录">
-          <i data-lucide="log-out"></i>
+        <button id="more-menu-button" class="toolbar-menu-trigger toolbar-menu-trigger-icon" data-toolbar-menu-button data-menu-align="end" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu-panel" title="更多功能" aria-label="更多功能">
+          <i data-lucide="ellipsis"></i>
         </button>
       </header>
+
+      <section id="measurement-menu-panel" class="toolbar-menu-panel" role="menu" aria-label="测量工具" hidden>
+        <span class="toolbar-menu-heading">测量工具</span>
+        <button class="toolbar-menu-item" data-tool="length" data-requires-series type="button" role="menuitem" title="测距">
+          <i data-lucide="ruler"></i><span>距离测量</span>
+        </button>
+        <button class="toolbar-menu-item" data-tool="angle" data-requires-series type="button" role="menuitem" title="角度测量">
+          <i data-lucide="drafting-compass"></i><span>角度测量</span>
+        </button>
+        <button class="toolbar-menu-item" data-tool="point_probe" data-requires-series type="button" role="menuitem" title="CT 值探针">
+          <i data-lucide="scan-line"></i><span>数值探针</span>
+        </button>
+        <div class="toolbar-menu-separator" role="separator"></div>
+        <button class="toolbar-menu-item" data-tool="ellipse_roi" data-requires-series type="button" role="menuitem" title="椭圆 ROI">
+          <i data-lucide="circle"></i><span>椭圆 ROI</span>
+        </button>
+        <button class="toolbar-menu-item" data-tool="rectangle_roi" data-requires-series type="button" role="menuitem" title="矩形 ROI">
+          <i data-lucide="square"></i><span>矩形 ROI</span>
+        </button>
+      </section>
+
+      <section id="annotation-menu-panel" class="toolbar-menu-panel" role="menu" aria-label="标注工具与管理" hidden>
+        <span class="toolbar-menu-heading">标注</span>
+        <button class="toolbar-menu-item" data-tool="arrow" data-requires-series type="button" role="menuitem" title="箭头标注">
+          <i data-lucide="mouse-pointer-2"></i><span>箭头标注</span>
+        </button>
+        <button id="toggle-annotations" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="显示或隐藏标注 (V)">
+          <i data-lucide="eye"></i><span id="toggle-annotations-label">隐藏标注</span>
+        </button>
+        <button id="retry-annotation-sync" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="重试失败的标注同步">
+          <i data-lucide="refresh-cw"></i><span>重试同步</span>
+        </button>
+        <div class="toolbar-menu-separator" role="separator"></div>
+        <button id="clear-current-annotations" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="清除当前图像标注">
+          <i data-lucide="eraser"></i><span>清除当前图像</span>
+        </button>
+        <button id="clear-all-annotations" class="toolbar-menu-item toolbar-menu-item-danger" data-requires-series type="button" role="menuitem" title="清除整个序列标注">
+          <i data-lucide="trash-2"></i><span>清除整个序列</span>
+        </button>
+      </section>
+
+      <section id="view-menu-panel" class="toolbar-menu-panel" role="menu" aria-label="视图调整" hidden>
+        <span class="toolbar-menu-heading">视图调整</span>
+        <button id="invert-btn" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="反色 (I)">
+          <i data-lucide="contrast"></i><span>反色</span>
+        </button>
+        <button id="flip-horizontal-btn" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="水平翻转">
+          <i data-lucide="flip-horizontal-2"></i><span>水平翻转</span>
+        </button>
+        <button id="flip-vertical-btn" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="垂直翻转">
+          <i data-lucide="flip-vertical-2"></i><span>垂直翻转</span>
+        </button>
+        <button id="rotate-left-btn" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="逆时针旋转 90°">
+          <i data-lucide="rotate-ccw"></i><span>向左旋转 90°</span>
+        </button>
+        <button id="rotate-right-btn" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="顺时针旋转 90°">
+          <i data-lucide="rotate-cw"></i><span>向右旋转 90°</span>
+        </button>
+        <div class="toolbar-menu-separator" role="separator"></div>
+        <button id="reset-btn" class="toolbar-menu-item" data-requires-series type="button" role="menuitem" title="重置视图">
+          <i data-lucide="refresh-cw"></i><span>重置视图</span>
+        </button>
+      </section>
+
+      <section id="more-menu-panel" class="toolbar-menu-panel" role="menu" aria-label="更多功能" hidden>
+        <span class="toolbar-menu-heading">工作区</span>
+        <button id="panel-toggle" class="toolbar-menu-item" type="button" role="menuitem" title="检查信息">
+          <i data-lucide="panel-right-close"></i><span>检查信息</span>
+        </button>
+        <button id="transform-tasks-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM 转换任务" hidden>
+          <i data-lucide="list-checks"></i><span>转换任务</span>
+        </button>
+        <button id="revision-history-btn" class="toolbar-menu-item" type="button" role="menuitem" title="当前实例修订历史" hidden>
+          <i data-lucide="history"></i><span>修订历史</span>
+        </button>
+        <button id="dicom-router-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM Router" hidden>
+          <i data-lucide="network"></i><span>DICOM Router</span>
+        </button>
+        <button id="lifecycle-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM 生命周期" hidden>
+          <i data-lucide="archive-restore"></i><span>生命周期管理</span>
+        </button>
+        <div class="toolbar-menu-separator" role="separator"></div>
+        <button id="logout-btn" class="toolbar-menu-item" type="button" role="menuitem" title="退出登录">
+          <i data-lucide="log-out"></i><span>退出登录</span>
+        </button>
+      </section>
 
       <section id="mask-menu-panel" class="mask-menu-panel" role="dialog" aria-label="Mask 标注" hidden>
         <div class="mask-segment-control">
