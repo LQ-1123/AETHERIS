@@ -85,29 +85,27 @@ export function paintMaskVolumePlane(
   sliceIndex: number,
   from: Point,
   to: Point,
-  diameterMm: number,
+  radiusMm: number,
   value: 0 | 1,
   beforeSlices: MaskSliceSnapshot = new Map(),
 ): Set<number> {
   const planeMetadata = metadata.planes.find((candidate) => candidate.plane === plane);
   if (!planeMetadata) return new Set();
-  const radius = Math.max(0.25, Math.min(256, diameterMm / 2));
-  const distanceMm = Math.hypot(to.x - from.x, to.y - from.y) * planeMetadata.pixel_spacing_mm;
+  const radius = clampBrushRadius(radiusMm);
+  const sourceFrom = mprImagePointToSourceCoordinate(metadata, planeMetadata, sliceIndex, from);
+  const sourceTo = mprImagePointToSourceCoordinate(metadata, planeMetadata, sliceIndex, to);
+  const spacing = metadata.source_spacing_mm;
+  const distanceMm = sourceDistanceMm(sourceFrom, sourceTo, spacing);
   const steps = Math.max(1, Math.ceil(distanceMm / Math.max(0.25, radius * 0.4)));
   const changedSlices = new Set<number>();
   for (let step = 0; step <= steps; step += 1) {
     const amount = step / steps;
-    const center = {
-      x: from.x + (to.x - from.x) * amount,
-      y: from.y + (to.y - from.y) * amount,
-    };
-    paintMaskVolumeDisc(
+    const center = interpolateSourceCoordinate(sourceFrom, sourceTo, amount);
+    paintMaskSphere(
       volume,
-      metadata,
-      planeMetadata,
-      sliceIndex,
       center,
       radius,
+      spacing,
       value,
       changedSlices,
       beforeSlices,
@@ -123,37 +121,36 @@ export function paintMaskSourcePlane(
   sourceSlice: number,
   from: Point,
   to: Point,
-  diameter: number,
-  spacing: { rowMm: number | null; colMm: number | null },
+  radiusMm: number,
+  spacing: { rowMm: number | null; colMm: number | null; sliceMm: number | null },
   value: 0 | 1,
   beforeSlices: MaskSliceSnapshot = new Map(),
 ): Set<number> {
   if (sourceSlice < 0 || sourceSlice >= volume.slices) return new Set();
   const rowMm = positiveOr(spacing.rowMm, 1);
   const colMm = positiveOr(spacing.colMm, 1);
-  const radiusMm = Math.max(0.25, Math.min(256, diameter / 2));
-  const distanceMm = Math.hypot((to.x - from.x) * colMm, (to.y - from.y) * rowMm);
-  const steps = Math.max(1, Math.ceil(distanceMm / Math.max(0.25, radiusMm * 0.4)));
+  const sliceMm = positiveOr(spacing.sliceMm, 1);
+  const radius = clampBrushRadius(radiusMm);
+  const sourceFrom = { x: from.x - 0.5, y: from.y - 0.5, z: sourceSlice };
+  const sourceTo = { x: to.x - 0.5, y: to.y - 0.5, z: sourceSlice };
+  const sourceSpacing: SourceSpacing = [colMm, rowMm, sliceMm];
+  const distanceMm = sourceDistanceMm(sourceFrom, sourceTo, sourceSpacing);
+  const steps = Math.max(1, Math.ceil(distanceMm / Math.max(0.25, radius * 0.4)));
   const changed = new Set<number>();
   for (let step = 0; step <= steps; step += 1) {
     const amount = step / steps;
-    paintMaskSourceDisc(
+    paintMaskSphere(
       volume,
-      sourceSlice,
-      {
-        x: from.x + (to.x - from.x) * amount,
-        y: from.y + (to.y - from.y) * amount,
-      },
-      radiusMm,
-      rowMm,
-      colMm,
+      interpolateSourceCoordinate(sourceFrom, sourceTo, amount),
+      radius,
+      sourceSpacing,
       value,
       changed,
       beforeSlices,
     );
   }
   if (changed.size) {
-    removeEmptyMaskVolumeSlice(volume, sourceSlice);
+    for (const slice of changed) removeEmptyMaskVolumeSlice(volume, slice);
     volume.generation += 1;
   }
   return changed;
@@ -331,74 +328,44 @@ function paintDisc(
   }
 }
 
-function paintMaskVolumeDisc(
-  volume: MaskVolume,
-  metadata: MprMetadata,
-  plane: MprPlaneMetadata,
-  sliceIndex: number,
-  center: Point,
-  radius: number,
-  value: 0 | 1,
-  changedSlices: Set<number>,
-  beforeSlices: MaskSliceSnapshot,
-): void {
-  const pixelRadius = radius / plane.pixel_spacing_mm;
-  const left = Math.max(0, Math.floor(center.x - pixelRadius));
-  const right = Math.min(plane.cols - 1, Math.ceil(center.x + pixelRadius));
-  const top = Math.max(0, Math.floor(center.y - pixelRadius));
-  const bottom = Math.min(plane.rows - 1, Math.ceil(center.y + pixelRadius));
-  const radiusSquared = radius * radius;
-  for (let row = top; row <= bottom; row += 1) {
-    for (let col = left; col <= right; col += 1) {
-      const dx = (col + 0.5 - center.x) * plane.pixel_spacing_mm;
-      const dy = (row + 0.5 - center.y) * plane.pixel_spacing_mm;
-      if (dx * dx + dy * dy > radiusSquared) continue;
-      const source = planePixelToSourceVoxel(metadata, plane, sliceIndex, col, row);
-      if (!source) continue;
-      const sourceSlice = getMaskVolumeSlice(volume, source.z, value === 1);
-      if (!sourceSlice) continue;
-      const offset = source.y * volume.cols + source.x;
-      if (sourceSlice[offset] !== value) {
-        captureBeforeSlice(volume, source.z, beforeSlices);
-        sourceSlice[offset] = value;
-        changedSlices.add(source.z);
-      }
-    }
-  }
-}
+type SourceCoordinate = { x: number; y: number; z: number };
+type SourceSpacing = [colMm: number, rowMm: number, sliceMm: number];
 
-function paintMaskSourceDisc(
+function paintMaskSphere(
   volume: MaskVolume,
-  sourceSlice: number,
-  center: Point,
+  center: SourceCoordinate,
   radiusMm: number,
-  rowMm: number,
-  colMm: number,
+  spacing: SourceSpacing,
   value: 0 | 1,
   changedSlices: Set<number>,
   beforeSlices: MaskSliceSnapshot,
 ): void {
-  const radiusX = radiusMm / colMm;
-  const radiusY = radiusMm / rowMm;
-  const left = Math.max(0, Math.floor(center.x - radiusX));
-  const right = Math.min(volume.cols - 1, Math.ceil(center.x + radiusX));
-  const top = Math.max(0, Math.floor(center.y - radiusY));
-  const bottom = Math.min(volume.rows - 1, Math.ceil(center.y + radiusY));
-  let data = volume.sourceSlices.get(sourceSlice);
-  for (let row = top; row <= bottom; row += 1) {
-    for (let col = left; col <= right; col += 1) {
-      const dx = (col + 0.5 - center.x) * colMm;
-      const dy = (row + 0.5 - center.y) * rowMm;
-      if (dx * dx + dy * dy > radiusMm * radiusMm) continue;
-      if (!data) {
-        if (value === 0) continue;
-        data = getMaskVolumeSlice(volume, sourceSlice, true)!;
+  const [colMm, rowMm, sliceMm] = spacing;
+  const left = Math.max(0, Math.ceil(center.x - radiusMm / colMm));
+  const right = Math.min(volume.cols - 1, Math.floor(center.x + radiusMm / colMm));
+  const top = Math.max(0, Math.ceil(center.y - radiusMm / rowMm));
+  const bottom = Math.min(volume.rows - 1, Math.floor(center.y + radiusMm / rowMm));
+  const firstSlice = Math.max(0, Math.ceil(center.z - radiusMm / sliceMm));
+  const lastSlice = Math.min(volume.slices - 1, Math.floor(center.z + radiusMm / sliceMm));
+  const radiusSquared = radiusMm * radiusMm;
+  for (let slice = firstSlice; slice <= lastSlice; slice += 1) {
+    const dz = (slice - center.z) * sliceMm;
+    let data = volume.sourceSlices.get(slice);
+    for (let row = top; row <= bottom; row += 1) {
+      const dy = (row - center.y) * rowMm;
+      for (let col = left; col <= right; col += 1) {
+        const dx = (col - center.x) * colMm;
+        if (dx * dx + dy * dy + dz * dz > radiusSquared) continue;
+        if (!data) {
+          if (value === 0) continue;
+          data = getMaskVolumeSlice(volume, slice, true)!;
+        }
+        const offset = row * volume.cols + col;
+        if (data[offset] === value) continue;
+        captureBeforeSlice(volume, slice, beforeSlices);
+        data[offset] = value;
+        changedSlices.add(slice);
       }
-      const offset = row * volume.cols + col;
-      if (data[offset] === value) continue;
-      captureBeforeSlice(volume, sourceSlice, beforeSlices);
-      data[offset] = value;
-      changedSlices.add(sourceSlice);
     }
   }
 }
@@ -436,6 +403,54 @@ function planePixelToSourceVoxel(
   const z = Math.round(dot(metadata.source_normal) / metadata.source_spacing_mm[2]);
   if (x < 0 || y < 0 || z < 0 || x >= metadata.dimensions[0] || y >= metadata.dimensions[1] || z >= metadata.dimensions[2]) return null;
   return { x, y, z };
+}
+
+function mprImagePointToSourceCoordinate(
+  metadata: MprMetadata,
+  plane: MprPlaneMetadata,
+  sliceIndex: number,
+  point: Point,
+): SourceCoordinate {
+  const patient = [
+    plane.origin[0] + plane.x_axis[0] * (point.x - 0.5) * plane.pixel_spacing_mm + plane.y_axis[0] * (point.y - 0.5) * plane.pixel_spacing_mm + plane.normal[0] * sliceIndex * plane.slice_spacing_mm,
+    plane.origin[1] + plane.x_axis[1] * (point.x - 0.5) * plane.pixel_spacing_mm + plane.y_axis[1] * (point.y - 0.5) * plane.pixel_spacing_mm + plane.normal[1] * sliceIndex * plane.slice_spacing_mm,
+    plane.origin[2] + plane.x_axis[2] * (point.x - 0.5) * plane.pixel_spacing_mm + plane.y_axis[2] * (point.y - 0.5) * plane.pixel_spacing_mm + plane.normal[2] * sliceIndex * plane.slice_spacing_mm,
+  ];
+  const relative = patient.map((value, index) => value - metadata.source_origin[index]);
+  const dot = (axis: [number, number, number]) => relative[0] * axis[0] + relative[1] * axis[1] + relative[2] * axis[2];
+  return {
+    x: dot(metadata.source_x_axis) / metadata.source_spacing_mm[0],
+    y: dot(metadata.source_y_axis) / metadata.source_spacing_mm[1],
+    z: dot(metadata.source_normal) / metadata.source_spacing_mm[2],
+  };
+}
+
+function interpolateSourceCoordinate(
+  from: SourceCoordinate,
+  to: SourceCoordinate,
+  amount: number,
+): SourceCoordinate {
+  return {
+    x: from.x + (to.x - from.x) * amount,
+    y: from.y + (to.y - from.y) * amount,
+    z: from.z + (to.z - from.z) * amount,
+  };
+}
+
+function sourceDistanceMm(
+  from: SourceCoordinate,
+  to: SourceCoordinate,
+  spacing: SourceSpacing,
+): number {
+  return Math.hypot(
+    (to.x - from.x) * spacing[0],
+    (to.y - from.y) * spacing[1],
+    (to.z - from.z) * spacing[2],
+  );
+}
+
+function clampBrushRadius(radiusMm: number): number {
+  return Math.max(0.25, Math.min(256, radiusMm));
 }
 
 function validateMask(mask: Uint8Array, rows: number, cols: number): void {

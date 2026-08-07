@@ -6,8 +6,9 @@ use pacs_core::fixture::{ct_instance, unique_uid};
 use pacs_core::{InstanceMetadata, extract_metadata};
 use pacs_db::{
     DbError, NewSegmentationProject, SegmentationMaskUpdate, StorageRecord,
-    create_segmentation_project, ingest_instance, list_segmentation_projects,
-    list_segmentation_segment_masks, list_segmentation_segments, upsert_segmentation_masks_batch,
+    UpdateSegmentationSegmentTags, create_segmentation_project, find_segmentation_segments_by_tag,
+    ingest_instance, list_segmentation_projects, list_segmentation_segment_masks,
+    list_segmentation_segments, update_segmentation_segment_tags, upsert_segmentation_masks_batch,
 };
 use sqlx::migrate::MigrateDatabase;
 use sqlx::{PgPool, Postgres};
@@ -101,12 +102,41 @@ async fn segmentation_masks_are_sparse_batch_updated_and_versioned() {
     .unwrap();
     assert_eq!(project.id, project_id);
     assert_eq!(segment.id, segment_id);
+    assert!(segment.tags.is_empty());
     assert_eq!(
         list_segmentation_projects(&pool, 1, &study_uid, &series_uid)
             .await
             .unwrap()
             .len(),
         1
+    );
+
+    let tags = vec!["结节".to_owned(), "肺".to_owned()];
+    let tagged = update_segmentation_segment_tags(
+        &pool,
+        UpdateSegmentationSegmentTags {
+            institution_id: 1,
+            project_id,
+            segment_id,
+            tags: &tags,
+            user_id,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(tagged.tags, tags);
+    assert_eq!(
+        find_segmentation_segments_by_tag(&pool, 1, project_id, "结节")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        find_segmentation_segments_by_tag(&pool, 1, project_id, "肿块")
+            .await
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
         list_segmentation_segments(&pool, 1, project_id)

@@ -30,6 +30,7 @@ pub struct SegmentationSegment {
     pub color_g: i16,
     pub color_b: i16,
     pub algorithm_type: String,
+    pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -80,6 +81,14 @@ pub struct SegmentationMaskUpdate<'a> {
     pub cols: i32,
     pub mask_data: &'a [u8],
     pub expected_revision: i64,
+}
+
+pub struct UpdateSegmentationSegmentTags<'a> {
+    pub institution_id: i64,
+    pub project_id: Uuid,
+    pub segment_id: Uuid,
+    pub tags: &'a [String],
+    pub user_id: i64,
 }
 
 pub async fn list_segmentation_projects(
@@ -133,7 +142,7 @@ pub async fn create_segmentation_project(
             id, project_fk, segment_number, label, color_r, color_g, color_b, algorithm_type
          ) VALUES ($1, $2, 1, $3, $4, $5, $6, 'manual')
          RETURNING id, project_fk AS project_id, segment_number, label, description,
-                   color_r, color_g, color_b, algorithm_type, created_at, updated_at",
+                   color_r, color_g, color_b, algorithm_type, tags, created_at, updated_at",
     )
     .bind(input.segment_id)
     .bind(input.id)
@@ -154,7 +163,8 @@ pub async fn list_segmentation_segments(
 ) -> Result<Vec<SegmentationSegment>, DbError> {
     Ok(sqlx::query_as::<_, SegmentationSegment>(
         "SELECT s.id, s.project_fk AS project_id, s.segment_number, s.label, s.description,
-                s.color_r, s.color_g, s.color_b, s.algorithm_type, s.created_at, s.updated_at
+                s.color_r, s.color_g, s.color_b, s.algorithm_type, s.tags,
+                s.created_at, s.updated_at
          FROM segmentation_segments s
          JOIN segmentation_projects p ON p.id = s.project_fk
          WHERE p.institution_id = $1 AND p.id = $2
@@ -164,6 +174,61 @@ pub async fn list_segmentation_segments(
     .bind(project_id)
     .fetch_all(pool)
     .await?)
+}
+
+pub async fn find_segmentation_segments_by_tag(
+    pool: &PgPool,
+    institution_id: i64,
+    project_id: Uuid,
+    tag: &str,
+) -> Result<Vec<SegmentationSegment>, DbError> {
+    Ok(sqlx::query_as::<_, SegmentationSegment>(
+        "SELECT s.id, s.project_fk AS project_id, s.segment_number, s.label, s.description,
+                s.color_r, s.color_g, s.color_b, s.algorithm_type, s.tags,
+                s.created_at, s.updated_at
+         FROM segmentation_segments s
+         JOIN segmentation_projects p ON p.id = s.project_fk
+         WHERE p.institution_id = $1 AND p.id = $2 AND s.tags @> ARRAY[$3]::text[]
+         ORDER BY s.segment_number",
+    )
+    .bind(institution_id)
+    .bind(project_id)
+    .bind(tag)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn update_segmentation_segment_tags(
+    pool: &PgPool,
+    input: UpdateSegmentationSegmentTags<'_>,
+) -> Result<SegmentationSegment, DbError> {
+    let mut transaction = pool.begin().await?;
+    let segment = sqlx::query_as::<_, SegmentationSegment>(
+        "UPDATE segmentation_segments s SET tags = $4
+         FROM segmentation_projects p
+         WHERE s.project_fk = p.id AND p.institution_id = $1
+           AND p.id = $2 AND s.id = $3
+         RETURNING s.id, s.project_fk AS project_id, s.segment_number, s.label, s.description,
+                   s.color_r, s.color_g, s.color_b, s.algorithm_type, s.tags,
+                   s.created_at, s.updated_at",
+    )
+    .bind(input.institution_id)
+    .bind(input.project_id)
+    .bind(input.segment_id)
+    .bind(input.tags)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or(DbError::NotFound)?;
+    sqlx::query(
+        "UPDATE segmentation_projects SET revision = revision + 1, modified_by = $2
+         WHERE id = $1",
+    )
+    .bind(input.project_id)
+    .bind(input.user_id)
+    .execute(&mut *transaction)
+    .await?;
+    transaction.commit().await?;
+    Ok(segment)
 }
 
 pub async fn list_segmentation_masks(

@@ -176,6 +176,7 @@ export interface SegmentationSegment {
   color_g: number;
   color_b: number;
   algorithm_type: 'manual' | 'semiautomatic' | 'automatic';
+  tags: string[];
   created_at: string;
   updated_at: string;
 }

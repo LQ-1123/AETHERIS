@@ -25,6 +25,10 @@ pub fn segmentation_routes(state: WebState, auth: Arc<AuthService>) -> Router {
             get(list_segments),
         )
         .route(
+            "/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/segments/{segment_id}",
+            axum::routing::patch(update_segment),
+        )
+        .route(
             "/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/masks",
             get(list_masks),
         )
@@ -83,6 +87,16 @@ struct CreatedProject {
 struct MaskQuery {
     sop_instance_uid: String,
     frame_number: i32,
+}
+
+#[derive(Default, Deserialize)]
+struct SegmentQuery {
+    tag: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateSegmentRequest {
+    tags: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -221,13 +235,94 @@ async fn list_segments(
     State(state): State<WebState>,
     Extension(identity): Extension<Identity>,
     Path(path): Path<ProjectPath>,
+    Query(query): Query<SegmentQuery>,
 ) -> Result<Json<Vec<pacs_db::SegmentationSegment>>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
-    Ok(Json(
+    let tag = query
+        .tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty());
+    if tag.is_some_and(|tag| tag.chars().count() > 40) {
+        return Err(SegmentationError::BadRequest(
+            "查询 Tag 不能超过 40 个字符".to_owned(),
+        ));
+    }
+    let segments = if let Some(tag) = tag {
+        pacs_db::find_segmentation_segments_by_tag(
+            &state.pool,
+            identity.institution_id,
+            path.project_id,
+            tag,
+        )
+        .await
+    } else {
         pacs_db::list_segmentation_segments(&state.pool, identity.institution_id, path.project_id)
             .await
-            .map_err(SegmentationError::db)?,
-    ))
+    };
+    Ok(Json(segments.map_err(SegmentationError::db)?))
+}
+
+async fn update_segment(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(path): Path<SegmentPath>,
+    Json(request): Json<UpdateSegmentRequest>,
+) -> Result<Json<pacs_db::SegmentationSegment>, SegmentationError> {
+    validate_series(&path.study_uid, &path.series_uid)?;
+    let tags = normalize_tags(request.tags)?;
+    let segment = pacs_db::update_segmentation_segment_tags(
+        &state.pool,
+        pacs_db::UpdateSegmentationSegmentTags {
+            institution_id: identity.institution_id,
+            project_id: path.project_id,
+            segment_id: path.segment_id,
+            tags: &tags,
+            user_id: identity.user_id,
+        },
+    )
+    .await
+    .map_err(SegmentationError::db)?;
+    audit(
+        &state,
+        &identity,
+        &SeriesPath {
+            study_uid: path.study_uid,
+            series_uid: path.series_uid,
+        },
+        Action::SegmentationTagsUpdated,
+        serde_json::json!({
+            "project_id": path.project_id,
+            "segment_id": path.segment_id,
+            "tags": segment.tags,
+        }),
+        None,
+    )
+    .await;
+    Ok(Json(segment))
+}
+
+fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, SegmentationError> {
+    let mut normalized = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() || !seen.insert(tag.to_owned()) {
+            continue;
+        }
+        if tag.chars().count() > 40 {
+            return Err(SegmentationError::BadRequest(
+                "单个 Tag 不能超过 40 个字符".to_owned(),
+            ));
+        }
+        normalized.push(tag.to_owned());
+    }
+    if normalized.len() > 16 {
+        return Err(SegmentationError::BadRequest(
+            "一个 Mask 最多设置 16 个 Tag".to_owned(),
+        ));
+    }
+    Ok(normalized)
 }
 
 async fn list_masks(
@@ -541,5 +636,19 @@ mod tests {
             .flat_map(u32::to_le_bytes)
             .collect::<Vec<_>>();
         assert!(validate_rle(&valid, 4).is_ok());
+    }
+
+    #[test]
+    fn normalizes_and_validates_segment_tags() {
+        let tags = normalize_tags(vec![
+            " 结节 ".to_owned(),
+            "肺".to_owned(),
+            "结节".to_owned(),
+            " ".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(tags, ["结节", "肺"]);
+        assert!(normalize_tags(vec!["x".repeat(41)]).is_err());
+        assert!(normalize_tags((0..17).map(|value| value.to_string()).collect()).is_err());
     }
 }

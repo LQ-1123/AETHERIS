@@ -54,6 +54,7 @@ fn main() {
             commands::list_segmentation_projects,
             commands::create_segmentation_project,
             commands::list_segmentation_segments,
+            commands::update_segmentation_segment_tags,
             commands::list_segmentation_masks,
             commands::upsert_segmentation_mask,
             commands::list_segmentation_volume,

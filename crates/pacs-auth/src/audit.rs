@@ -38,6 +38,7 @@ pub enum Action {
     AnnotationUpdated,
     AnnotationDeleted,
     SegmentationCreated,
+    SegmentationTagsUpdated,
     SegmentationMaskUpdated,
 }
 
@@ -60,6 +61,7 @@ impl Action {
             Self::AnnotationUpdated => "annotation_updated",
             Self::AnnotationDeleted => "annotation_deleted",
             Self::SegmentationCreated => "segmentation_created",
+            Self::SegmentationTagsUpdated => "segmentation_tags_updated",
             Self::SegmentationMaskUpdated => "segmentation_mask_updated",
         }
     }
@@ -220,6 +222,7 @@ mod tests {
             Action::AnnotationUpdated,
             Action::AnnotationDeleted,
             Action::SegmentationCreated,
+            Action::SegmentationTagsUpdated,
             Action::SegmentationMaskUpdated,
         ];
         let unique: std::collections::HashSet<_> = actions.iter().map(|a| a.as_str()).collect();

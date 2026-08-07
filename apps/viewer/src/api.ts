@@ -301,9 +301,27 @@ export async function listSegmentationSegments(
   studyUid: string,
   seriesUid: string,
   projectId: string,
+  tag?: string,
 ): Promise<SegmentationSegment[]> {
   const invoke = await getInvoke();
-  return invoke<SegmentationSegment[]>('list_segmentation_segments', { studyUid, seriesUid, projectId });
+  return invoke<SegmentationSegment[]>('list_segmentation_segments', { studyUid, seriesUid, projectId, tag });
+}
+
+export async function updateSegmentationSegmentTags(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+  segmentId: string,
+  tags: string[],
+): Promise<SegmentationSegment> {
+  const invoke = await getInvoke();
+  return invoke<SegmentationSegment>('update_segmentation_segment_tags', {
+    studyUid,
+    seriesUid,
+    projectId,
+    segmentId,
+    input: { tags },
+  });
 }
 
 export async function listSegmentationMasks(

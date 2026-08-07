@@ -300,10 +300,32 @@ pub async fn list_segmentation_segments(
     study_uid: String,
     series_uid: String,
     project_id: String,
+    tag: Option<String>,
     state: State<'_, RemoteState>,
 ) -> Result<serde_json::Value, String> {
     state
-        .list_segmentation_segments(&study_uid, &series_uid, &project_id)
+        .list_segmentation_segments(&study_uid, &series_uid, &project_id, tag.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn update_segmentation_segment_tags(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    segment_id: String,
+    input: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .update_segmentation_segment_tags(
+            &study_uid,
+            &series_uid,
+            &project_id,
+            &segment_id,
+            input,
+        )
         .await
         .map_err(|error| error.to_string())
 }

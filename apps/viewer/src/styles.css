@@ -247,7 +247,7 @@ input:disabled {
   z-index: 70;
   top: 43px;
   display: grid;
-  width: 262px;
+  width: 292px;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 9px;
@@ -288,6 +288,50 @@ input:disabled {
 
 .mask-mode-control {
   justify-self: end;
+}
+
+.mask-tag-form,
+.mask-tag-filter-control {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  height: 31px;
+  padding: 0 3px 0 7px;
+  border: 1px solid #42474a;
+  border-radius: 4px;
+  color: #aeb5b8;
+  background: #292d30;
+}
+
+.mask-tag-filter-control {
+  grid-template-columns: 16px minmax(0, 1fr);
+  padding-right: 6px;
+}
+
+.mask-tag-form > svg,
+.mask-tag-filter-control > svg {
+  width: 14px;
+  height: 14px;
+}
+
+#mask-tag-input,
+#mask-tag-filter {
+  min-width: 0;
+  width: 100%;
+  height: 27px;
+  border: 0;
+  outline: 0;
+  color: #e7e9eb;
+  background: transparent;
+  font-size: 11px;
+}
+
+#mask-tag-save {
+  width: 27px;
+  height: 27px;
 }
 
 .mask-range-control {

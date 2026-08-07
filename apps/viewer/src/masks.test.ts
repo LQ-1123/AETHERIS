@@ -35,7 +35,7 @@ describe('mask editing and RLE', () => {
     expect(() => decodeMaskRle(encodeMaskRle(Uint8Array.of(0, 1)), 3)).toThrow();
   });
 
-  it('edits one MPR layer and maps it back to source voxels', () => {
+  it('paints a physical sphere from an MPR plane', () => {
     const metadata: MprMetadata = {
       stack_index: 0,
       dimensions: [5, 5, 5],
@@ -56,9 +56,10 @@ describe('mask editing and RLE', () => {
     };
     const volume = createMaskVolume(5, 5, 5);
     const changed = paintMaskVolumePlane(volume, metadata, 'axial', 2, { x: 2.5, y: 2.5 }, { x: 2.5, y: 2.5 }, 1, 1);
-    expect(changed).toEqual(new Set([2]));
+    expect(changed).toEqual(new Set([1, 2, 3]));
     expect(volume.sourceSlices.get(2)?.[2 * 5 + 2]).toBe(1);
-    expect(volume.sourceSlices.get(1)).toBeUndefined();
+    expect(volume.sourceSlices.get(1)?.[2 * 5 + 2]).toBe(1);
+    expect(volume.sourceSlices.get(2)?.[2 * 5 + 1]).toBe(1);
   });
 
   it('reports sparse voxel count, physical volume, and maximum extent', () => {
@@ -72,22 +73,40 @@ describe('mask editing and RLE', () => {
     });
   });
 
-  it('captures and restores one source-layer brush edit', () => {
-    const volume = createMaskVolume(5, 5, 1);
+  it('captures and restores every source layer changed by a spherical brush', () => {
+    const volume = createMaskVolume(5, 5, 3);
     const before = new Map<number, Uint8Array | null>();
     const changed = paintMaskSourcePlane(
       volume,
-      0,
+      1,
       { x: 2.5, y: 2.5 },
       { x: 2.5, y: 2.5 },
       1,
-      { rowMm: 1, colMm: 1 },
+      { rowMm: 1, colMm: 1, sliceMm: 1 },
       1,
       before,
     );
-    expect(changed).toEqual(new Set([0]));
-    expect(volume.sourceSlices.get(0)?.[12]).toBe(1);
+    expect(changed).toEqual(new Set([0, 1, 2]));
+    expect(volume.sourceSlices.get(1)?.[12]).toBe(1);
     restoreMaskSlices(volume, before);
     expect(volume.sourceSlices.get(0)).toBeUndefined();
+    expect(volume.sourceSlices.get(1)).toBeUndefined();
+    expect(volume.sourceSlices.get(2)).toBeUndefined();
+  });
+
+  it('respects anisotropic slice spacing for a spherical brush', () => {
+    const volume = createMaskVolume(7, 7, 5);
+    const changed = paintMaskSourcePlane(
+      volume,
+      2,
+      { x: 3.5, y: 3.5 },
+      { x: 3.5, y: 3.5 },
+      2,
+      { rowMm: 1, colMm: 1, sliceMm: 5 },
+      1,
+    );
+    expect(changed).toEqual(new Set([2]));
+    expect(volume.sourceSlices.get(1)).toBeUndefined();
+    expect(volume.sourceSlices.get(3)).toBeUndefined();
   });
 });

@@ -39,6 +39,7 @@ import {
   selectImageStack,
   sendRouteScope,
   updateSharedAnnotation,
+  updateSegmentationSegmentTags,
   upsertSegmentationMasks,
 } from './api';
 import { Download, Edit3, Share2, createIcons } from 'lucide';
@@ -298,7 +299,11 @@ export class App {
   private maskSyncingSegments = new Set<string>();
   private maskSyncErrors = new Set<string>();
   private maskWorkspacePromise: Promise<void> | null = null;
-  private maskBrushSize = 10;
+  private maskTagFilter = '';
+  private maskMatchedSegmentIds: Set<string> | null = null;
+  private maskTagQueryGeneration = 0;
+  private maskTagSaving = false;
+  private maskBrushRadius = 5;
   private maskOpacity = 0.38;
   private drag: DragState | null = null;
   private frameRequests = new RequestVersion();
@@ -399,6 +404,8 @@ export class App {
     const previousSegmentationSegments = this.segmentationSegments;
     const previousSegmentationSegment = this.segmentationSegment;
     const previousMaskVolumes = this.maskVolumes;
+    const previousMaskTagFilter = this.maskTagFilter;
+    const previousMaskMatchedSegmentIds = this.maskMatchedSegmentIds;
     let openedHandle: number | null = null;
     this.remoteDownloadActive = remoteDownload;
     try {
@@ -423,6 +430,9 @@ export class App {
       this.segmentationSegments = [];
       this.segmentationSegment = null;
       this.maskVolumes = new Map();
+      this.maskTagFilter = '';
+      this.maskMatchedSegmentIds = null;
+      this.maskTagQueryGeneration += 1;
       this.maskUndoEntries = [];
       this.maskRedoEntries = [];
       this.maskDirtySlices.clear();
@@ -477,6 +487,8 @@ export class App {
         this.segmentationSegments = previousSegmentationSegments;
         this.segmentationSegment = previousSegmentationSegment;
         this.maskVolumes = previousMaskVolumes;
+        this.maskTagFilter = previousMaskTagFilter;
+        this.maskMatchedSegmentIds = previousMaskMatchedSegmentIds;
         if (previousRemoteSeriesOpen) this.startAnnotationSync();
         this.frameCache.clear();
         this.pendingFrames.clear();
@@ -948,6 +960,10 @@ export class App {
     if (!this.state) return;
     if (tool === 'crosshair' && this.viewerMode !== 'mpr') return;
     if (isMaskTool(tool)) {
+      if (this.maskTagFilter && !this.visibleMaskSegments().length) {
+        this.showError(`没有 Tag 为“${this.maskTagFilter}”的 Mask`);
+        return;
+      }
       try {
         await this.ensureSegmentationWorkspace();
         await this.ensureMaskGeometry();
@@ -993,25 +1009,152 @@ export class App {
 
   private updateMaskSegmentOptions(): void {
     const select = requiredElement<HTMLSelectElement>('mask-segment-select');
-    const signature = this.segmentationSegments
-      .map((segment) => `${segment.id}:${segment.segment_number}:${segment.label}`)
+    const segments = this.visibleMaskSegments();
+    const signature = segments
+      .map((segment) => `${segment.id}:${segment.segment_number}:${segment.label}:${segment.tags.join(',')}`)
       .join('|');
     if (select.dataset.signature !== signature) {
       select.replaceChildren();
-      for (const segment of this.segmentationSegments) {
+      for (const segment of segments) {
         const option = document.createElement('option');
         option.value = segment.id;
-        option.textContent = `${segment.segment_number}. ${segment.label}`;
+        const tags = segment.tags.length ? ` [${segment.tags.join(', ')}]` : '';
+        option.textContent = `${segment.segment_number}. ${segment.label}${tags}`;
+        select.append(option);
+      }
+      if (!segments.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = this.maskTagFilter ? '无匹配 Mask' : 'Mask Segment';
         select.append(option);
       }
       select.dataset.signature = signature;
     }
     select.value = this.segmentationSegment?.id ?? '';
+    select.disabled = !segments.length;
     const label = requiredElement<HTMLElement>('mask-menu-label');
     label.textContent = this.segmentationSegment?.label || 'Mask';
     const swatch = requiredElement<HTMLElement>('mask-color-swatch');
     const color = this.segmentationSegment ? maskSegmentColor(this.segmentationSegment) : [55, 213, 216];
     swatch.style.backgroundColor = `rgb(${color[0]} ${color[1]} ${color[2]})`;
+    const tagInput = requiredElement<HTMLInputElement>('mask-tag-input');
+    if (document.activeElement !== tagInput) {
+      tagInput.value = this.segmentationSegment?.tags.join(', ') ?? '';
+    }
+    tagInput.disabled = !this.segmentationSegment || this.maskTagSaving;
+    requiredElement<HTMLButtonElement>('mask-tag-save').disabled = !this.segmentationSegment
+      || this.maskTagSaving;
+    this.updateMaskTagFilterOptions();
+  }
+
+  private visibleMaskSegments(): SegmentationSegment[] {
+    if (!this.maskTagFilter) return this.segmentationSegments;
+    if (this.maskMatchedSegmentIds) {
+      return this.segmentationSegments.filter((segment) => this.maskMatchedSegmentIds!.has(segment.id));
+    }
+    return this.segmentationSegments.filter((segment) => segment.tags.includes(this.maskTagFilter));
+  }
+
+  private updateMaskTagFilterOptions(): void {
+    const select = requiredElement<HTMLSelectElement>('mask-tag-filter');
+    const tags = [...new Set(this.segmentationSegments.flatMap((segment) => segment.tags))]
+      .sort((left, right) => left.localeCompare(right));
+    if (this.maskTagFilter && !tags.includes(this.maskTagFilter)) tags.push(this.maskTagFilter);
+    const signature = tags.join('|');
+    if (select.dataset.signature !== signature) {
+      select.replaceChildren(new Option('全部 Tag', ''));
+      for (const tag of tags) select.add(new Option(tag, tag));
+      select.dataset.signature = signature;
+    }
+    select.value = this.maskTagFilter;
+  }
+
+  private async applyMaskTagFilter(tag: string): Promise<void> {
+    this.maskTagFilter = tag.trim();
+    const generation = ++this.maskTagQueryGeneration;
+    if (!this.maskTagFilter) {
+      this.maskMatchedSegmentIds = null;
+    } else if (!this.remoteSeriesOpen) {
+      this.maskMatchedSegmentIds = new Set(
+        this.segmentationSegments
+          .filter((segment) => segment.tags.includes(this.maskTagFilter))
+          .map((segment) => segment.id),
+      );
+    } else {
+      const studyUid = this.state?.metadata.study_uid;
+      const seriesUid = this.state?.metadata.series_uid;
+      if (!studyUid || !seriesUid) return;
+      try {
+        const groups = await Promise.all(
+          this.segmentationProjects.map((project) => listSegmentationSegments(
+            studyUid,
+            seriesUid,
+            project.id,
+            this.maskTagFilter,
+          )),
+        );
+        if (generation !== this.maskTagQueryGeneration) return;
+        this.maskMatchedSegmentIds = new Set(groups.flat().map((segment) => segment.id));
+      } catch (error) {
+        if (generation !== this.maskTagQueryGeneration) return;
+        this.maskMatchedSegmentIds = new Set(
+          this.segmentationSegments
+            .filter((segment) => segment.tags.includes(this.maskTagFilter))
+            .map((segment) => segment.id),
+        );
+        this.showError(`Mask Tag 查询失败: ${errorMessage(error)}`);
+      }
+    }
+    const visible = this.visibleMaskSegments();
+    if (!visible.some((segment) => segment.id === this.segmentationSegment?.id)) {
+      this.segmentationSegment = visible[0] ?? null;
+    }
+    this.updateMaskSegmentOptions();
+    this.updateUi();
+    this.render();
+  }
+
+  private async saveMaskTags(): Promise<void> {
+    const selected = this.segmentationSegment;
+    if (!selected || this.maskTagSaving) return;
+    const values = requiredElement<HTMLInputElement>('mask-tag-input').value
+      .split(/[,，]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    const tags = [...new Set(values)];
+    if (tags.length > 16 || tags.some((tag) => [...tag].length > 40)) {
+      this.showError('一个 Mask 最多设置 16 个 Tag，单个 Tag 最多 40 个字符');
+      return;
+    }
+    this.maskTagSaving = true;
+    this.updateMaskSegmentOptions();
+    try {
+      let updated: SegmentationSegment;
+      if (this.remoteSeriesOpen) {
+        const studyUid = this.state?.metadata.study_uid;
+        const seriesUid = this.state?.metadata.series_uid;
+        if (!studyUid || !seriesUid) throw new Error('当前序列缺少 DICOM UID');
+        updated = await updateSegmentationSegmentTags(
+          studyUid,
+          seriesUid,
+          selected.project_id,
+          selected.id,
+          tags,
+        );
+      } else {
+        updated = { ...selected, tags, updated_at: new Date().toISOString() };
+      }
+      const index = this.segmentationSegments.findIndex((segment) => segment.id === updated.id);
+      if (index >= 0) this.segmentationSegments[index] = updated;
+      this.segmentationSegment = updated;
+      if (this.maskTagFilter) await this.applyMaskTagFilter(this.maskTagFilter);
+    } catch (error) {
+      this.showError(`Mask Tag 保存失败: ${errorMessage(error)}`);
+    } finally {
+      this.maskTagSaving = false;
+      this.updateMaskSegmentOptions();
+      this.render();
+    }
   }
 
   private async selectMaskSegment(segmentId: string): Promise<void> {
@@ -1137,7 +1280,7 @@ export class App {
     if (!this.state || this.viewerMode !== '2d') return [];
     const sourceSlice = this.currentMaskSourceIndex();
     const layers: MaskLayer[] = [];
-    for (const segment of this.segmentationSegments) {
+    for (const segment of this.visibleMaskSegments()) {
       const volume = this.maskVolumes.get(segment.id);
       const data = volume?.sourceSlices.get(sourceSlice);
       if (!volume || !data?.some(Boolean)) continue;
@@ -1157,7 +1300,7 @@ export class App {
     const metadata = requirePlane(this.mpr.metadata, plane);
     const sliceIndex = this.mpr.viewports[plane].sliceIndex;
     const layers: MaskLayer[] = [];
-    for (const segment of this.segmentationSegments) {
+    for (const segment of this.visibleMaskSegments()) {
       const volume = this.maskVolumes.get(segment.id);
       if (!volume) continue;
       const data = renderMaskPlane(volume, this.mpr.metadata, plane, sliceIndex);
@@ -1389,6 +1532,13 @@ export class App {
     requiredElement<HTMLSelectElement>('mask-segment-select').addEventListener('change', (event) => {
       void this.selectMaskSegment((event.currentTarget as HTMLSelectElement).value);
     });
+    requiredElement<HTMLFormElement>('mask-tag-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.saveMaskTags();
+    });
+    requiredElement<HTMLSelectElement>('mask-tag-filter').addEventListener('change', (event) => {
+      void this.applyMaskTagFilter((event.currentTarget as HTMLSelectElement).value);
+    });
     requiredElement<HTMLButtonElement>('cancel-transfer').addEventListener('click', () => {
       if (this.transferKind) void cancelTransfer(this.transferKind).catch((error) => this.showError(errorMessage(error)));
     });
@@ -1483,11 +1633,8 @@ export class App {
       button.addEventListener('click', () => void this.setTool(button.dataset.tool as ToolMode));
     }
     requiredElement<HTMLInputElement>('mask-brush-size').addEventListener('input', (event) => {
-      this.maskBrushSize = Number((event.currentTarget as HTMLInputElement).value);
-      const calibrated = this.state
-        && this.currentFrame().spacing.row_mm != null
-        && this.currentFrame().spacing.col_mm != null;
-      setText('mask-brush-size-value', `${this.maskBrushSize} ${calibrated ? 'mm' : 'px'}`);
+      this.maskBrushRadius = Number((event.currentTarget as HTMLInputElement).value);
+      setText('mask-brush-size-value', `${this.maskBrushRadius} mm`);
     });
     requiredElement<HTMLInputElement>('mask-opacity').addEventListener('input', (event) => {
       this.maskOpacity = Number((event.currentTarget as HTMLInputElement).value) / 100;
@@ -2492,7 +2639,7 @@ export class App {
         viewport.sliceIndex,
         imagePoint,
         imagePoint,
-        this.maskBrushSize,
+        this.maskBrushRadius,
         value,
         before,
       );
@@ -2605,7 +2752,7 @@ export class App {
         viewport.sliceIndex,
         drag.previous,
         imagePoint,
-        this.maskBrushSize,
+        this.maskBrushRadius,
         drag.value,
         drag.before,
       );
@@ -2801,10 +2948,11 @@ export class App {
         sourceSlice,
         imagePoint,
         imagePoint,
-        this.maskBrushSize,
+        this.maskBrushRadius,
         {
           rowMm: this.currentFrame().spacing.row_mm,
           colMm: this.currentFrame().spacing.col_mm,
+          sliceMm: this.mpr?.metadata.source_spacing_mm[2] ?? null,
         },
         value,
         before,
@@ -2891,10 +3039,11 @@ export class App {
         drag.sourceSlice,
         drag.previous,
         imagePoint,
-        this.maskBrushSize,
+        this.maskBrushRadius,
         {
           rowMm: this.currentFrame().spacing.row_mm,
           colMm: this.currentFrame().spacing.col_mm,
+          sliceMm: this.mpr?.metadata.source_spacing_mm[2] ?? null,
         },
         drag.value,
         drag.before,
@@ -3789,7 +3938,7 @@ export class App {
     const total = frameCount;
     setText(
       'mask-brush-size-value',
-      `${this.maskBrushSize} ${frame.spacing.row_mm != null && frame.spacing.col_mm != null ? 'mm' : 'px'}`,
+      `${this.maskBrushRadius} mm`,
     );
     setText('frame-counter', `${this.state.currentFrame + 1} / ${total}`);
     setText('window-readout', `WL ${this.state.windowCenter.toFixed(0)}  WW ${this.state.windowWidth.toFixed(0)}`);
@@ -4369,6 +4518,7 @@ function localSegmentationSegment(): SegmentationSegment {
     color_g: 213,
     color_b: 216,
     algorithm_type: 'manual',
+    tags: [],
     created_at: timestamp,
     updated_at: timestamp,
   };

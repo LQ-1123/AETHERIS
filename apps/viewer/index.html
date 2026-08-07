@@ -184,10 +184,30 @@
             <i data-lucide="eraser"></i>
           </button>
         </div>
-        <label class="mask-range-control" title="画笔直径">
-          <span>Ø</span>
-          <input id="mask-brush-size" data-requires-series type="range" min="1" max="64" value="10" aria-label="Mask 画笔直径（毫米）" />
-          <output id="mask-brush-size-value">10 mm</output>
+        <form id="mask-tag-form" class="mask-tag-form" title="编辑当前 Mask Tag">
+          <i data-lucide="tags" aria-hidden="true"></i>
+          <input id="mask-tag-input" data-requires-series type="text" list="mask-tag-suggestions" maxlength="671" placeholder="Tag，逗号分隔" aria-label="当前 Mask Tag，使用逗号分隔" />
+          <datalist id="mask-tag-suggestions">
+            <option value="结节"></option>
+            <option value="肿块"></option>
+            <option value="病灶"></option>
+            <option value="淋巴结"></option>
+            <option value="器官"></option>
+          </datalist>
+          <button id="mask-tag-save" class="icon-button" data-requires-series type="submit" title="保存 Mask Tag" aria-label="保存 Mask Tag">
+            <i data-lucide="save"></i>
+          </button>
+        </form>
+        <label class="mask-tag-filter-control" title="根据 Tag 查询 Mask">
+          <i data-lucide="search"></i>
+          <select id="mask-tag-filter" data-requires-series aria-label="根据 Tag 查询 Mask">
+            <option value="">全部 Tag</option>
+          </select>
+        </label>
+        <label class="mask-range-control" title="球形画笔半径">
+          <span>R</span>
+          <input id="mask-brush-size" data-requires-series type="range" min="0.5" max="32" step="0.5" value="5" aria-label="Mask 球形画笔半径（毫米）" />
+          <output id="mask-brush-size-value">5 mm</output>
         </label>
         <label class="mask-range-control" title="Mask 透明度">
           <i data-lucide="blend"></i>
