@@ -1,11 +1,11 @@
 //! Tauri IPC commands used by the viewer frontend.
 
-use crate::mpr::{MprMetadata, PixelStatistics, Plane, RoiShape};
+use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
     DownloadProgress, PatientSummary, RemoteState, RemoteUser, SeriesSummary, StudySummary,
 };
 use crate::state::{SeriesMetadata, ViewerState};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -127,29 +127,42 @@ pub async fn prepare_mpr(
 
 #[tauri::command]
 pub async fn render_mpr_slice(
-    handle: u64,
-    plane: Plane,
-    slice_index: u32,
-    window_center: f64,
-    window_width: f64,
-    voi_function: String,
+    request: RenderMprRequest,
     state: State<'_, ViewerState>,
 ) -> Result<tauri::ipc::Response, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let options = MprRenderOptions {
+            window_center: request.window_center,
+            window_width: request.window_width,
+            voi_function: &request.voi_function,
+            projection: request.projection,
+            slab_thickness_mm: request.slab_thickness_mm,
+        };
         state.render_mpr_slice(
-            handle,
-            plane,
-            slice_index,
-            window_center,
-            window_width,
-            &voi_function,
+            request.handle,
+            request.plane,
+            request.slice_index,
+            &options,
         )
     })
     .await
     .map_err(|error| format!("MPR 切面任务失败: {error}"))?
     .map(tauri::ipc::Response::new)
     .map_err(|error| error.to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderMprRequest {
+    handle: u64,
+    plane: Plane,
+    slice_index: u32,
+    window_center: f64,
+    window_width: f64,
+    voi_function: String,
+    projection: ProjectionMode,
+    slab_thickness_mm: f64,
 }
 
 #[tauri::command]

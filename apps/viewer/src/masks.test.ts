@@ -48,6 +48,14 @@ describe('mask editing and RLE', () => {
       patient_bounds_min: [0, 0, 0],
       patient_bounds_max: [4, 4, 4],
       initial_crosshair: [2, 2, 2],
+      volume_rendering: {
+        dimensions: [5, 5, 5],
+        spacing_mm: [1, 1, 1],
+        value_range: [0, 100],
+        byte_length: 250,
+        available: true,
+        unavailable_reason: null,
+      },
       planes: [{
         plane: 'axial', rows: 5, cols: 5, slice_count: 5,
         pixel_spacing_mm: 1, slice_spacing_mm: 1,

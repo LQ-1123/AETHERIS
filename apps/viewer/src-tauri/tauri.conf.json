@@ -35,7 +35,7 @@
           ]
         }
       ],
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' pacs-frame: http://pacs-frame.localhost ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' pacs-frame: http://pacs-frame.localhost pacs-volume: http://pacs-volume.localhost ipc: http://ipc.localhost"
     }
   },
   "bundle": {

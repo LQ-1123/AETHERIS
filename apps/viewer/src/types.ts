@@ -8,8 +8,10 @@ export type AnnotationKind =
   | 'point_probe';
 export type MaskTool = 'mask_brush' | 'mask_eraser';
 export type ToolMode = 'window' | 'pan' | 'crosshair' | AnnotationKind | MaskTool;
-export type ViewerMode = '2d' | 'mpr';
+export type ViewerMode = '2d' | 'mpr' | 'vr';
 export type MprPlane = 'axial' | 'coronal' | 'sagittal';
+export type MprProjectionMode = 'slice' | 'mip' | 'minip';
+export type PixelFormat = 'gray8' | 'gray16' | 'rgb8';
 
 export interface PatientStudyInfo {
   patient_name: string | null;
@@ -49,8 +51,21 @@ export interface FrameMetadata {
   rows: number;
   cols: number;
   bits_allocated: 8 | 16;
+  pixel_format: PixelFormat;
+  photometric_interpretation: string;
+  cine_rate_fps: number | null;
+  quantitative: QuantitativeInfo;
+  laterality: string | null;
+  view_position: string | null;
+  patient_orientation: string[];
   window_presets: WindowPreset[];
   spacing: SpacingInfo;
+}
+
+export interface QuantitativeInfo {
+  unit: string | null;
+  suvbw_factor: number | null;
+  suvbw_status: string | null;
 }
 
 export interface WindowPreset {
@@ -231,6 +246,16 @@ export interface MprMetadata {
   patient_bounds_max: [number, number, number];
   initial_crosshair: [number, number, number];
   planes: MprPlaneMetadata[];
+  volume_rendering: VolumeRenderingMetadata;
+}
+
+export interface VolumeRenderingMetadata {
+  dimensions: [number, number, number];
+  spacing_mm: [number, number, number];
+  value_range: [number, number];
+  byte_length: number;
+  available: boolean;
+  unavailable_reason: string | null;
 }
 
 export interface MprSourceSlice {

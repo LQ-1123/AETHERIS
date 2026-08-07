@@ -11,6 +11,7 @@ const ORIENTATION_TOLERANCE: f64 = 1e-4;
 const SPACING_ABSOLUTE_TOLERANCE_MM: f64 = 0.1;
 const SPACING_RELATIVE_TOLERANCE: f64 = 0.05;
 const MAX_VOLUME_BYTES: usize = 768 * 1024 * 1024;
+const MAX_GPU_VOLUME_BYTES: usize = 256 * 1024 * 1024;
 const SLICE_CACHE_LIMIT: usize = 192 * 1024 * 1024;
 type SliceKey = (Plane, u32);
 
@@ -38,6 +39,22 @@ pub enum Plane {
     Sagittal,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectionMode {
+    Slice,
+    Mip,
+    Minip,
+}
+
+pub struct MprRenderOptions<'a> {
+    pub window_center: f64,
+    pub window_width: f64,
+    pub voi_function: &'a str,
+    pub projection: ProjectionMode,
+    pub slab_thickness_mm: f64,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoiShape {
@@ -54,8 +71,8 @@ pub struct PixelStatistics {
     pub minimum: f64,
     pub maximum: f64,
     pub area: Option<f64>,
-    pub area_unit: Option<&'static str>,
-    pub unit: Option<&'static str>,
+    pub area_unit: Option<String>,
+    pub unit: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -72,6 +89,17 @@ pub struct MprMetadata {
     pub patient_bounds_max: [f64; 3],
     pub initial_crosshair: [f64; 3],
     pub planes: Vec<PlaneMetadata>,
+    pub volume_rendering: VolumeRenderingMetadata,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct VolumeRenderingMetadata {
+    pub dimensions: [u32; 3],
+    pub spacing_mm: [f64; 3],
+    pub value_range: [f64; 2],
+    pub byte_length: usize,
+    pub available: bool,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -113,6 +141,8 @@ pub struct Volume {
     normal: Vec3,
     values: Vec<f32>,
     pipeline: Pipeline,
+    physical_min: f64,
+    physical_max: f64,
     bounds_min: Vec3,
     bounds_max: Vec3,
     planes: [PlaneMetadata; 3],
@@ -291,6 +321,13 @@ impl Volume {
             slice_spacing,
         };
         let (bounds_min, bounds_max) = volume_bounds(&geometry);
+        let (physical_min, physical_max) = values.iter().fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(minimum, maximum), stored| {
+                let physical = pipeline.modality_lut.apply(f64::from(*stored));
+                (minimum.min(physical), maximum.max(physical))
+            },
+        );
         let output_spacing = row_spacing.min(col_spacing).min(slice_spacing);
         let planes = build_planes(bounds_min, bounds_max, output_spacing);
         let source_slices = sources
@@ -316,6 +353,8 @@ impl Volume {
             normal,
             values,
             pipeline,
+            physical_min,
+            physical_max,
             bounds_min,
             bounds_max,
             planes,
@@ -342,6 +381,50 @@ impl Volume {
                 (self.bounds_min.z + self.bounds_max.z) / 2.0,
             ],
             planes: self.planes.to_vec(),
+            volume_rendering: self.volume_rendering_metadata(),
+        }
+    }
+
+    pub fn volume_texture_bytes(&self) -> Result<Vec<u8>, String> {
+        let metadata = self.volume_rendering_metadata();
+        if !metadata.available {
+            return Err(metadata
+                .unavailable_reason
+                .unwrap_or_else(|| "当前体数据不能用于 GPU 体渲染".to_owned()));
+        }
+        let width = self.physical_max - self.physical_min;
+        let mut bytes = Vec::with_capacity(metadata.byte_length);
+        for stored in &self.values {
+            let physical = self.pipeline.modality_lut.apply(f64::from(*stored));
+            let normalized = if width > f64::EPSILON {
+                ((physical - self.physical_min) / width).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            bytes.extend_from_slice(&((normalized * 65_535.0).round() as u16).to_le_bytes());
+        }
+        Ok(bytes)
+    }
+
+    fn volume_rendering_metadata(&self) -> VolumeRenderingMetadata {
+        let byte_length = self.values.len().saturating_mul(std::mem::size_of::<u16>());
+        let reason = if byte_length > MAX_GPU_VOLUME_BYTES {
+            Some(format!(
+                "体纹理需要约 {:.0} MB，超过 256 MB GPU 上传上限",
+                byte_length as f64 / (1024.0 * 1024.0)
+            ))
+        } else if !self.physical_min.is_finite() || !self.physical_max.is_finite() {
+            Some("体数据没有有限的物理值范围".to_owned())
+        } else {
+            None
+        };
+        VolumeRenderingMetadata {
+            dimensions: [self.cols as u32, self.rows as u32, self.slices as u32],
+            spacing_mm: [self.col_spacing, self.row_spacing, self.slice_spacing],
+            value_range: [self.physical_min, self.physical_max],
+            byte_length,
+            available: reason.is_none(),
+            unavailable_reason: reason,
         }
     }
 
@@ -349,11 +432,12 @@ impl Volume {
         &self,
         plane: Plane,
         slice_index: u32,
-        window_center: f64,
-        window_width: f64,
-        voi_function: &str,
+        options: &MprRenderOptions<'_>,
     ) -> Result<Vec<u8>, String> {
-        if !window_center.is_finite() || !window_width.is_finite() || window_width <= 0.0 {
+        if !options.window_center.is_finite()
+            || !options.window_width.is_finite()
+            || options.window_width <= 0.0
+        {
             return Err("窗位必须有限且窗宽必须大于 0".to_owned());
         }
         let metadata = self
@@ -367,19 +451,35 @@ impl Volume {
                 metadata.slice_count
             ));
         }
-        let function = match voi_function.trim().to_ascii_uppercase().as_str() {
+        if !options.slab_thickness_mm.is_finite()
+            || options.slab_thickness_mm <= 0.0
+            || options.slab_thickness_mm > 200.0
+        {
+            return Err("Slab 厚度必须在 0 到 200 mm 之间".to_owned());
+        }
+        let function = match options.voi_function.trim().to_ascii_uppercase().as_str() {
             "LINEAR" => VoiFunction::Linear,
             "LINEAR_EXACT" => VoiFunction::LinearExact,
             "SIGMOID" => VoiFunction::Sigmoid,
             other => return Err(format!("未知 VOI 函数 {other}")),
         };
         let window = Window {
-            center: window_center,
-            width: window_width,
+            center: options.window_center,
+            width: options.window_width,
             explanation: Some("MPR".to_owned()),
             function,
         };
-        let samples = self.resampled_slice(plane, slice_index, metadata);
+        let samples: Arc<[f32]> = match options.projection {
+            ProjectionMode::Slice => self.resampled_slice(plane, slice_index, metadata),
+            ProjectionMode::Mip | ProjectionMode::Minip => self
+                .resample_slab(
+                    slice_index,
+                    metadata,
+                    options.projection,
+                    options.slab_thickness_mm,
+                )
+                .into(),
+        };
         Ok(samples
             .iter()
             .map(|value| {
@@ -481,6 +581,65 @@ impl Volume {
         output
     }
 
+    fn resample_slab(
+        &self,
+        slice_index: u32,
+        metadata: &PlaneMetadata,
+        projection: ProjectionMode,
+        slab_thickness_mm: f64,
+    ) -> Vec<f32> {
+        let patient_origin = add(
+            vec3(&metadata.origin).expect("平面原点有效"),
+            scale(
+                vec3(&metadata.normal).expect("平面法向有效"),
+                f64::from(slice_index) * metadata.slice_spacing_mm,
+            ),
+        );
+        let origin = self.patient_to_voxel(patient_origin);
+        let x_step = self.patient_vector_to_voxel(scale(
+            vec3(&metadata.x_axis).expect("平面 x 轴有效"),
+            metadata.pixel_spacing_mm,
+        ));
+        let y_step = self.patient_vector_to_voxel(scale(
+            vec3(&metadata.y_axis).expect("平面 y 轴有效"),
+            metadata.pixel_spacing_mm,
+        ));
+        let normal_step =
+            self.patient_vector_to_voxel(vec3(&metadata.normal).expect("平面法向有效"));
+        let offsets = slab_offsets(slab_thickness_mm, metadata.slice_spacing_mm);
+        let mut output = vec![f32::NAN; metadata.rows as usize * metadata.cols as usize];
+        let mut row_origin = origin;
+        for row in 0..metadata.rows as usize {
+            let mut voxel = row_origin;
+            for col in 0..metadata.cols as usize {
+                let mut selected: Option<(f64, f64)> = None;
+                for offset in &offsets {
+                    let sample_point = add_voxel(voxel, scale_voxel(normal_step, *offset));
+                    let Some(stored) =
+                        self.sample_voxel(sample_point.x, sample_point.y, sample_point.z)
+                    else {
+                        continue;
+                    };
+                    let physical = self.pipeline.modality_lut.apply(stored);
+                    let replace = selected.is_none_or(|(_, selected_physical)| match projection {
+                        ProjectionMode::Mip => physical > selected_physical,
+                        ProjectionMode::Minip => physical < selected_physical,
+                        ProjectionMode::Slice => false,
+                    });
+                    if replace {
+                        selected = Some((stored, physical));
+                    }
+                }
+                if let Some((stored, _)) = selected {
+                    output[row * metadata.cols as usize + col] = stored as f32;
+                }
+                voxel = add_voxel(voxel, x_step);
+            }
+            row_origin = add_voxel(row_origin, y_step);
+        }
+        output
+    }
+
     fn patient_to_voxel(&self, patient: Vec3) -> VoxelPoint {
         let relative = subtract(patient, self.origin);
         VoxelPoint {
@@ -551,7 +710,7 @@ pub fn statistics_for_region(
     end: [f64; 2],
     slope: f64,
     intercept: f64,
-    unit: Option<&'static str>,
+    unit: Option<&str>,
     pixel_area: Option<f64>,
 ) -> Result<PixelStatistics, String> {
     if cols == 0 || rows == 0 || samples.len() != cols * rows {
@@ -628,8 +787,14 @@ pub fn statistics_for_region(
         minimum,
         maximum,
         area,
-        area_unit: area.map(|_| if pixel_area.is_some() { "mm2" } else { "px2" }),
-        unit,
+        area_unit: area.map(|_| {
+            if pixel_area.is_some() {
+                "mm2".to_owned()
+            } else {
+                "px2".to_owned()
+            }
+        }),
+        unit: unit.map(str::to_owned),
     })
 }
 
@@ -823,6 +988,27 @@ fn add_voxel(left: VoxelPoint, right: VoxelPoint) -> VoxelPoint {
     }
 }
 
+fn scale_voxel(value: VoxelPoint, scalar: f64) -> VoxelPoint {
+    VoxelPoint {
+        x: value.x * scalar,
+        y: value.y * scalar,
+        z: value.z * scalar,
+    }
+}
+
+fn slab_offsets(thickness_mm: f64, sample_spacing_mm: f64) -> Vec<f64> {
+    if thickness_mm <= sample_spacing_mm {
+        return vec![0.0];
+    }
+    let radius = thickness_mm / 2.0;
+    let steps = (radius / sample_spacing_mm).ceil() as usize;
+    let mut offsets = Vec::with_capacity(steps * 2 + 1);
+    for index in 0..=steps * 2 {
+        offsets.push(-radius + index as f64 * thickness_mm / (steps * 2) as f64);
+    }
+    offsets
+}
+
 fn array(value: Vec3) -> [f64; 3] {
     [value.x, value.y, value.z]
 }
@@ -919,6 +1105,49 @@ mod tests {
         .unwrap();
         assert!(irregular.contains("间距不均匀"));
     }
+
+    #[test]
+    fn slab_mip_and_minip_select_extreme_physical_values() {
+        let volume = Volume::build(
+            0,
+            vec![
+                source(0.0, [10; 4]),
+                source(1.0, [100; 4]),
+                source(2.0, [50; 4]),
+            ],
+            || false,
+            |_, _| {},
+        )
+        .unwrap();
+        let axial = &volume.planes[0];
+        let mip = volume.resample_slab(1, axial, ProjectionMode::Mip, 2.0);
+        let minip = volume.resample_slab(1, axial, ProjectionMode::Minip, 2.0);
+        assert!(mip.iter().all(|value| (*value - 100.0).abs() < 1e-6));
+        assert!(minip.iter().all(|value| (*value - 10.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn volume_texture_is_normalized_to_unsigned_sixteen_bit() {
+        let volume = Volume::build(
+            0,
+            vec![source(0.0, [0, 50, 100, 25]), source(1.0, [100, 75, 0, 50])],
+            || false,
+            |_, _| {},
+        )
+        .unwrap();
+        let metadata = volume.metadata().volume_rendering;
+        assert!(metadata.available);
+        assert_eq!(metadata.value_range, [0.0, 100.0]);
+        let bytes = volume.volume_texture_bytes().unwrap();
+        assert_eq!(bytes.len(), 2 * 2 * 2 * 2);
+        let values = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        assert_eq!(values[0], 0);
+        assert!((i32::from(values[1]) - 32_768).abs() <= 1);
+        assert_eq!(values[2], u16::MAX);
+    }
 }
 #[test]
 fn roi_statistics_apply_modality_rescale_and_area() {
@@ -941,8 +1170,8 @@ fn roi_statistics_apply_modality_rescale_and_area() {
     assert!((stats.minimum + 100.0).abs() < 1e-9);
     assert!((stats.maximum - 200.0).abs() < 1e-9);
     assert_eq!(stats.area, Some(1.0));
-    assert_eq!(stats.area_unit, Some("mm2"));
-    assert_eq!(stats.unit, Some("HU"));
+    assert_eq!(stats.area_unit.as_deref(), Some("mm2"));
+    assert_eq!(stats.unit.as_deref(), Some("HU"));
 }
 
 #[test]

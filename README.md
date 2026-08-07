@@ -26,10 +26,10 @@ apps/viewer/    Tauri 2 客户端(可脱离服务端打开本地 DICOM)
 
 ## 试一试
 
-先创建 Viewer 账号并启动服务端，再用 DCMTK 模拟设备发送影像：
+先创建管理员账号并启动服务端，再用 DCMTK 模拟设备发送影像：
 
 ```sh
-cargo run -p pacsd -- admin --username viewer --password 'replace-with-a-strong-password'
+cargo run -p pacsd -- admin --username admin --password 'replace-with-a-strong-password'
 cargo run -p pacsd
 
 echoscu  -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112
@@ -39,6 +39,17 @@ storescu -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112 x.dcm
 `echoscu` 成功表示关联和 C-ECHO 正常；`storescu` 返回 Success 后，影像已经持久化到
 `PACS_STORAGE_ROOT` 并完成 Postgres 分层索引。重复发送相同 SOP Instance UID 不会产生
 重复实例。
+
+管理员可在服务器上为用户创建固定角色账号：
+
+```sh
+cargo run -p pacsd -- user create --username doctor01 --password 'replace-with-a-strong-password' --role radiologist
+cargo run -p pacsd -- user create --username technician01 --password 'replace-with-a-strong-password' --role technician
+cargo run -p pacsd -- user create --username viewer01 --password 'replace-with-a-strong-password' --role viewer
+```
+
+可选角色为 `admin`、`radiologist`、`technician` 和 `viewer`。命令必须在能读取
+服务端 `.env` 并连接 PACS 数据库的环境中执行；系统不提供公开注册入口。
 
 ## 开发环境
 

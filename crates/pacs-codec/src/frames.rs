@@ -16,8 +16,9 @@
 //! encapsulated pixel data 的分片和 basic offset table,那是另一件事;
 //! 而查看器拿到未压缩帧就能直接渲染,不必内置各种解码器。
 
+use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom_pixeldata::PixelDecoder;
+use dicom_pixeldata::{PhotometricInterpretation, PixelDecoder};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -33,6 +34,8 @@ pub enum FrameError {
         // 装箱:dicom-pixeldata 的错误类型很大,不装箱会让每个 Result 都变胖
         source: Box<dicom_pixeldata::Error>,
     },
+    #[error("调色板彩色影像无效: {0}")]
+    InvalidPalette(String),
 }
 
 /// 一个实例里可供提取的帧。
@@ -43,6 +46,7 @@ pub struct Frames<'a> {
     // 借用源对象:未压缩语法下 `frame_data()` 直接切原始缓冲,不额外复制。
     // 因此 `Frames` 不能比它解码的那个对象活得更久。
     decoded: dicom_pixeldata::DecodedPixelData<'a>,
+    source: &'a FileDicomObject<InMemDicomObject>,
 }
 
 impl<'a> Frames<'a> {
@@ -56,7 +60,10 @@ impl<'a> Frames<'a> {
             .map_err(|source| FrameError::Decode {
                 source: Box::new(source),
             })?;
-        Ok(Self { decoded })
+        Ok(Self {
+            decoded,
+            source: object,
+        })
     }
 
     pub fn total(&self) -> u32 {
@@ -65,6 +72,34 @@ impl<'a> Frames<'a> {
 
     /// 取第 `number` 帧(**1 基**)的未压缩字节。
     pub fn frame(&self, number: u32) -> Result<&[u8], FrameError> {
+        self.validate_number(number)?;
+        // 这里是唯一的基准转换点。放在一处,别的地方就不必再关心基准。
+        self.decoded
+            .frame_data(number - 1)
+            .map_err(|source| FrameError::Decode {
+                source: Box::new(source),
+            })
+    }
+
+    /// 将一帧彩色影像标准化为逐像素交错的 RGB8。
+    ///
+    /// RGB 的 planar configuration、YBR 到 RGB 的颜色空间转换和压缩传输语法
+    /// 由 dicom-pixeldata 处理；Palette Color 需要使用源对象中的三条 LUT，在这里
+    /// 单独展开。调用方因此只需要处理一种稳定的彩色帧契约。
+    pub fn rgb8_frame(&self, number: u32) -> Result<Vec<u8>, FrameError> {
+        self.validate_number(number)?;
+        if self.decoded.photometric_interpretation() == &PhotometricInterpretation::PaletteColor {
+            return self.palette_rgb8_frame(number);
+        }
+        self.decoded
+            .to_dynamic_image(number - 1)
+            .map(|image| image.to_rgb8().into_raw())
+            .map_err(|source| FrameError::Decode {
+                source: Box::new(source),
+            })
+    }
+
+    fn validate_number(&self, number: u32) -> Result<(), FrameError> {
         if number == 0 {
             return Err(FrameError::ZeroFrameNumber);
         }
@@ -75,13 +110,130 @@ impl<'a> Frames<'a> {
                 total,
             });
         }
-        // 这里是唯一的基准转换点。放在一处,别的地方就不必再关心基准。
-        self.decoded
-            .frame_data(number - 1)
-            .map_err(|source| FrameError::Decode {
-                source: Box::new(source),
-            })
+        Ok(())
     }
+
+    fn palette_rgb8_frame(&self, number: u32) -> Result<Vec<u8>, FrameError> {
+        let descriptor = self.palette_descriptor()?;
+        let red = self.palette_channel(
+            tags::RED_PALETTE_COLOR_LOOKUP_TABLE_DATA,
+            descriptor.entries,
+            descriptor.bits,
+        )?;
+        let green = self.palette_channel(
+            tags::GREEN_PALETTE_COLOR_LOOKUP_TABLE_DATA,
+            descriptor.entries,
+            descriptor.bits,
+        )?;
+        let blue = self.palette_channel(
+            tags::BLUE_PALETTE_COLOR_LOOKUP_TABLE_DATA,
+            descriptor.entries,
+            descriptor.bits,
+        )?;
+        let bytes = self.frame(number)?;
+        let indices = match self.decoded.bits_allocated() {
+            8 => bytes
+                .iter()
+                .map(|value| u16::from(*value))
+                .collect::<Vec<_>>(),
+            16 => bytes
+                .chunks_exact(2)
+                .map(|chunk| u16::from_ne_bytes([chunk[0], chunk[1]]))
+                .collect(),
+            bits => {
+                return Err(FrameError::InvalidPalette(format!(
+                    "索引 BitsAllocated={bits}，只支持 8 或 16"
+                )));
+            }
+        };
+        let mut output = Vec::with_capacity(indices.len() * 3);
+        for stored in indices {
+            let offset = i32::from(stored) - descriptor.first_mapped;
+            let index = offset.clamp(0, descriptor.entries.saturating_sub(1) as i32) as usize;
+            output.extend_from_slice(&[red[index], green[index], blue[index]]);
+        }
+        Ok(output)
+    }
+
+    fn palette_descriptor(&self) -> Result<PaletteDescriptor, FrameError> {
+        let values = self
+            .source
+            .get(tags::RED_PALETTE_COLOR_LOOKUP_TABLE_DESCRIPTOR)
+            .ok_or_else(|| FrameError::InvalidPalette("缺少红色 LUT Descriptor".to_owned()))?
+            .to_multi_int::<i32>()
+            .map_err(|error| FrameError::InvalidPalette(error.to_string()))?;
+        if values.len() != 3 {
+            return Err(FrameError::InvalidPalette(
+                "LUT Descriptor 必须包含 3 个值".to_owned(),
+            ));
+        }
+        let entries = if values[0] == 0 {
+            65_536
+        } else {
+            usize::try_from(values[0])
+                .map_err(|_| FrameError::InvalidPalette("LUT 条目数不能为负数".to_owned()))?
+        };
+        let bits = u16::try_from(values[2])
+            .map_err(|_| FrameError::InvalidPalette("LUT 位宽无效".to_owned()))?;
+        if entries == 0 || !matches!(bits, 8 | 16) {
+            return Err(FrameError::InvalidPalette(format!(
+                "不支持的 LUT: {entries} 条、{bits} 位"
+            )));
+        }
+        Ok(PaletteDescriptor {
+            entries,
+            first_mapped: values[1],
+            bits,
+        })
+    }
+
+    fn palette_channel(
+        &self,
+        tag: dicom::core::Tag,
+        entries: usize,
+        bits: u16,
+    ) -> Result<Vec<u8>, FrameError> {
+        let bytes = self
+            .source
+            .get(tag)
+            .ok_or_else(|| FrameError::InvalidPalette(format!("缺少 {tag} LUT Data")))?
+            .to_bytes()
+            .map_err(|error| FrameError::InvalidPalette(error.to_string()))?;
+        if bits == 16 {
+            if bytes.len() < entries * 2 {
+                return Err(FrameError::InvalidPalette(format!(
+                    "{tag} 只有 {} 字节，预期至少 {}",
+                    bytes.len(),
+                    entries * 2
+                )));
+            }
+            return Ok(bytes
+                .chunks_exact(2)
+                .take(entries)
+                .map(|chunk| (u16::from_ne_bytes([chunk[0], chunk[1]]) >> 8) as u8)
+                .collect());
+        }
+        if bytes.len() >= entries * 2 {
+            return Ok(bytes
+                .chunks_exact(2)
+                .take(entries)
+                .map(|word| word[0])
+                .collect());
+        }
+        if bytes.len() < entries {
+            return Err(FrameError::InvalidPalette(format!(
+                "{tag} 只有 {} 字节，预期至少 {entries}",
+                bytes.len()
+            )));
+        }
+        Ok(bytes.iter().copied().take(entries).collect())
+    }
+}
+
+struct PaletteDescriptor {
+    entries: usize,
+    first_mapped: i32,
+    bits: u16,
 }
 
 #[cfg(test)]

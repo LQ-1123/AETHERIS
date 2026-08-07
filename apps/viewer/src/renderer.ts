@@ -53,18 +53,30 @@ export class Renderer {
   }
 
   setFrame(buffer: ArrayBuffer, frame: FrameMetadata): void {
-    const bytesPerPixel = frame.bits_allocated / 8;
+    const bytesPerPixel = frame.pixel_format === 'rgb8' ? 3 : frame.bits_allocated / 8;
     const expected = frame.rows * frame.cols * bytesPerPixel;
     if (buffer.byteLength !== expected) {
       throw new Error(`帧数据长度异常: 收到 ${buffer.byteLength} 字节，预期 ${expected} 字节`);
     }
-    this.frameData = frame.bits_allocated === 8 ? new Uint8Array(buffer) : new Uint16Array(buffer);
+    this.frameData = frame.pixel_format === 'gray16' ? new Uint16Array(buffer) : new Uint8Array(buffer);
     this.frame = frame;
-    this.prepareSourceCanvas(frame);
+    const imageData = this.prepareSourceCanvas(frame);
+    if (frame.pixel_format === 'rgb8') {
+      const pixels = this.frameData as Uint8Array;
+      for (let index = 0; index < frame.rows * frame.cols; index += 1) {
+        const source = index * 3;
+        const target = index * 4;
+        imageData.data[target] = pixels[source];
+        imageData.data[target + 1] = pixels[source + 1];
+        imageData.data[target + 2] = pixels[source + 2];
+        imageData.data[target + 3] = 255;
+      }
+      this.sourceContext.putImageData(imageData, 0, 0);
+    }
   }
 
   applyLut(lut: Uint8Array): void {
-    if (!this.frameData || !this.frame) return;
+    if (!this.frameData || !this.frame || this.frame.pixel_format === 'rgb8') return;
     const imageData = this.prepareSourceCanvas(this.frame);
     const output = imageData.data;
     for (let index = 0; index < this.frameData.length; index += 1) {

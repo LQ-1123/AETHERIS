@@ -408,7 +408,7 @@ button svg {
 }
 
 .view-mode-control button {
-  width: 39px;
+  width: 40px;
   color: #b9c0c3;
   font-size: 10px;
   font-weight: 700;
@@ -440,6 +440,80 @@ button svg {
   font-size: 10px;
 }
 
+.mpr-projection-control,
+.mpr-slab-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mpr-projection-control,
+.vr-controls,
+.preset-control,
+#mpr-source-control {
+  flex: 0 0 auto;
+}
+
+.mpr-projection-control .segmented button {
+  width: auto;
+  min-width: 42px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+
+.mpr-slab-control input {
+  width: 72px;
+  accent-color: #58b8c7;
+}
+
+.mpr-slab-control output {
+  width: 38px;
+  color: #aeb4b8;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.vr-controls,
+.vr-range-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.vr-controls select {
+  height: 31px;
+  padding: 0 22px 0 7px;
+  border: 1px solid #42474a;
+  border-radius: 4px;
+  background: #292d30;
+  color: #e5e8ea;
+  font-size: 10px;
+}
+
+#vr-preset {
+  width: 78px;
+}
+
+#vr-quality {
+  width: 52px;
+}
+
+.vr-range-control input {
+  width: 62px;
+  accent-color: #58b8c7;
+}
+
+.vr-range-control output {
+  width: 42px;
+  color: #aeb4b8;
+  font-variant-numeric: tabular-nums;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
 .command-button {
   min-height: 32px;
   gap: 7px;
@@ -457,6 +531,7 @@ button svg {
 
 .segmented {
   display: flex;
+  flex: 0 0 auto;
 }
 
 .segmented button {
@@ -973,6 +1048,26 @@ button svg {
   display: none;
 }
 
+#viewport.vr-active > #image-canvas,
+#viewport.vr-active > #overlay-canvas {
+  display: none;
+}
+
+#vr-view {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  background: #080b0d;
+}
+
+#vr-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
 #overlay-canvas {
   touch-action: none;
 }
@@ -1320,7 +1415,7 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 #series-navigator {
   grid-row: 4;
   display: grid;
-  grid-template-columns: 28px minmax(140px, 420px) 28px 52px;
+  grid-template-columns: 28px 28px minmax(140px, 420px) 28px 52px 66px 62px;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -1339,9 +1434,37 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   display: none;
 }
 
+#app-shell.vr-mode #series-navigator {
+  display: none;
+}
+
 #series-navigator .icon-button {
   width: 26px;
   height: 26px;
+}
+
+#cine-toggle.active {
+  border-color: #58b8c7;
+  background: #1c565e;
+  color: #a4eef5;
+}
+
+#cine-speed {
+  width: 66px;
+  height: 26px;
+  padding: 0 20px 0 7px;
+  border: 1px solid #42474a;
+  border-radius: 4px;
+  background: #292d30;
+  color: #e5e8ea;
+  font-size: 11px;
+}
+
+#cine-fps {
+  color: #9ba3a7;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 #frame-slider {
@@ -2109,6 +2232,13 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   #mpr-source-control {
     width: 112px;
   }
+
+  .mpr-slab-control input,
+  .mpr-slab-control output,
+  .vr-range-control input,
+  .vr-range-control output {
+    display: none;
+  }
 }
 
 @media (max-width: 980px) {
@@ -2136,6 +2266,18 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 }
 
 @media (max-width: 720px) {
+  #series-navigator {
+    grid-template-columns: 28px 28px minmax(80px, 1fr) 28px 45px 58px;
+  }
+
+  #cine-fps {
+    display: none;
+  }
+
+  #cine-speed {
+    width: 58px;
+  }
+
   #mpr-grid {
     grid-template-columns: minmax(0, 3fr) minmax(150px, 2fr);
   }

@@ -1,11 +1,12 @@
 //! Local DICOM series state for the desktop viewer.
 
 use crate::mpr::{
-    MprMetadata, PixelStatistics, Plane, RoiShape, SourceSlice, Volume, decode_stored_values,
-    statistics_for_region,
+    MprMetadata, MprRenderOptions, PixelStatistics, Plane, RoiShape, SourceSlice, Volume,
+    decode_stored_values, statistics_for_region,
 };
+use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use dicom::core::Tag;
-use dicom::dictionary_std::tags;
+use dicom::dictionary_std::{tags, uids};
 use dicom::object::{DefaultDicomObject, open_file};
 use pacs_codec::{Frames, GrayLut, Photometric, Pipeline, VoiFunction};
 use pacs_core::geometry::{SliceInput, Vec3, group_slices_by_orientation, sort_slices};
@@ -80,6 +81,8 @@ struct LoadedFrame {
     rows: u32,
     cols: u32,
     bits_allocated: u16,
+    pixel_format: PixelFormat,
+    quantitative: QuantitativeInfo,
     position: Option<[f64; 3]>,
     orientation: Option<[f64; 6]>,
     row_spacing_mm: Option<f64>,
@@ -93,7 +96,14 @@ struct ParsedFile {
     rows: u32,
     cols: u32,
     bits_allocated: u16,
+    pixel_format: PixelFormat,
+    photometric_interpretation: String,
     frame_count: u32,
+    cine_rate_fps: Option<f64>,
+    quantitative: QuantitativeInfo,
+    laterality: Option<String>,
+    view_position: Option<String>,
+    patient_orientation: Vec<String>,
     patient_name: Option<String>,
     patient_id: Option<String>,
     study_date: Option<String>,
@@ -178,8 +188,44 @@ pub struct FrameMetadata {
     pub rows: u32,
     pub cols: u32,
     pub bits_allocated: u16,
+    pub pixel_format: PixelFormat,
+    pub photometric_interpretation: String,
+    pub cine_rate_fps: Option<f64>,
+    pub quantitative: QuantitativeInfo,
+    pub laterality: Option<String>,
+    pub view_position: Option<String>,
+    pub patient_orientation: Vec<String>,
     pub window_presets: Vec<WindowPreset>,
     pub spacing: SpacingInfo,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PixelFormat {
+    Gray8,
+    Gray16,
+    Rgb8,
+}
+
+impl PixelFormat {
+    fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Gray8 => 1,
+            Self::Gray16 => 2,
+            Self::Rgb8 => 3,
+        }
+    }
+
+    fn is_grayscale(self) -> bool {
+        !matches!(self, Self::Rgb8)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct QuantitativeInfo {
+    pub unit: Option<String>,
+    pub suvbw_factor: Option<f64>,
+    pub suvbw_status: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -351,7 +397,7 @@ impl ViewerState {
                         frame.source_frame,
                         frame.rows,
                         frame.cols,
-                        frame.bits_allocated,
+                        frame.pixel_format,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -363,15 +409,21 @@ impl ViewerState {
         pacs_core::normalize_file_text(&mut object);
         let frames = Frames::decode(&object).map_err(|e| ViewerError::Dicom(e.to_string()))?;
         let mut decoded = Vec::with_capacity(neighbours.len());
-        for (logical, source, rows, cols, bits_allocated) in neighbours {
-            let bytes = frames
-                .frame(source)
-                .map_err(|e| ViewerError::Dicom(e.to_string()))?
-                .to_vec();
-            let expected = rows as usize * cols as usize * usize::from(bits_allocated / 8);
+        for (logical, source, rows, cols, pixel_format) in neighbours {
+            let bytes = if pixel_format.is_grayscale() {
+                frames
+                    .frame(source)
+                    .map_err(|e| ViewerError::Dicom(e.to_string()))?
+                    .to_vec()
+            } else {
+                frames
+                    .rgb8_frame(source)
+                    .map_err(|e| ViewerError::Dicom(e.to_string()))?
+            };
+            let expected = rows as usize * cols as usize * pixel_format.bytes_per_pixel();
             if bytes.len() != expected {
                 return Err(ViewerError::Unsupported(format!(
-                    "解码帧大小为 {} 字节，预期 {expected} 字节；当前仅支持单通道整数灰度",
+                    "解码帧大小为 {} 字节，预期 {expected} 字节",
                     bytes.len()
                 )));
             }
@@ -423,6 +475,11 @@ impl ViewerState {
                 total: image_stack.frames.len() as u32,
             },
         )?;
+        if !frame.pixel_format.is_grayscale() {
+            return Err(ViewerError::Unsupported(
+                "彩色影像不使用灰度窗宽窗位 LUT".to_owned(),
+            ));
+        }
         let function = match voi_function.trim().to_ascii_uppercase().as_str() {
             "LINEAR" => VoiFunction::Linear,
             "LINEAR_EXACT" => VoiFunction::LinearExact,
@@ -471,9 +528,34 @@ impl ViewerState {
                 .map(|(row, col)| row * col);
             (frame, pixel_area)
         };
+        if !frame.pixel_format.is_grayscale() {
+            return Err(ViewerError::Unsupported(
+                "彩色影像暂不提供 ROI 像素统计".to_owned(),
+            ));
+        }
         let bytes = self.get_frame_bytes(handle, stack_index, logical_frame)?;
         let mut stored = Vec::with_capacity(frame.rows as usize * frame.cols as usize);
         decode_stored_values(&bytes, frame.bits_allocated, &frame.pipeline, &mut stored);
+        let (slope, intercept, unit) = frame.quantitative.suvbw_factor.map_or_else(
+            || {
+                (
+                    frame.pipeline.modality_lut.slope,
+                    frame.pipeline.modality_lut.intercept,
+                    frame
+                        .quantitative
+                        .unit
+                        .as_deref()
+                        .or(frame.pipeline.modality_lut.unit),
+                )
+            },
+            |factor| {
+                (
+                    frame.pipeline.modality_lut.slope * factor,
+                    frame.pipeline.modality_lut.intercept * factor,
+                    Some("SUVbw"),
+                )
+            },
+        );
         statistics_for_region(
             &stored,
             frame.cols as usize,
@@ -481,9 +563,9 @@ impl ViewerState {
             shape,
             start,
             end,
-            frame.pipeline.modality_lut.slope,
-            frame.pipeline.modality_lut.intercept,
-            frame.pipeline.modality_lut.unit,
+            slope,
+            intercept,
+            unit,
             pixel_area,
         )
         .map_err(ViewerError::Unsupported)
@@ -537,6 +619,14 @@ impl ViewerState {
         if frames.len() < 2 {
             return Err(ViewerError::InvalidSeries(
                 "MPR 至少需要两张属于同一空间堆栈的切片".to_owned(),
+            ));
+        }
+        if frames
+            .iter()
+            .any(|frame| !frame.pixel_format.is_grayscale())
+        {
+            return Err(ViewerError::Unsupported(
+                "彩色影像不能构建灰度 MPR 体数据".to_owned(),
             ));
         }
 
@@ -594,9 +684,7 @@ impl ViewerState {
         handle: SeriesHandle,
         plane: Plane,
         slice_index: u32,
-        window_center: f64,
-        window_width: f64,
-        voi_function: &str,
+        options: &MprRenderOptions<'_>,
     ) -> Result<Vec<u8>, ViewerError> {
         let volume = {
             let inner = self.lock();
@@ -611,13 +699,7 @@ impl ViewerState {
             )
         };
         volume
-            .render_slice(
-                plane,
-                slice_index,
-                window_center,
-                window_width,
-                voi_function,
-            )
+            .render_slice(plane, slice_index, options)
             .map_err(ViewerError::Unsupported)
     }
 
@@ -629,6 +711,24 @@ impl ViewerState {
             .ok_or(ViewerError::UnknownHandle(handle))?;
         series.mpr = None;
         Ok(())
+    }
+
+    pub fn get_volume_texture_bytes(&self, handle: SeriesHandle) -> Result<Vec<u8>, ViewerError> {
+        let volume = {
+            let inner = self.lock();
+            Arc::clone(
+                inner
+                    .series
+                    .get(&handle)
+                    .ok_or(ViewerError::UnknownHandle(handle))?
+                    .mpr
+                    .as_ref()
+                    .ok_or_else(|| ViewerError::Unsupported("尚未构建三维体数据".to_owned()))?,
+            )
+        };
+        volume
+            .volume_texture_bytes()
+            .map_err(ViewerError::Unsupported)
     }
 
     pub fn cancel_mpr_build(&self) {
@@ -750,6 +850,7 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
                     reference.rows == file.rows
                         && reference.cols == file.cols
                         && reference.bits_allocated == file.bits_allocated
+                        && reference.pixel_format == file.pixel_format
                 }) {
                     group.push(source_index);
                 } else {
@@ -846,6 +947,13 @@ fn build_loaded_image_stack(
                 rows: file.rows,
                 cols: file.cols,
                 bits_allocated: file.bits_allocated,
+                pixel_format: file.pixel_format,
+                photometric_interpretation: file.photometric_interpretation.clone(),
+                cine_rate_fps: file.cine_rate_fps,
+                quantitative: file.quantitative.clone(),
+                laterality: file.laterality.clone(),
+                view_position: file.view_position.clone(),
+                patient_orientation: file.patient_orientation.clone(),
                 window_presets: window_presets(&file.pipeline),
                 spacing: spacing_info(file.spacing),
             });
@@ -858,6 +966,8 @@ fn build_loaded_image_stack(
                 rows: file.rows,
                 cols: file.cols,
                 bits_allocated: file.bits_allocated,
+                pixel_format: file.pixel_format,
+                quantitative: file.quantitative.clone(),
                 position: fixed_array::<3>(file.position.as_deref()),
                 orientation: fixed_array::<6>(file.orientation.as_deref()),
                 row_spacing_mm: physical_spacing(file.spacing).map(|spacing| spacing.0),
@@ -912,31 +1022,48 @@ fn parse_file(path: PathBuf) -> Result<ParsedFile, ViewerError> {
         .map_err(|error| ViewerError::Dicom(format!("{}: {error}", path.display())))?;
     pacs_core::normalize_file_text(&mut object);
     let pipeline = Pipeline::from_object(&object);
-    if pipeline.photometric == Photometric::NotMonochrome {
-        return Err(ViewerError::Unsupported(format!(
-            "{} 不是 MONOCHROME1/MONOCHROME2 灰度影像",
-            path.display()
-        )));
-    }
+    let photometric_interpretation = text(&object, tags::PHOTOMETRIC_INTERPRETATION)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
     let samples_per_pixel = integer_u16(&object, tags::SAMPLES_PER_PIXEL).unwrap_or(1);
-    if samples_per_pixel != 1 {
-        return Err(ViewerError::Unsupported(format!(
-            "{} 的 SamplesPerPixel={samples_per_pixel}，当前仅支持单通道灰度",
-            path.display()
-        )));
-    }
     let rows = required_u32(&object, tags::ROWS, "Rows", &path)?;
     let cols = required_u32(&object, tags::COLUMNS, "Columns", &path)?;
     let bits_allocated = integer_u16(&object, tags::BITS_ALLOCATED).unwrap_or(16);
     if !matches!(bits_allocated, 8 | 16) {
         return Err(ViewerError::Unsupported(format!(
-            "{} 的 BitsAllocated={bits_allocated}，当前仅支持 8 或 16 位整数灰度",
+            "{} 的 BitsAllocated={bits_allocated}，当前仅支持 8 或 16 位像素",
+            path.display()
+        )));
+    }
+    let pixel_format = match photometric_interpretation.as_str() {
+        "MONOCHROME1" | "MONOCHROME2" if samples_per_pixel == 1 => {
+            if bits_allocated == 8 {
+                PixelFormat::Gray8
+            } else {
+                PixelFormat::Gray16
+            }
+        }
+        "PALETTE COLOR" if samples_per_pixel == 1 => PixelFormat::Rgb8,
+        "RGB" if samples_per_pixel == 3 => PixelFormat::Rgb8,
+        value if value.starts_with("YBR_") && samples_per_pixel == 3 => PixelFormat::Rgb8,
+        value => {
+            return Err(ViewerError::Unsupported(format!(
+                "{} 的 PhotometricInterpretation={value:?}、SamplesPerPixel={samples_per_pixel} 不受支持",
+                path.display()
+            )));
+        }
+    };
+    if pixel_format.is_grayscale() && pipeline.photometric == Photometric::NotMonochrome {
+        return Err(ViewerError::Unsupported(format!(
+            "{} 的灰度光度解释无法解析",
             path.display()
         )));
     }
     let frame_count = integer_u32(&object, tags::NUMBER_OF_FRAMES)
         .unwrap_or(1)
         .max(1);
+    let modality = text(&object, tags::MODALITY);
 
     Ok(ParsedFile {
         path,
@@ -945,12 +1072,20 @@ fn parse_file(path: PathBuf) -> Result<ParsedFile, ViewerError> {
         rows,
         cols,
         bits_allocated,
+        pixel_format,
+        photometric_interpretation,
         frame_count,
+        cine_rate_fps: cine_rate_fps(&object, frame_count, modality.as_deref()),
+        quantitative: quantitative_info(&object),
+        laterality: text(&object, tags::IMAGE_LATERALITY)
+            .or_else(|| text(&object, tags::LATERALITY)),
+        view_position: text(&object, tags::VIEW_POSITION),
+        patient_orientation: multi_text(&object, tags::PATIENT_ORIENTATION),
         patient_name: text(&object, tags::PATIENT_NAME),
         patient_id: text(&object, tags::PATIENT_ID),
         study_date: text(&object, tags::STUDY_DATE),
         accession_number: text(&object, tags::ACCESSION_NUMBER),
-        modality: text(&object, tags::MODALITY),
+        modality,
         study_description: text(&object, tags::STUDY_DESCRIPTION),
         series_description: text(&object, tags::SERIES_DESCRIPTION),
         study_uid: text(&object, tags::STUDY_INSTANCE_UID),
@@ -1060,6 +1195,208 @@ fn text(object: &DefaultDicomObject, tag: Tag) -> Option<String> {
     pacs_core::utf8_text(object, tag)
 }
 
+fn multi_text(object: &DefaultDicomObject, tag: Tag) -> Vec<String> {
+    object
+        .get(tag)
+        .and_then(|element| element.to_multi_str().ok())
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn float(object: &DefaultDicomObject, tag: Tag) -> Option<f64> {
+    object
+        .get(tag)?
+        .to_float64()
+        .ok()
+        .filter(|value| value.is_finite())
+}
+
+fn cine_rate_fps(
+    object: &DefaultDicomObject,
+    frame_count: u32,
+    modality: Option<&str>,
+) -> Option<f64> {
+    let explicit = float(object, tags::RECOMMENDED_DISPLAY_FRAME_RATE_IN_FLOAT)
+        .or_else(|| float(object, tags::RECOMMENDED_DISPLAY_FRAME_RATE))
+        .or_else(|| float(object, tags::CINE_RATE))
+        .filter(|fps| *fps > 0.0);
+    if explicit.is_some() {
+        return explicit;
+    }
+    if let Some(frame_time_ms) = float(object, tags::FRAME_TIME).filter(|value| *value > 0.0) {
+        return Some(1000.0 / frame_time_ms);
+    }
+    (frame_count > 1 && modality.is_some_and(|value| value.eq_ignore_ascii_case("US")))
+        .then_some(15.0)
+}
+
+fn quantitative_info(object: &DefaultDicomObject) -> QuantitativeInfo {
+    let unit = text(object, tags::UNITS)
+        .map(|value| value.trim().to_ascii_uppercase())
+        .or_else(|| {
+            Pipeline::from_object(object)
+                .modality_lut
+                .unit
+                .map(str::to_owned)
+        });
+    let sop_class = text(object, tags::SOP_CLASS_UID).unwrap_or_default();
+    let is_pet = matches!(
+        sop_class.as_str(),
+        uids::POSITRON_EMISSION_TOMOGRAPHY_IMAGE_STORAGE
+            | uids::ENHANCED_PET_IMAGE_STORAGE
+            | uids::LEGACY_CONVERTED_ENHANCED_PET_IMAGE_STORAGE
+    );
+    if !is_pet {
+        return QuantitativeInfo {
+            unit,
+            suvbw_factor: None,
+            suvbw_status: None,
+        };
+    }
+
+    let unavailable = |reason: String| QuantitativeInfo {
+        unit: unit.clone(),
+        suvbw_factor: None,
+        suvbw_status: Some(reason),
+    };
+    if unit.as_deref() != Some("BQML") {
+        return unavailable("SUVbw 不可用：PET Units 必须为 BQML".to_owned());
+    }
+    let Some(weight_kg) = float(object, tags::PATIENT_WEIGHT).filter(|value| *value > 0.0) else {
+        return unavailable("SUVbw 不可用：缺少有效 PatientWeight".to_owned());
+    };
+    let Some(item) = object
+        .get(tags::RADIOPHARMACEUTICAL_INFORMATION_SEQUENCE)
+        .and_then(|element| element.items())
+        .and_then(|items| items.first())
+    else {
+        return unavailable("SUVbw 不可用：缺少 RadiopharmaceuticalInformationSequence".to_owned());
+    };
+    let item_float = |tag| {
+        item.get(tag)
+            .and_then(|element| element.to_float64().ok())
+            .filter(|value| value.is_finite() && *value > 0.0)
+    };
+    let Some(total_dose_bq) = item_float(tags::RADIONUCLIDE_TOTAL_DOSE) else {
+        return unavailable("SUVbw 不可用：缺少有效 RadionuclideTotalDose".to_owned());
+    };
+    let correction = text(object, tags::DECAY_CORRECTION)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    let corrected_dose_bq = if correction == "ADMIN" {
+        total_dose_bq
+    } else if correction == "START" {
+        let Some(half_life_seconds) = item_float(tags::RADIONUCLIDE_HALF_LIFE) else {
+            return unavailable("SUVbw 不可用：缺少有效 RadionuclideHalfLife".to_owned());
+        };
+        let Some(acquisition) = acquisition_datetime(object) else {
+            return unavailable("SUVbw 不可用：缺少完整采集日期时间".to_owned());
+        };
+        let Some(injection) = injection_datetime(item, acquisition) else {
+            return unavailable("SUVbw 不可用：缺少完整注射日期时间".to_owned());
+        };
+        let elapsed_seconds = (acquisition - injection).num_milliseconds() as f64 / 1000.0;
+        if elapsed_seconds < 0.0 {
+            return unavailable("SUVbw 不可用：注射时间晚于采集时间".to_owned());
+        }
+        total_dose_bq * 0.5_f64.powf(elapsed_seconds / half_life_seconds)
+    } else {
+        return unavailable("SUVbw 不可用：DecayCorrection 必须为 START 或 ADMIN".to_owned());
+    };
+    if !corrected_dose_bq.is_finite() || corrected_dose_bq <= 0.0 {
+        return unavailable("SUVbw 不可用：衰变校正后的注射剂量无效".to_owned());
+    }
+    QuantitativeInfo {
+        unit,
+        suvbw_factor: Some(weight_kg * 1000.0 / corrected_dose_bq),
+        suvbw_status: Some("SUVbw 可用".to_owned()),
+    }
+}
+
+fn acquisition_datetime(object: &DefaultDicomObject) -> Option<NaiveDateTime> {
+    text(object, tags::ACQUISITION_DATE_TIME)
+        .and_then(|value| parse_dicom_datetime(&value))
+        .or_else(|| {
+            let date =
+                text(object, tags::ACQUISITION_DATE).or_else(|| text(object, tags::SERIES_DATE))?;
+            let time =
+                text(object, tags::ACQUISITION_TIME).or_else(|| text(object, tags::SERIES_TIME))?;
+            combine_dicom_date_time(&date, &time)
+        })
+}
+
+fn injection_datetime(
+    item: &dicom::object::InMemDicomObject,
+    acquisition: NaiveDateTime,
+) -> Option<NaiveDateTime> {
+    let value = item
+        .get(tags::RADIOPHARMACEUTICAL_START_DATE_TIME)
+        .and_then(|element| element.to_str().ok())
+        .map(|value| value.into_owned());
+    if let Some(datetime) = value.and_then(|value| parse_dicom_datetime(&value)) {
+        return Some(datetime);
+    }
+    let time = item
+        .get(tags::RADIOPHARMACEUTICAL_START_TIME)?
+        .to_str()
+        .ok()?;
+    let time = parse_dicom_time(&time)?;
+    let candidate = acquisition.date().and_time(time);
+    Some(if candidate > acquisition {
+        candidate - Duration::days(1)
+    } else {
+        candidate
+    })
+}
+
+fn parse_dicom_datetime(raw: &str) -> Option<NaiveDateTime> {
+    let normalized = raw.trim().trim_end_matches('\0');
+    let main = normalized.split(['+', '-']).next().unwrap_or(normalized);
+    if main.len() < 14 {
+        return None;
+    }
+    let date = NaiveDate::parse_from_str(&main[..8], "%Y%m%d").ok()?;
+    let time = parse_dicom_time(&main[8..])?;
+    Some(date.and_time(time))
+}
+
+fn combine_dicom_date_time(date: &str, time: &str) -> Option<NaiveDateTime> {
+    let date = NaiveDate::parse_from_str(date.trim(), "%Y%m%d").ok()?;
+    Some(date.and_time(parse_dicom_time(time)?))
+}
+
+fn parse_dicom_time(raw: &str) -> Option<NaiveTime> {
+    let normalized = raw.trim().trim_end_matches('\0');
+    let (whole, fraction) = normalized.split_once('.').unwrap_or((normalized, ""));
+    if whole.len() < 6 {
+        return None;
+    }
+    let hour = whole[..2].parse().ok()?;
+    let minute = whole[2..4].parse().ok()?;
+    let second = whole[4..6].parse().ok()?;
+    let mut fractional = fraction
+        .chars()
+        .take(9)
+        .filter(|character| character.is_ascii_digit())
+        .collect::<String>();
+    while fractional.len() < 9 {
+        fractional.push('0');
+    }
+    let nanos = if fractional.is_empty() {
+        0
+    } else {
+        fractional.parse().ok()?
+    };
+    NaiveTime::from_hms_nano_opt(hour, minute, second, nanos)
+}
+
 fn integer_u16(object: &DefaultDicomObject, tag: Tag) -> Option<u16> {
     object.get(tag)?.to_int::<u16>().ok()
 }
@@ -1090,7 +1427,9 @@ fn float_values(object: &DefaultDicomObject, tag: Tag) -> Option<Vec<f64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dicom::core::{DataElement, PrimitiveValue, VR};
+    use crate::mpr::ProjectionMode;
+    use dicom::core::{DataElement, DicomValue, PrimitiveValue, VR, value::DataSetSequence};
+    use dicom::object::InMemDicomObject;
     use pacs_core::fixture::{ct_instance, unique_uid};
 
     fn write_slice(
@@ -1364,9 +1703,13 @@ mod tests {
                 opened.handle,
                 Plane::Axial,
                 axial.slice_count / 2,
-                -600.0,
-                1500.0,
-                "LINEAR",
+                &MprRenderOptions {
+                    window_center: -600.0,
+                    window_width: 1500.0,
+                    voi_function: "LINEAR",
+                    projection: ProjectionMode::Slice,
+                    slab_thickness_mm: 1.0,
+                },
             )
             .unwrap();
         assert_eq!(bytes.len(), axial.rows as usize * axial.cols as usize);
@@ -1467,6 +1810,255 @@ mod tests {
                 .len(),
             256
         );
+    }
+
+    #[test]
+    fn opens_rgb_images_as_interleaved_rgb8() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut object = ct_instance(&unique_uid(), &unique_uid(), &unique_uid());
+        object.put(DataElement::new(tags::MODALITY, VR::CS, "US"));
+        object.put(DataElement::new(
+            tags::PHOTOMETRIC_INTERPRETATION,
+            VR::CS,
+            "RGB",
+        ));
+        object.put(DataElement::new(
+            tags::SAMPLES_PER_PIXEL,
+            VR::US,
+            PrimitiveValue::from(3_u16),
+        ));
+        object.put(DataElement::new(
+            tags::PLANAR_CONFIGURATION,
+            VR::US,
+            PrimitiveValue::from(0_u16),
+        ));
+        object.put(DataElement::new(
+            tags::BITS_ALLOCATED,
+            VR::US,
+            PrimitiveValue::from(8_u16),
+        ));
+        object.put(DataElement::new(
+            tags::BITS_STORED,
+            VR::US,
+            PrimitiveValue::from(8_u16),
+        ));
+        object.put(DataElement::new(
+            tags::HIGH_BIT,
+            VR::US,
+            PrimitiveValue::from(7_u16),
+        ));
+        object.put(DataElement::new(
+            tags::PIXEL_DATA,
+            VR::OB,
+            PrimitiveValue::U8([255_u8, 32, 16].repeat(4 * 4).into()),
+        ));
+        let path = directory.path().join("rgb.dcm");
+        object.write_to_file(&path).unwrap();
+
+        let state = ViewerState::new();
+        let metadata = state.open_series(vec![path]).unwrap();
+        assert_eq!(metadata.frames[0].pixel_format, PixelFormat::Rgb8);
+        assert_eq!(metadata.frames[0].photometric_interpretation, "RGB");
+        let bytes = state
+            .get_frame_bytes(metadata.handle, metadata.active_stack, 0)
+            .unwrap();
+        assert_eq!(bytes.len(), 4 * 4 * 3);
+        assert_eq!(&bytes[..3], &[255, 32, 16]);
+        assert!(
+            state
+                .build_lut(
+                    metadata.handle,
+                    metadata.active_stack,
+                    0,
+                    128.0,
+                    256.0,
+                    "LINEAR",
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn expands_palette_color_lookup_tables_to_rgb8() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut object = ct_instance(&unique_uid(), &unique_uid(), &unique_uid());
+        object.put(DataElement::new(
+            tags::PHOTOMETRIC_INTERPRETATION,
+            VR::CS,
+            "PALETTE COLOR",
+        ));
+        object.put(DataElement::new(
+            tags::BITS_ALLOCATED,
+            VR::US,
+            PrimitiveValue::from(8_u16),
+        ));
+        object.put(DataElement::new(
+            tags::BITS_STORED,
+            VR::US,
+            PrimitiveValue::from(8_u16),
+        ));
+        object.put(DataElement::new(
+            tags::HIGH_BIT,
+            VR::US,
+            PrimitiveValue::from(7_u16),
+        ));
+        let descriptor = PrimitiveValue::U16(vec![2_u16, 0, 8].into());
+        for tag in [
+            tags::RED_PALETTE_COLOR_LOOKUP_TABLE_DESCRIPTOR,
+            tags::GREEN_PALETTE_COLOR_LOOKUP_TABLE_DESCRIPTOR,
+            tags::BLUE_PALETTE_COLOR_LOOKUP_TABLE_DESCRIPTOR,
+        ] {
+            object.put(DataElement::new(tag, VR::US, descriptor.clone()));
+        }
+        object.put(DataElement::new(
+            tags::RED_PALETTE_COLOR_LOOKUP_TABLE_DATA,
+            VR::OW,
+            PrimitiveValue::U16(vec![0_u16, 255].into()),
+        ));
+        object.put(DataElement::new(
+            tags::GREEN_PALETTE_COLOR_LOOKUP_TABLE_DATA,
+            VR::OW,
+            PrimitiveValue::U16(vec![0_u16, 0].into()),
+        ));
+        object.put(DataElement::new(
+            tags::BLUE_PALETTE_COLOR_LOOKUP_TABLE_DATA,
+            VR::OW,
+            PrimitiveValue::U16(vec![0_u16, 255].into()),
+        ));
+        object.put(DataElement::new(
+            tags::PIXEL_DATA,
+            VR::OB,
+            PrimitiveValue::U8(
+                (0..4 * 4)
+                    .map(|index| (index % 2) as u8)
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+        ));
+        let path = directory.path().join("palette.dcm");
+        object.write_to_file(&path).unwrap();
+
+        let state = ViewerState::new();
+        let metadata = state.open_series(vec![path]).unwrap();
+        let bytes = state
+            .get_frame_bytes(metadata.handle, metadata.active_stack, 0)
+            .unwrap();
+        assert_eq!(metadata.frames[0].pixel_format, PixelFormat::Rgb8);
+        assert_eq!(&bytes[..6], &[0, 0, 0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn converts_ybr_full_to_rgb8() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut object = ct_instance(&unique_uid(), &unique_uid(), &unique_uid());
+        object.put(DataElement::new(
+            tags::PHOTOMETRIC_INTERPRETATION,
+            VR::CS,
+            "YBR_FULL",
+        ));
+        object.put(DataElement::new(
+            tags::SAMPLES_PER_PIXEL,
+            VR::US,
+            PrimitiveValue::from(3_u16),
+        ));
+        object.put(DataElement::new(
+            tags::PLANAR_CONFIGURATION,
+            VR::US,
+            PrimitiveValue::from(0_u16),
+        ));
+        object.put(DataElement::new(
+            tags::BITS_ALLOCATED,
+            VR::US,
+            PrimitiveValue::from(8_u16),
+        ));
+        object.put(DataElement::new(
+            tags::BITS_STORED,
+            VR::US,
+            PrimitiveValue::from(8_u16),
+        ));
+        object.put(DataElement::new(
+            tags::HIGH_BIT,
+            VR::US,
+            PrimitiveValue::from(7_u16),
+        ));
+        object.put(DataElement::new(
+            tags::PIXEL_DATA,
+            VR::OB,
+            PrimitiveValue::U8([128_u8, 128, 128].repeat(4 * 4).into()),
+        ));
+        let path = directory.path().join("ybr.dcm");
+        object.write_to_file(&path).unwrap();
+
+        let state = ViewerState::new();
+        let metadata = state.open_series(vec![path]).unwrap();
+        let bytes = state
+            .get_frame_bytes(metadata.handle, metadata.active_stack, 0)
+            .unwrap();
+        assert_eq!(metadata.frames[0].photometric_interpretation, "YBR_FULL");
+        assert!(bytes[..3].iter().all(|value| value.abs_diff(128) <= 1));
+    }
+
+    #[test]
+    fn derives_cine_rate_from_frame_time_and_has_us_fallback() {
+        let mut timed = ct_instance(&unique_uid(), &unique_uid(), &unique_uid());
+        timed.put(DataElement::new(tags::FRAME_TIME, VR::DS, "50"));
+        assert_eq!(cine_rate_fps(&timed, 10, Some("US")), Some(20.0));
+
+        let fallback = ct_instance(&unique_uid(), &unique_uid(), &unique_uid());
+        assert_eq!(cine_rate_fps(&fallback, 10, Some("US")), Some(15.0));
+        assert_eq!(cine_rate_fps(&fallback, 1, Some("US")), None);
+    }
+
+    fn pet_object() -> DefaultDicomObject {
+        let mut object = ct_instance(&unique_uid(), &unique_uid(), &unique_uid());
+        object.put(DataElement::new(
+            tags::SOP_CLASS_UID,
+            VR::UI,
+            uids::POSITRON_EMISSION_TOMOGRAPHY_IMAGE_STORAGE,
+        ));
+        object.put(DataElement::new(tags::MODALITY, VR::CS, "PT"));
+        object.put(DataElement::new(tags::UNITS, VR::CS, "BQML"));
+        object.put(DataElement::new(tags::PATIENT_WEIGHT, VR::DS, "70"));
+        object.put(DataElement::new(tags::DECAY_CORRECTION, VR::CS, "START"));
+        object.put(DataElement::new(
+            tags::ACQUISITION_DATE_TIME,
+            VR::DT,
+            "20240315143000",
+        ));
+        let radiopharmaceutical = InMemDicomObject::from_element_iter([
+            DataElement::new(tags::RADIONUCLIDE_TOTAL_DOSE, VR::DS, "370000000"),
+            DataElement::new(tags::RADIONUCLIDE_HALF_LIFE, VR::DS, "6586.2"),
+            DataElement::new(
+                tags::RADIOPHARMACEUTICAL_START_DATE_TIME,
+                VR::DT,
+                "20240315140000",
+            ),
+        ]);
+        object.put(DataElement::new(
+            tags::RADIOPHARMACEUTICAL_INFORMATION_SEQUENCE,
+            VR::SQ,
+            DicomValue::Sequence(DataSetSequence::from(vec![radiopharmaceutical])),
+        ));
+        object
+    }
+
+    #[test]
+    fn calculates_pet_suvbw_when_required_metadata_is_complete() {
+        let info = quantitative_info(&pet_object());
+        let expected_decay = 370_000_000.0 * 0.5_f64.powf(1800.0 / 6586.2);
+        let expected = 70_000.0 / expected_decay;
+        assert_eq!(info.unit.as_deref(), Some("BQML"));
+        assert!((info.suvbw_factor.unwrap() - expected).abs() < 1e-12);
+        assert_eq!(info.suvbw_status.as_deref(), Some("SUVbw 可用"));
+    }
+
+    #[test]
+    fn explains_why_pet_suvbw_is_unavailable() {
+        let mut object = pet_object();
+        object.remove_element(tags::PATIENT_WEIGHT);
+        let info = quantitative_info(&object);
+        assert_eq!(info.suvbw_factor, None);
+        assert!(info.suvbw_status.unwrap().contains("PatientWeight"));
     }
 
     #[test]

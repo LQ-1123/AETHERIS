@@ -13,7 +13,7 @@ use axum::extract::Request;
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::Config;
 use crate::store_handler::PacsStoreHandler;
@@ -36,6 +36,46 @@ enum Command {
         #[arg(short, long)]
         password: String,
     },
+    /// 管理登录用户
+    User {
+        #[command(subcommand)]
+        command: UserCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum UserCommand {
+    /// 创建指定角色的登录账号
+    Create {
+        /// 用户名(小写字母、数字、. _ -,至少 3 个字符)
+        #[arg(short, long)]
+        username: String,
+        /// 初始密码(12 到 128 个字符)
+        #[arg(short, long)]
+        password: String,
+        /// 账号角色
+        #[arg(short, long, value_enum)]
+        role: CliRole,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum CliRole {
+    Admin,
+    Radiologist,
+    Technician,
+    Viewer,
+}
+
+impl From<CliRole> for pacs_auth::Role {
+    fn from(role: CliRole) -> Self {
+        match role {
+            CliRole::Admin => Self::Admin,
+            CliRole::Radiologist => Self::Radiologist,
+            CliRole::Technician => Self::Technician,
+            CliRole::Viewer => Self::Viewer,
+        }
+    }
 }
 
 #[tokio::main]
@@ -58,6 +98,17 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::Admin { username, password }) => {
             admin::create_admin(&pool, &username, &password).await?;
+            return Ok(());
+        }
+        Some(Command::User {
+            command:
+                UserCommand::Create {
+                    username,
+                    password,
+                    role,
+                },
+        }) => {
+            admin::create_user(&pool, &username, &password, role.into()).await?;
             return Ok(());
         }
         None => {
@@ -227,4 +278,77 @@ async fn request_id(mut request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().insert(X_REQUEST_ID.clone(), value);
     response
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    use clap::error::ErrorKind;
+
+    #[test]
+    fn user_create_accepts_every_role() {
+        let cases = [
+            ("admin", pacs_auth::Role::Admin),
+            ("radiologist", pacs_auth::Role::Radiologist),
+            ("technician", pacs_auth::Role::Technician),
+            ("viewer", pacs_auth::Role::Viewer),
+        ];
+
+        for (raw, expected) in cases {
+            let cli = Cli::try_parse_from([
+                "pacsd",
+                "user",
+                "create",
+                "--username",
+                "alice",
+                "--password",
+                "a-secure-password",
+                "--role",
+                raw,
+            ])
+            .expect("角色应能解析");
+
+            let Some(Command::User {
+                command: UserCommand::Create { role, .. },
+            }) = cli.command
+            else {
+                panic!("应解析为 user create");
+            };
+            assert_eq!(pacs_auth::Role::from(role), expected);
+        }
+    }
+
+    #[test]
+    fn user_create_rejects_unknown_role() {
+        let error = Cli::try_parse_from([
+            "pacsd",
+            "user",
+            "create",
+            "--username",
+            "alice",
+            "--password",
+            "a-secure-password",
+            "--role",
+            "superuser",
+        ])
+        .err()
+        .expect("未知角色必须被拒绝");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn legacy_admin_command_remains_available() {
+        let cli = Cli::try_parse_from([
+            "pacsd",
+            "admin",
+            "--username",
+            "first-admin",
+            "--password",
+            "a-secure-password",
+        ])
+        .expect("旧的管理员引导命令应保持兼容");
+
+        assert!(matches!(cli.command, Some(Command::Admin { .. })));
+    }
 }

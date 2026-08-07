@@ -25,6 +25,7 @@ import {
   listSharedAnnotations,
   listTransformJobs,
   loadFrame,
+  loadVolume,
   measureFrameRoi,
   measureMprRoi,
   openRemoteSeries,
@@ -75,6 +76,8 @@ import { LifecyclePanel } from './lifecycle-panel';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
+import { volumeCapabilityReason } from './volume-capability';
+import type { VolumeRenderer, VolumePreset, VolumeQuality } from './volume-renderer';
 import { importConflictMessage, importSummary } from './transfer-report';
 import type {
   Annotation,
@@ -86,6 +89,7 @@ import type {
   MprMetadata,
   MprPlane,
   MprPlaneMetadata,
+  MprProjectionMode,
   MprViewportState,
   MaskTool,
   PatientSummary,
@@ -274,6 +278,14 @@ export class App {
   };
   private mprWindowFrameRequest: number | null = null;
   private mprBuildActive = false;
+  private mprProjection: MprProjectionMode = 'slice';
+  private mprSlabThicknessMm = 10;
+  private volumeRenderer: VolumeRenderer | null = null;
+  private volumeAbort: AbortController | null = null;
+  private volumePreset: VolumePreset = 'soft_tissue';
+  private volumeQuality: VolumeQuality = 'medium';
+  private volumeWindowCenter = 0;
+  private volumeWindowWidth = 1;
   private frameCache = new ByteLruCache(FRONTEND_CACHE_BYTES);
   private pendingFrames = new Map<string, Promise<ArrayBuffer>>();
   private measurements = new Map<string, Annotation[]>();
@@ -310,6 +322,9 @@ export class App {
   private lutRequests = new RequestVersion();
   private windowFrameRequest: number | null = null;
   private wheelFrameDelta = 0;
+  private cinePlaying = false;
+  private cineSpeed = 1;
+  private cineTimer: number | null = null;
   private busy = false;
   private remoteDownloadActive = false;
   private remoteSeriesOpen = false;
@@ -338,10 +353,13 @@ export class App {
 
   private viewport = requiredElement<HTMLElement>('viewport');
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
+  private volumeCanvas = requiredElement<HTMLCanvasElement>('vr-canvas');
   private frameSlider = requiredElement<HTMLInputElement>('frame-slider');
+  private cineSpeedSelect = requiredElement<HTMLSelectElement>('cine-speed');
   private presetSelect = requiredElement<HTMLSelectElement>('preset-select');
   private imageStackSelect = requiredElement<HTMLSelectElement>('image-stack-select');
   private mprSourceSelect = requiredElement<HTMLSelectElement>('mpr-source-select');
+  private mprSlabThickness = requiredElement<HTMLInputElement>('mpr-slab-thickness');
   private errorBanner = requiredElement<HTMLElement>('error-banner');
   private tagEditorDialog = requiredElement<HTMLDialogElement>('tag-editor-dialog');
   private transformTasksDialog = requiredElement<HTMLDialogElement>('transform-tasks-dialog');
@@ -407,6 +425,7 @@ export class App {
     const previousMaskTagFilter = this.maskTagFilter;
     const previousMaskMatchedSegmentIds = this.maskMatchedSegmentIds;
     let openedHandle: number | null = null;
+    this.stopCine();
     this.remoteDownloadActive = remoteDownload;
     try {
       this.setBusy(true, message, remoteDownload);
@@ -443,6 +462,8 @@ export class App {
       this.mprDraft = null;
       this.selectedMeasurementId = null;
       this.viewerMode = '2d';
+      this.mprProjection = 'slice';
+      this.mprSlabThicknessMm = 10;
       this.mpr = null;
       this.invalidateMprRequests();
       this.state = {
@@ -459,7 +480,7 @@ export class App {
         flipVertical: false,
         inverted: false,
         lut: null,
-        tool: 'window',
+        tool: metadata.frames[0].pixel_format === 'rgb8' ? 'pan' : 'window',
       };
       this.remoteSeriesOpen = remoteDownload;
       await this.loadCurrentFrame();
@@ -468,6 +489,7 @@ export class App {
         await this.refreshSharedAnnotations();
         this.startAnnotationSync();
       }
+      this.disposeVolumeRenderer();
       if (previous) void closeSeries(previous.metadata.handle).catch(console.error);
       openedHandle = null;
       this.showSeriesWarning();
@@ -509,7 +531,10 @@ export class App {
   async setFrame(requested: number): Promise<void> {
     if (!this.state) return;
     const next = Math.max(0, Math.min(requested, this.state.metadata.frames.length - 1));
-    if (next === this.state.currentFrame && this.state.lut) return;
+    if (
+      next === this.state.currentFrame
+      && (this.state.lut || this.state.metadata.frames[next].pixel_format === 'rgb8')
+    ) return;
     this.state.currentFrame = next;
     this.selectedMeasurementId = null;
     this.draft = null;
@@ -529,6 +554,7 @@ export class App {
     const previousMprMeasurements = this.mprMeasurements;
     const previousMaskVolumes = this.maskVolumes;
     let changed = false;
+    this.stopCine();
     try {
       this.setBusy(true, '正在切换图像组...');
       const metadata = await selectImageStack(previous.metadata.handle, requested);
@@ -544,6 +570,8 @@ export class App {
       this.mprDraft = null;
       this.selectedMeasurementId = null;
       this.viewerMode = '2d';
+      this.mprProjection = 'slice';
+      this.mprSlabThicknessMm = 10;
       this.mpr = null;
       this.mprMeasurements = new Map();
       this.maskVolumes = new Map();
@@ -564,12 +592,15 @@ export class App {
         flipVertical: previous.flipVertical,
         inverted: previous.inverted,
         lut: null,
-        tool: previous.tool === 'crosshair' ? 'window' : previous.tool,
+        tool: metadata.frames[0].pixel_format === 'rgb8'
+          ? 'pan'
+          : previous.tool === 'crosshair' ? 'window' : previous.tool,
       };
       changed = true;
       this.updateUi();
       await this.loadCurrentFrame();
       await this.loadSegmentationVolumes();
+      this.disposeVolumeRenderer();
       await closeMpr(previous.metadata.handle).catch(() => undefined);
       this.showSeriesWarning();
     } catch (error) {
@@ -600,21 +631,24 @@ export class App {
     const frame = state.metadata.frames[frameIndex];
     this.setBusy(true, `正在加载第 ${frameIndex + 1} 帧...`);
     try {
+      const isColor = frame.pixel_format === 'rgb8';
       const [buffer, lut] = await Promise.all([
         this.getFrame(frameIndex),
-        buildLut(
-          state.metadata.handle,
-          state.metadata.active_stack,
-          frameIndex,
-          state.windowCenter,
-          state.windowWidth,
-          state.voiFunction,
-        ),
+        isColor
+          ? Promise.resolve<Uint8Array | null>(null)
+          : buildLut(
+            state.metadata.handle,
+            state.metadata.active_stack,
+            frameIndex,
+            state.windowCenter,
+            state.windowWidth,
+            state.voiFunction,
+          ),
       ]);
       if (!this.frameRequests.isCurrent(generation) || state !== this.state) return;
       state.lut = lut;
       this.renderer.setFrame(buffer, frame);
-      this.renderer.applyLut(lut);
+      if (lut) this.renderer.applyLut(lut);
       this.render();
       this.ensureCurrentStatistics();
       this.prefetch(frameIndex);
@@ -626,6 +660,7 @@ export class App {
 
   private async refreshLut(): Promise<void> {
     if (!this.state) return;
+    if (this.currentFrame().pixel_format === 'rgb8') return;
     const state = this.state;
     const frameIndex = state.currentFrame;
     const generation = this.lutRequests.next();
@@ -663,7 +698,10 @@ export class App {
 
   private async setViewerMode(mode: ViewerMode): Promise<void> {
     if (!this.state || this.busy || mode === this.viewerMode) return;
+    this.stopCine();
+    const previousMode = this.viewerMode;
     if (mode === '2d') {
+      this.disposeVolumeRenderer();
       this.viewerMode = '2d';
       if (this.state.tool === 'crosshair') this.state.tool = 'window';
       this.updateUi();
@@ -678,19 +716,67 @@ export class App {
       if (!this.mpr || this.mpr.metadata.stack_index !== this.state.metadata.active_stack) {
         await this.prepareMprSession();
       }
-      this.viewerMode = 'mpr';
-      this.state.tool = 'crosshair';
-      this.updateUi();
-      this.resizeViewport();
-      await this.refreshMprSlices();
+      if (!this.mpr) throw new Error('MPR 体数据尚未准备完成');
+      if (mode === 'vr') {
+        const reason = volumeCapabilityReason(this.volumeCanvas, this.mpr.metadata.volume_rendering);
+        if (reason) throw new Error(`VR 已禁用：${reason}`);
+        this.setBusy(true, '正在加载 GPU 体纹理...');
+        this.volumeAbort?.abort();
+        const abort = new AbortController();
+        this.volumeAbort = abort;
+        const data = await loadVolume(this.state.metadata.handle, abort.signal);
+        if (abort.signal.aborted || !this.state || !this.mpr) return;
+        const range = this.mpr.metadata.volume_rendering.value_range;
+        this.volumeWindowCenter = this.state.windowCenter;
+        this.volumeWindowWidth = this.state.windowWidth;
+        if (this.state.metadata.patient.modality?.toUpperCase() === 'PT') {
+          this.volumeWindowCenter = (range[0] + range[1]) / 2;
+          this.volumeWindowWidth = Math.max(1, range[1] - range[0]);
+          this.volumePreset = 'pet';
+        } else {
+          this.volumePreset = 'soft_tissue';
+        }
+        const { VolumeRenderer } = await import('./volume-renderer');
+        this.volumeRenderer = new VolumeRenderer(
+          this.volumeCanvas,
+          data,
+          this.mpr.metadata.volume_rendering,
+          {
+            windowCenter: this.volumeWindowCenter,
+            windowWidth: this.volumeWindowWidth,
+            preset: this.volumePreset,
+            quality: this.volumeQuality,
+          },
+        );
+        this.viewerMode = 'vr';
+        this.state.tool = 'pan';
+        this.updateUi();
+        this.resizeViewport();
+      } else {
+        this.disposeVolumeRenderer();
+        this.viewerMode = 'mpr';
+        this.state.tool = 'crosshair';
+        this.updateUi();
+        this.resizeViewport();
+        await this.refreshMprSlices();
+      }
     } catch (error) {
-      this.viewerMode = '2d';
+      this.disposeVolumeRenderer();
+      this.viewerMode = previousMode;
       this.showError(errorMessage(error));
     } finally {
+      this.volumeAbort = null;
       this.mprBuildActive = false;
       this.setBusy(false);
       this.updateUi();
     }
+  }
+
+  private disposeVolumeRenderer(): void {
+    this.volumeAbort?.abort();
+    this.volumeAbort = null;
+    this.volumeRenderer?.dispose();
+    this.volumeRenderer = null;
   }
 
   private async ensureMaskGeometry(): Promise<void> {
@@ -775,6 +861,7 @@ export class App {
   private canAttemptMpr(): boolean {
     if (!this.state || this.state.metadata.frames.length < 3) return false;
     const frame = this.state.metadata.frames[0];
+    if (frame.pixel_format === 'rgb8') return false;
     if (frame.spacing.row_mm == null || frame.spacing.col_mm == null) return false;
     const description = this.state.metadata.patient.series_description?.toLowerCase() ?? '';
     return !/(locali[sz]er|scout|定位|冠状|矢状|coronal|sagittal|\bmpr\b)/i.test(description);
@@ -782,6 +869,23 @@ export class App {
 
   private async refreshMprSlices(planes: readonly MprPlane[] = MPR_PLANES): Promise<void> {
     await Promise.all(planes.map((plane) => this.loadMprPlane(plane)));
+  }
+
+  private setMprProjection(mode: MprProjectionMode): void {
+    if (!this.mpr || this.viewerMode !== 'mpr' || mode === this.mprProjection) return;
+    this.mprProjection = mode;
+    this.selectedMeasurementId = null;
+    this.mprDraft = null;
+    this.updateUi();
+    void this.refreshMprSlices();
+  }
+
+  private setMprSlabThickness(value: number): void {
+    const next = Math.min(200, Math.max(0.5, value));
+    if (!Number.isFinite(next) || next === this.mprSlabThicknessMm) return;
+    this.mprSlabThicknessMm = next;
+    setText('mpr-slab-value', `${next.toFixed(next < 10 ? 1 : 0)} mm`);
+    if (this.mprProjection !== 'slice') void this.refreshMprSlices();
   }
 
   private async loadMprPlane(plane: MprPlane): Promise<void> {
@@ -798,6 +902,8 @@ export class App {
     const windowCenter = state.windowCenter;
     const windowWidth = state.windowWidth;
     const voiFunction = state.voiFunction;
+    const projection = this.mprProjection;
+    const slabThicknessMm = this.mprSlabThicknessMm;
     const generation = this.mprRequests[plane].next();
     try {
       const buffer = await renderMprSlice(
@@ -807,6 +913,8 @@ export class App {
         windowCenter,
         windowWidth,
         voiFunction,
+        projection,
+        slabThicknessMm,
       );
       if (
         this.viewerMode !== 'mpr' ||
@@ -814,6 +922,8 @@ export class App {
         this.state !== state ||
         !this.mprRequests[plane].isCurrent(generation) ||
         viewport.sliceIndex !== sliceIndex ||
+        this.mprProjection !== projection ||
+        this.mprSlabThicknessMm !== slabThicknessMm ||
         state.windowCenter !== windowCenter ||
         state.windowWidth !== windowWidth ||
         state.voiFunction !== voiFunction
@@ -889,6 +999,13 @@ export class App {
       rows: metadata.rows,
       cols: metadata.cols,
       bits_allocated: 8,
+      pixel_format: 'gray8',
+      photometric_interpretation: 'MONOCHROME2',
+      cine_rate_fps: null,
+      quantitative: this.currentFrame().quantitative,
+      laterality: null,
+      view_position: null,
+      patient_orientation: [],
       window_presets: this.currentFrame().window_presets,
       spacing: {
         confidence: 'calibrated',
@@ -956,9 +1073,44 @@ export class App {
     }
   }
 
+  private toggleCine(): void {
+    if (!this.state || this.state.metadata.frames.length < 2 || this.viewerMode !== '2d') return;
+    if (this.cinePlaying) {
+      this.stopCine();
+    } else {
+      this.cinePlaying = true;
+      this.scheduleCineFrame();
+    }
+    this.updateUi();
+  }
+
+  private stopCine(): void {
+    this.cinePlaying = false;
+    if (this.cineTimer != null) {
+      window.clearTimeout(this.cineTimer);
+      this.cineTimer = null;
+    }
+  }
+
+  private scheduleCineFrame(): void {
+    if (!this.cinePlaying || !this.state || this.viewerMode !== '2d') return;
+    const fps = this.currentFrame().cine_rate_fps ?? 15;
+    const delay = 1000 / Math.min(60, Math.max(1, fps * this.cineSpeed));
+    this.cineTimer = window.setTimeout(async () => {
+      this.cineTimer = null;
+      if (!this.cinePlaying || !this.state) return;
+      const next = (this.state.currentFrame + 1) % this.state.metadata.frames.length;
+      await this.setFrame(next);
+      this.scheduleCineFrame();
+    }, delay);
+  }
+
   private async setTool(tool: ToolMode): Promise<void> {
     if (!this.state) return;
     if (tool === 'crosshair' && this.viewerMode !== 'mpr') return;
+    if (tool === 'window' && this.viewerMode === '2d' && this.currentFrame().pixel_format === 'rgb8') {
+      return;
+    }
     if (isMaskTool(tool)) {
       if (this.maskTagFilter && !this.visibleMaskSegments().length) {
         this.showError(`没有 Tag 为“${this.maskTagFilter}”的 Mask`);
@@ -1416,6 +1568,10 @@ export class App {
 
   private resetView(): void {
     if (!this.state) return;
+    if (this.viewerMode === 'vr') {
+      this.volumeRenderer?.resetView();
+      return;
+    }
     if (this.viewerMode === 'mpr' && this.mpr) {
       for (const plane of MPR_PLANES) {
         this.mpr.viewports[plane].zoom = 1;
@@ -1454,6 +1610,40 @@ export class App {
     this.updateUi();
     if (this.viewerMode === 'mpr') void this.refreshMprSlices();
     else void this.refreshLut();
+  }
+
+  private applyVolumePreset(preset: VolumePreset): void {
+    if (!this.state || !this.mpr || !this.volumeRenderer) return;
+    this.volumePreset = preset;
+    const range = this.mpr.metadata.volume_rendering.value_range;
+    const settings: Partial<Record<VolumePreset, [number, number]>> = {
+      soft_tissue: [40, 400],
+      bone: [500, 2000],
+      lung: [-600, 1500],
+      pet: [(range[0] + range[1]) / 2, Math.max(1, range[1] - range[0])],
+      grayscale: [this.state.windowCenter, this.state.windowWidth],
+    };
+    const [center, width] = settings[preset] ?? [this.volumeWindowCenter, this.volumeWindowWidth];
+    this.volumeWindowCenter = center;
+    this.volumeWindowWidth = width;
+    this.volumeRenderer.setPreset(preset);
+    this.volumeRenderer.setWindow(center, width);
+    this.updateUi();
+  }
+
+  private updateVolumeWindow(): void {
+    const center = Number(requiredElement<HTMLInputElement>('vr-window-center').value);
+    const width = Number(requiredElement<HTMLInputElement>('vr-window-width').value);
+    if (!Number.isFinite(center) || !Number.isFinite(width) || width <= 0) return;
+    this.volumeWindowCenter = center;
+    this.volumeWindowWidth = width;
+    this.volumeRenderer?.setWindow(center, width);
+    this.updateVolumeControlReadout();
+  }
+
+  private updateVolumeControlReadout(): void {
+    setText('vr-window-center-value', `WL ${this.volumeWindowCenter.toFixed(0)}`);
+    setText('vr-window-width-value', `WW ${this.volumeWindowWidth.toFixed(0)}`);
   }
 
   private setupEventListeners(): void {
@@ -1620,6 +1810,18 @@ export class App {
     requiredElement<HTMLButtonElement>('next-frame').addEventListener('click', () => {
       if (this.state) void this.setFrame(this.state.currentFrame + 1);
     });
+    requiredElement<HTMLButtonElement>('cine-toggle').addEventListener('click', () => {
+      this.toggleCine();
+    });
+    this.cineSpeedSelect.addEventListener('change', () => {
+      this.cineSpeed = Number(this.cineSpeedSelect.value) || 1;
+      if (this.cinePlaying) {
+        if (this.cineTimer != null) window.clearTimeout(this.cineTimer);
+        this.cineTimer = null;
+        this.scheduleCineFrame();
+      }
+      this.updateUi();
+    });
     requiredElement<HTMLButtonElement>('panel-toggle').addEventListener('click', () => {
       document.getElementById('details-panel')?.classList.toggle('collapsed');
       document.getElementById('workspace')?.classList.toggle('details-hidden');
@@ -1645,6 +1847,24 @@ export class App {
       button.addEventListener('click', () => {
         void this.setViewerMode(button.dataset.viewMode as ViewerMode);
       });
+    }
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-mpr-projection]')) {
+      button.addEventListener('click', () => {
+        this.setMprProjection(button.dataset.mprProjection as MprProjectionMode);
+      });
+    }
+    this.mprSlabThickness.addEventListener('input', () => {
+      this.setMprSlabThickness(Number(this.mprSlabThickness.value));
+    });
+    requiredElement<HTMLSelectElement>('vr-preset').addEventListener('change', (event) => {
+      this.applyVolumePreset((event.currentTarget as HTMLSelectElement).value as VolumePreset);
+    });
+    requiredElement<HTMLSelectElement>('vr-quality').addEventListener('change', (event) => {
+      this.volumeQuality = (event.currentTarget as HTMLSelectElement).value as VolumeQuality;
+      this.volumeRenderer?.setQuality(this.volumeQuality);
+    });
+    for (const id of ['vr-window-center', 'vr-window-width']) {
+      requiredElement<HTMLInputElement>(id).addEventListener('input', () => this.updateVolumeWindow());
     }
 
     this.frameSlider.addEventListener('input', () => void this.setFrame(Number(this.frameSlider.value)));
@@ -2922,6 +3142,7 @@ export class App {
       return;
     }
     if (this.state.tool === 'window') {
+      if (this.currentFrame().pixel_format === 'rgb8') return;
       this.drag = {
         kind: 'window',
         pointerId: event.pointerId,
@@ -3176,6 +3397,9 @@ export class App {
       this.toggleAnnotationVisibility();
     } else if (event.key.toLowerCase() === 'i') {
       this.toggleInvert();
+    } else if (event.key === ' ') {
+      event.preventDefault();
+      this.toggleCine();
     } else if (event.key === 'Escape') {
       this.draft = null;
       this.mprDraft = null;
@@ -3776,7 +4000,9 @@ export class App {
   private resizeViewport(): void {
     const rect = this.viewport.getBoundingClientRect();
     this.renderer.resize(rect.width, rect.height);
-    if (this.viewerMode === 'mpr') {
+    if (this.viewerMode === 'vr') {
+      this.volumeRenderer?.resize(rect.width, rect.height);
+    } else if (this.viewerMode === 'mpr') {
       for (const plane of MPR_PLANES) {
         const pane = requiredPlaneElement(plane);
         const paneRect = pane.getBoundingClientRect();
@@ -3788,6 +4014,7 @@ export class App {
 
   private render(): void {
     if (!this.state) return;
+    if (this.viewerMode === 'vr') return;
     if (this.viewerMode === 'mpr' && this.mpr) {
       for (const plane of MPR_PLANES) this.renderMprPlane(plane);
       return;
@@ -3865,8 +4092,11 @@ export class App {
       frameCount > 1 && this.viewerMode === '2d',
     );
     appShell.classList.toggle('mpr-mode', this.viewerMode === 'mpr');
+    appShell.classList.toggle('vr-mode', this.viewerMode === 'vr');
     this.viewport.classList.toggle('mpr-active', this.viewerMode === 'mpr');
+    this.viewport.classList.toggle('vr-active', this.viewerMode === 'vr');
     requiredElement<HTMLElement>('mpr-grid').hidden = this.viewerMode !== 'mpr';
+    requiredElement<HTMLElement>('vr-view').hidden = this.viewerMode !== 'vr';
     requiredElement<HTMLElement>('empty-state').hidden = hasSeries;
     requiredElement<HTMLElement>('details-panel').setAttribute('aria-disabled', String(!hasSeries));
     for (const overlay of document.querySelectorAll<HTMLElement>('[data-series-overlay]')) {
@@ -3883,6 +4113,7 @@ export class App {
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
       button.classList.toggle('active', button.dataset.tool === this.state?.tool);
       button.setAttribute('aria-pressed', String(button.dataset.tool === this.state?.tool));
+      button.disabled = !hasSeries || this.viewerMode === 'vr';
     }
     const maskMode = isMaskTool(this.state?.tool);
     requiredElement<HTMLButtonElement>('undo-annotation').disabled = !hasSeries
@@ -3904,6 +4135,9 @@ export class App {
     const vertical = requiredElement<HTMLButtonElement>('flip-vertical-btn');
     vertical.classList.toggle('active', view?.flipVertical === true);
     vertical.setAttribute('aria-pressed', String(view?.flipVertical === true));
+    for (const id of ['invert-btn', 'flip-horizontal-btn', 'flip-vertical-btn', 'rotate-left-btn', 'rotate-right-btn']) {
+      requiredElement<HTMLButtonElement>(id).disabled = !hasSeries || this.viewerMode === 'vr';
+    }
     const currentCount = this.mpr && this.viewerMode === 'mpr'
       ? this.currentMprMeasurements(this.mpr.activePlane).length
       : this.currentMeasurements().length;
@@ -3917,16 +4151,49 @@ export class App {
       button.setAttribute('aria-pressed', String(active));
       if (button.dataset.viewMode === 'mpr') {
         button.disabled = !hasSeries || this.busy || !this.canAttemptMpr();
+      } else if (button.dataset.viewMode === 'vr') {
+        const metadata = this.mpr?.metadata.volume_rendering ?? {
+          dimensions: [1, 1, 1] as [number, number, number],
+          spacing_mm: [1, 1, 1] as [number, number, number],
+          value_range: [0, 1] as [number, number],
+          byte_length: 2,
+          available: true,
+          unavailable_reason: null,
+        };
+        const reason = this.canAttemptMpr()
+          ? volumeCapabilityReason(this.volumeCanvas, metadata)
+          : '当前图像组不是规则薄层灰度体数据';
+        button.disabled = !hasSeries || this.busy || reason != null;
+        button.title = reason ? `GPU 体渲染不可用：${reason}` : 'GPU 体渲染';
       }
     }
     for (const control of document.querySelectorAll<HTMLElement>('[data-mpr-tool]')) {
       control.hidden = this.viewerMode !== 'mpr';
     }
+    const projectionControl = requiredElement<HTMLElement>('mpr-projection-control');
+    projectionControl.hidden = this.viewerMode !== 'mpr';
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-mpr-projection]')) {
+      const active = button.dataset.mprProjection === this.mprProjection;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+      button.disabled = this.viewerMode !== 'mpr' || !this.mpr;
+    }
+    this.mprSlabThickness.value = String(this.mprSlabThicknessMm);
+    this.mprSlabThickness.disabled = this.viewerMode !== 'mpr'
+      || !this.mpr
+      || this.mprProjection === 'slice';
+    setText(
+      'mpr-slab-value',
+      `${this.mprSlabThicknessMm.toFixed(this.mprSlabThicknessMm < 10 ? 1 : 0)} mm`,
+    );
+    const volumeControls = requiredElement<HTMLElement>('vr-controls');
+    volumeControls.hidden = this.viewerMode !== 'vr';
     this.updateMaskSegmentOptions();
     const maskButton = requiredElement<HTMLButtonElement>('mask-menu-button');
     const maskPanel = requiredElement<HTMLElement>('mask-menu-panel');
     if (!hasSeries) maskPanel.hidden = true;
     maskButton.classList.toggle('active', maskMode);
+    maskButton.disabled = !hasSeries || this.viewerMode === 'vr';
     maskButton.setAttribute('aria-expanded', String(!maskPanel.hidden));
     requiredElement<HTMLButtonElement>('revision-history-btn').hidden = !(
       hasSeries && this.remoteSeriesOpen && this.canViewDicomRevisions()
@@ -3936,12 +4203,29 @@ export class App {
 
     const frame = this.currentFrame();
     const total = frameCount;
+    const isColor = frame.pixel_format === 'rgb8' && this.viewerMode === '2d';
+    const statisticsUnavailable = isColor
+      || (this.viewerMode === 'mpr' && this.mprProjection !== 'slice');
+    const windowTool = document.querySelector<HTMLButtonElement>('[data-tool="window"]');
+    if (windowTool) windowTool.disabled = !hasSeries || isColor || this.viewerMode === 'vr';
+    for (const tool of ['point_probe', 'ellipse_roi', 'rectangle_roi']) {
+      const control = document.querySelector<HTMLButtonElement>(`[data-tool="${tool}"]`);
+      if (control) control.disabled = !hasSeries || statisticsUnavailable || this.viewerMode === 'vr';
+    }
+    this.presetSelect.disabled = isColor || this.viewerMode === 'vr';
     setText(
       'mask-brush-size-value',
       `${this.maskBrushRadius} mm`,
     );
     setText('frame-counter', `${this.state.currentFrame + 1} / ${total}`);
-    setText('window-readout', `WL ${this.state.windowCenter.toFixed(0)}  WW ${this.state.windowWidth.toFixed(0)}`);
+    setText(
+      'window-readout',
+      isColor
+        ? frame.photometric_interpretation
+        : this.viewerMode === 'vr'
+          ? `VR WL ${this.volumeWindowCenter.toFixed(0)}  WW ${this.volumeWindowWidth.toFixed(0)}`
+        : `WL ${this.state.windowCenter.toFixed(0)}  WW ${this.state.windowWidth.toFixed(0)}`,
+    );
     const activeZoom = this.mpr && this.viewerMode === 'mpr'
       ? this.mpr.viewports[this.mpr.activePlane].zoom
       : this.state.zoom;
@@ -3951,6 +4235,35 @@ export class App {
     this.frameSlider.disabled = total <= 1;
     requiredElement<HTMLButtonElement>('previous-frame').disabled = this.state.currentFrame === 0;
     requiredElement<HTMLButtonElement>('next-frame').disabled = this.state.currentFrame === total - 1;
+    const cineToggle = requiredElement<HTMLButtonElement>('cine-toggle');
+    cineToggle.disabled = total <= 1 || this.viewerMode !== '2d';
+    cineToggle.classList.toggle('active', this.cinePlaying);
+    cineToggle.setAttribute('aria-pressed', String(this.cinePlaying));
+    cineToggle.title = this.cinePlaying ? '暂停 Cine' : '播放 Cine';
+    requiredElement<HTMLElement>('cine-play-icon').hidden = this.cinePlaying;
+    requiredElement<HTMLElement>('cine-pause-icon').hidden = !this.cinePlaying;
+    this.cineSpeedSelect.value = String(this.cineSpeed);
+    this.cineSpeedSelect.disabled = total <= 1 || this.viewerMode !== '2d';
+    const sourceFps = frame.cine_rate_fps ?? 15;
+    setText('cine-fps', `${(sourceFps * this.cineSpeed).toFixed(1)} fps`);
+
+    if (this.mpr) {
+      const centerControl = requiredElement<HTMLInputElement>('vr-window-center');
+      const widthControl = requiredElement<HTMLInputElement>('vr-window-width');
+      const [minimum, maximum] = this.mpr.metadata.volume_rendering.value_range;
+      const span = Math.max(1, maximum - minimum);
+      centerControl.min = String(minimum - span);
+      centerControl.max = String(maximum + span);
+      centerControl.step = String(Math.max(0.1, span / 1000));
+      centerControl.value = String(this.volumeWindowCenter);
+      widthControl.min = '1';
+      widthControl.max = String(Math.max(5000, span * 2));
+      widthControl.step = String(Math.max(1, span / 500));
+      widthControl.value = String(this.volumeWindowWidth);
+      requiredElement<HTMLSelectElement>('vr-preset').value = this.volumePreset;
+      requiredElement<HTMLSelectElement>('vr-quality').value = this.volumeQuality;
+      this.updateVolumeControlReadout();
+    }
 
     this.updateImageStackOptions();
     this.updateMprSourceOptions();
@@ -3970,13 +4283,30 @@ export class App {
       'dimensions',
       this.mpr && this.viewerMode === 'mpr'
         ? `${this.mpr.metadata.dimensions.join(' x ')} / MPR`
-        : `${frame.cols} x ${frame.rows} / ${frame.bits_allocated} bit`,
+        : this.mpr && this.viewerMode === 'vr'
+          ? `${this.mpr.metadata.dimensions.join(' x ')} / GPU VR`
+        : `${frame.cols} x ${frame.rows} / ${frame.pixel_format === 'rgb8' ? 'RGB8' : `${frame.bits_allocated} bit`}`,
     );
     setText('instance-number', frame.instance_number == null ? '未提供' : String(frame.instance_number));
+    setText('pixel-format', `${frame.photometric_interpretation} · ${frame.pixel_format.toUpperCase()}`);
+    setText(
+      'projection-orientation',
+      [frame.laterality, frame.view_position, ...frame.patient_orientation]
+        .filter((value): value is string => Boolean(value))
+        .join(' · ') || '未提供',
+    );
+    setText(
+      'quantitative-status',
+      frame.quantitative.suvbw_status
+        ? `${frame.quantitative.suvbw_status}${frame.quantitative.unit ? ` · ${frame.quantitative.unit}` : ''}`
+        : (frame.quantitative.unit ? `单位 ${frame.quantitative.unit}` : '不适用'),
+    );
     setText(
       'spacing-description',
       this.mpr && this.viewerMode === 'mpr'
         ? `三维重建体素 ${this.mpr.metadata.source_spacing_mm.map((value) => value.toFixed(3)).join(' x ')} mm`
+        : this.mpr && this.viewerMode === 'vr'
+          ? `GPU 体素 ${this.mpr.metadata.source_spacing_mm.map((value) => value.toFixed(3)).join(' x ')} mm`
         : frame.spacing.description,
     );
     const spacingBadge = requiredElement<HTMLElement>('spacing-badge');
@@ -4038,7 +4368,7 @@ export class App {
     if (!this.state) return;
     const stacks = this.state.metadata.image_stacks;
     const control = requiredElement<HTMLElement>('image-stack-control');
-    control.hidden = stacks.length <= 1 || this.viewerMode === 'mpr';
+    control.hidden = stacks.length <= 1 || this.viewerMode !== '2d';
     const signature = stacks
       .map((stack) => `${stack.index}:${stack.label}:${stack.cols}x${stack.rows}`)
       .join('|');

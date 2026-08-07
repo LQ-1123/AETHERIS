@@ -61,11 +61,45 @@
         <div class="segmented view-mode-control" role="group" aria-label="显示模式">
           <button data-view-mode="2d" data-requires-series type="button" title="二维阅片" aria-label="二维阅片">2D</button>
           <button data-view-mode="mpr" data-requires-series type="button" title="多平面重建" aria-label="多平面重建">MPR</button>
+          <button data-view-mode="vr" data-requires-series type="button" title="GPU 体渲染" aria-label="GPU 体渲染">VR</button>
         </div>
         <label id="mpr-source-control" title="MPR 数据源" hidden>
           <i data-lucide="layers-3"></i>
           <select id="mpr-source-select" aria-label="MPR 数据源"></select>
         </label>
+        <div id="mpr-projection-control" class="mpr-projection-control" hidden>
+          <div class="segmented" role="group" aria-label="MPR 投影模式">
+            <button data-mpr-projection="slice" type="button" title="单层重建">Slice</button>
+            <button data-mpr-projection="mip" type="button" title="最大密度投影">MIP</button>
+            <button data-mpr-projection="minip" type="button" title="最小密度投影">MinIP</button>
+          </div>
+          <label class="mpr-slab-control" title="Slab 厚度">
+            <input id="mpr-slab-thickness" type="range" min="0.5" max="100" step="0.5" value="10" aria-label="MPR Slab 厚度（毫米）" />
+            <output id="mpr-slab-value">10 mm</output>
+          </label>
+        </div>
+        <div id="vr-controls" class="vr-controls" hidden>
+          <select id="vr-preset" aria-label="体渲染传递函数预设" title="传递函数预设">
+            <option value="grayscale">灰度</option>
+            <option value="soft_tissue">软组织</option>
+            <option value="bone">骨</option>
+            <option value="lung">肺</option>
+            <option value="pet">PET</option>
+          </select>
+          <label class="vr-range-control" title="体渲染窗位">
+            <input id="vr-window-center" type="range" min="-1000" max="3000" step="1" value="40" aria-label="体渲染窗位" />
+            <output id="vr-window-center-value">WL 40</output>
+          </label>
+          <label class="vr-range-control" title="体渲染窗宽">
+            <input id="vr-window-width" type="range" min="1" max="5000" step="1" value="400" aria-label="体渲染窗宽" />
+            <output id="vr-window-width-value">WW 400</output>
+          </label>
+          <select id="vr-quality" aria-label="体渲染采样质量" title="采样质量">
+            <option value="low">低</option>
+            <option value="medium" selected>中</option>
+            <option value="high">高</option>
+          </select>
+        </div>
         <div class="segmented" role="group" aria-label="阅片工具">
           <button data-tool="window" data-requires-series type="button" title="窗宽窗位" aria-label="窗宽窗位">
             <i data-lucide="sliders-horizontal"></i>
@@ -304,6 +338,9 @@
               <span class="orientation bottom">I</span><span class="orientation left">A</span>
             </div>
           </div>
+          <div id="vr-view" hidden>
+            <canvas id="vr-canvas" aria-label="GPU 三维体渲染视图"></canvas>
+          </div>
           <div id="empty-state">
             <div class="empty-symbol">DICOM</div>
             <h1>AETHERIS</h1>
@@ -345,6 +382,9 @@
             <div><dt>序列描述</dt><dd id="series-description">--</dd></div>
             <div><dt>图像</dt><dd id="dimensions">--</dd></div>
             <div><dt>实例号</dt><dd id="instance-number">--</dd></div>
+            <div><dt>像素格式</dt><dd id="pixel-format">--</dd></div>
+            <div><dt>投照/方向</dt><dd id="projection-orientation">--</dd></div>
+            <div><dt>定量</dt><dd id="quantitative-status">--</dd></div>
           </dl>
           <div class="panel-section">
             <h3>测量标定</h3>
@@ -355,6 +395,10 @@
       </section>
 
       <footer id="series-navigator">
+        <button id="cine-toggle" class="icon-button" data-requires-series type="button" title="播放 Cine" aria-label="播放或暂停 Cine" aria-pressed="false">
+          <i id="cine-play-icon" data-lucide="play"></i>
+          <i id="cine-pause-icon" data-lucide="pause" hidden></i>
+        </button>
         <button id="previous-frame" class="icon-button" data-requires-series type="button" title="上一帧" aria-label="上一帧">
           <i data-lucide="chevron-left"></i>
         </button>
@@ -363,6 +407,14 @@
           <i data-lucide="chevron-right"></i>
         </button>
         <span id="frame-counter">0 / 0</span>
+        <select id="cine-speed" data-requires-series aria-label="Cine 播放速度" title="Cine 播放速度">
+          <option value="0.25">0.25x</option>
+          <option value="0.5">0.5x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2">2x</option>
+        </select>
+        <output id="cine-fps">15.0 fps</output>
       </footer>
     </main>
 

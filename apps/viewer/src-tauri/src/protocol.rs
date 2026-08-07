@@ -9,7 +9,7 @@ use tauri::{Manager, Runtime};
 /// 路径格式: pacs-frame://localhost/{handle}/{stack}/{frame}
 /// 返回该帧的原始像素字节（Uint16Array 可直接读取）
 pub fn register_protocol<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.register_asynchronous_uri_scheme_protocol(
+    let builder = builder.register_asynchronous_uri_scheme_protocol(
         "pacs-frame",
         move |app, request, responder| {
             let state = app.app_handle().state::<ViewerState>();
@@ -21,7 +21,51 @@ pub fn register_protocol<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Build
                 responder.respond(response);
             });
         },
+    );
+    builder.register_asynchronous_uri_scheme_protocol(
+        "pacs-volume",
+        move |app, request, responder| {
+            let state = app.app_handle().state::<ViewerState>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let response = handle_volume_request(request, state).await;
+                responder.respond(response);
+            });
+        },
     )
+}
+
+async fn handle_volume_request(request: Request<Vec<u8>>, state: ViewerState) -> Response<Vec<u8>> {
+    let raw = request.uri().path().trim_matches('/');
+    let handle = match raw.parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            return Response::builder()
+                .status(400)
+                .body(format!("Invalid volume handle: {raw}").into_bytes())
+                .unwrap();
+        }
+    };
+    match tauri::async_runtime::spawn_blocking(move || state.get_volume_texture_bytes(handle)).await
+    {
+        Ok(Ok(data)) => Response::builder()
+            .status(200)
+            .header("Content-Type", "application/octet-stream")
+            .header("Content-Length", data.len().to_string())
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "GET")
+            .body(data)
+            .unwrap(),
+        Ok(Err(error)) => Response::builder()
+            .status(404)
+            .header("Access-Control-Allow-Origin", "*")
+            .body(error.to_string().into_bytes())
+            .unwrap(),
+        Err(error) => Response::builder()
+            .status(500)
+            .header("Access-Control-Allow-Origin", "*")
+            .body(format!("体数据转换任务失败: {error}").into_bytes())
+            .unwrap(),
+    }
 }
 
 async fn handle_request(request: Request<Vec<u8>>, state: ViewerState) -> Response<Vec<u8>> {

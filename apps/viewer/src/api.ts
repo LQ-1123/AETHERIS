@@ -4,6 +4,7 @@ import type {
   PatientSummary,
   MprMetadata,
   MprPlane,
+  MprProjectionMode,
   RoiStatistics,
   RemoteSeriesSummary,
   RemoteUser,
@@ -526,15 +527,21 @@ export async function renderMprSlice(
   windowCenter: number,
   windowWidth: number,
   voiFunction: VoiFunction,
+  projection: MprProjectionMode,
+  slabThicknessMm: number,
 ): Promise<ArrayBuffer> {
   const invoke = await getInvoke();
   const result = await invoke<ArrayBuffer | Uint8Array | number[]>('render_mpr_slice', {
-    handle,
-    plane,
-    sliceIndex,
-    windowCenter,
-    windowWidth,
-    voiFunction,
+    request: {
+      handle,
+      plane,
+      sliceIndex,
+      windowCenter,
+      windowWidth,
+      voiFunction,
+      projection,
+      slabThicknessMm,
+    },
   });
   if (result instanceof ArrayBuffer) return result;
   if (result instanceof Uint8Array) return result.buffer.slice(
@@ -556,6 +563,19 @@ export async function cancelMprBuild(): Promise<void> {
 
 export function getFrameUrl(handle: number, stack: number, frame: number): string {
   return `pacs-frame://localhost/${handle}/${stack}/${frame}`;
+}
+
+export function getVolumeUrl(handle: number): string {
+  return `pacs-volume://localhost/${handle}`;
+}
+
+export async function loadVolume(handle: number, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const response = await fetch(getVolumeUrl(handle), { signal });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => response.statusText);
+    throw new Error(detail || '加载三维体数据失败');
+  }
+  return response.arrayBuffer();
 }
 
 export async function loadFrame(
