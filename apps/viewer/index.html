@@ -254,6 +254,16 @@
             <i data-lucide="eraser"></i>
           </button>
         </div>
+        <div class="mask-ai-control">
+          <i data-lucide="sparkles" aria-hidden="true"></i>
+          <select id="ai-model-select" data-requires-series aria-label="选择 AI 分割模型">
+            <option value="">本地 AI</option>
+          </select>
+          <button id="ai-segment-run" class="icon-button" data-requires-series type="button" title="运行 AI 分割" aria-label="运行 AI 分割">
+            <i data-lucide="play"></i>
+          </button>
+        </div>
+        <div id="ai-model-status" class="mask-ai-status" aria-live="polite"></div>
         <form id="mask-tag-form" class="mask-tag-form" title="编辑当前 Mask Tag">
           <i data-lucide="tags" aria-hidden="true"></i>
           <input id="mask-tag-input" data-requires-series type="text" list="mask-tag-suggestions" maxlength="671" placeholder="Tag，逗号分隔" aria-label="当前 Mask Tag，使用逗号分隔" />

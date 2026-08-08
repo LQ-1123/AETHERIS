@@ -1,6 +1,7 @@
 import {
   beginMprPrefetch,
   buildLut,
+  cancelAiSegmentation,
   cancelMprBuild,
   cancelMprPrefetch,
   cancelRemoteDownload,
@@ -17,6 +18,7 @@ import {
   createSharedAnnotation,
   getTransformSchema,
   listInstanceRevisionsBySop,
+  listAiModels,
   listPatientStudies,
   listPatients,
   listRouteDestinations,
@@ -40,6 +42,7 @@ import {
   remoteLogin,
   remoteLogout,
   renderMprSlice,
+  runAiSegmentation,
   selectImageStack,
   sendRouteScope,
   updateSharedAnnotation,
@@ -84,6 +87,10 @@ import { volumeCapabilityReason } from './volume-capability';
 import type { VolumeRenderer, VolumePreset, VolumeQuality } from './volume-renderer';
 import { importConflictMessage, importSummary } from './transfer-report';
 import type {
+  AiLabelDescriptor,
+  AiModelDescriptor,
+  AiSegmentationProgress,
+  AiSegmentationResult,
   Annotation,
   AnnotationKind,
   DicomRevision,
@@ -331,6 +338,12 @@ export class App {
   private maskTagSaving = false;
   private maskBrushRadius = 5;
   private maskOpacity = 0.38;
+  private aiModels: AiModelDescriptor[] = [];
+  private aiSelectedModelId = '';
+  private aiModelsLoaded = false;
+  private aiModelsLoading = false;
+  private aiRunning = false;
+  private aiStatus = '';
   private drag: DragState | null = null;
   private frameRequests = new RequestVersion();
   private lutRequests = new RequestVersion();
@@ -472,6 +485,7 @@ export class App {
       this.maskDirtySlices.clear();
       this.maskSyncingSegments.clear();
       this.maskSyncErrors.clear();
+      this.aiStatus = '';
       this.angleAwaitingEnd = false;
       this.draft = null;
       this.mprDraft = null;
@@ -1363,6 +1377,223 @@ export class App {
     select.value = this.maskTagFilter;
   }
 
+  private async loadAiModels(): Promise<void> {
+    if (this.aiModelsLoading || this.aiModelsLoaded) return;
+    this.aiModelsLoading = true;
+    this.aiStatus = '正在检查本地 AI Worker...';
+    this.updateAiControls();
+    try {
+      this.aiModels = await listAiModels();
+      this.aiModelsLoaded = true;
+      const selected = this.aiModels.find((model) => model.id === this.aiSelectedModelId);
+      this.aiSelectedModelId = selected?.id
+        ?? this.aiModels.find((model) => model.available)?.id
+        ?? this.aiModels[0]?.id
+        ?? '';
+      this.aiStatus = '';
+    } catch (error) {
+      this.aiModels = [];
+      this.aiModelsLoaded = false;
+      console.warn('本地 AI Worker 探测失败', error);
+      this.aiStatus = '本地 AI Worker 不可用';
+    } finally {
+      this.aiModelsLoading = false;
+      this.updateAiControls();
+    }
+  }
+
+  private updateAiControls(): void {
+    const select = requiredElement<HTMLSelectElement>('ai-model-select');
+    const run = requiredElement<HTMLButtonElement>('ai-segment-run');
+    const status = requiredElement<HTMLElement>('ai-model-status');
+    const previous = this.aiSelectedModelId;
+    select.replaceChildren();
+    if (!this.aiModels.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = this.aiModelsLoading ? '正在检查本地 AI...' : '本地 AI 不可用';
+      select.append(option);
+      select.value = '';
+      select.disabled = true;
+      run.disabled = true;
+      status.textContent = this.aiStatus;
+      return;
+    }
+    for (const model of this.aiModels) {
+      const option = document.createElement('option');
+      option.value = model.id;
+      option.disabled = !model.available;
+      option.textContent = model.available
+        ? model.display_name
+        : `${model.display_name}（不可用）`;
+      select.append(option);
+    }
+    const selected = this.aiModels.find((model) => model.id === previous)
+      ?? this.aiModels.find((model) => model.available)
+      ?? this.aiModels[0];
+    this.aiSelectedModelId = selected.id;
+    select.value = selected.id;
+    select.disabled = !this.state || this.aiModelsLoading || this.aiRunning;
+    const modality = this.state?.metadata.patient.modality?.toUpperCase();
+    const supportsSeries = Boolean(
+      this.state
+      && modality
+      && selected.supported_modalities.some((value) => value.toUpperCase() === modality),
+    );
+    const canRun = Boolean(
+      this.state
+      && selected.available
+      && supportsSeries
+      && !this.busy
+      && !this.aiRunning,
+    );
+    run.disabled = !canRun;
+    if (this.aiStatus) {
+      status.textContent = this.aiStatus;
+    } else if (!selected.available) {
+      status.textContent = selected.unavailable_reason ?? '本地 AI Worker 不可用';
+    } else if (!supportsSeries) {
+      status.textContent = `当前序列不支持 ${selected.display_name}`;
+    } else {
+      const device = selected.device ? ` · ${selected.device}` : '';
+      status.textContent = `权重约 ${selected.model_download_mb} MB · 峰值内存约 ${selected.estimated_peak_memory_mb} MB${device}`;
+    }
+  }
+
+  private async runSelectedAiSegmentation(): Promise<void> {
+    if (!this.state || this.aiRunning || this.busy) return;
+    const model = this.aiModels.find((candidate) => candidate.id === this.aiSelectedModelId);
+    if (!model?.available) {
+      this.aiStatus = model?.unavailable_reason ?? '本地 AI Worker 不可用';
+      this.updateAiControls();
+      return;
+    }
+    const state = this.state;
+    const modelName = model.display_name;
+    this.aiRunning = true;
+    this.aiStatus = `正在准备 ${modelName}...`;
+    this.setBusy(true, this.aiStatus, true);
+    this.updateAiControls();
+    try {
+      const result = await runAiSegmentation(
+        state.metadata.handle,
+        state.metadata.active_stack,
+        model.id,
+      );
+      if (this.state !== state) return;
+      const appliedSegments = await this.applyAiSegmentationResult(result, model);
+      const voxelCount = result.segments.reduce((total, segment) => total + segment.voxel_count, 0);
+      this.aiStatus = `已生成 ${appliedSegments} 个 AI Segment · ${voxelCount.toLocaleString()} voxel`;
+    } catch (error) {
+      const message = errorMessage(error);
+      if (/取消/.test(message)) this.aiStatus = 'AI 分割已取消';
+      else {
+        this.aiStatus = message;
+        this.showError(`AI 分割失败: ${message}`);
+      }
+    } finally {
+      this.aiRunning = false;
+      this.setBusy(false);
+      this.updateAiControls();
+      this.render();
+      this.updateUi();
+    }
+  }
+
+  private async applyAiSegmentationResult(
+    result: AiSegmentationResult,
+    model: AiModelDescriptor,
+  ): Promise<number> {
+    if (!this.state) throw new Error('没有已打开的序列');
+    const frame = this.state.metadata.frames[0];
+    const prepared = result.segments
+      .filter((segment) => segment.voxel_count > 0)
+      .map((segment) => {
+        const volume = createMaskVolume(
+          frame.rows,
+          frame.cols,
+          this.mpr?.metadata.dimensions[2] ?? this.state!.metadata.frames.length,
+        );
+        const changed = new Set<number>();
+        for (const mask of segment.masks) {
+          if (mask.rows !== volume.rows || mask.cols !== volume.cols) {
+            throw new Error(`AI Segment ${segment.label.display_name} 尺寸不一致`);
+          }
+          const data = decodeMaskRle(
+            base64ToBytes(mask.data_base64),
+            volume.rows * volume.cols,
+          );
+          if (data.some(Boolean)) {
+            volume.sourceSlices.set(mask.source_index, data);
+            changed.add(mask.source_index);
+          }
+        }
+        volume.generation = 1;
+        return { segment, volume, changed };
+      })
+      .filter((entry) => entry.changed.size > 0);
+    if (!prepared.length) throw new Error('AI 未识别到可显示的目标');
+
+    const created: Array<{ segment: SegmentationSegment; volume: MaskVolume; changed: Set<number> }> = [];
+    for (const entry of prepared) {
+      const segment = await this.createAiSegment(entry.segment.label, model);
+      created.push({ ...entry, segment });
+    }
+    for (const entry of created) {
+      this.segmentationSegments.push(entry.segment);
+      this.maskVolumes.set(entry.segment.id, entry.volume);
+      this.queueMaskSync(entry.segment.id, entry.changed);
+    }
+    this.segmentationSegment = created[0].segment;
+    this.maskTagFilter = '';
+    this.maskMatchedSegmentIds = null;
+    this.maskUndoEntries = [];
+    this.maskRedoEntries = [];
+    this.updateMaskSegmentOptions();
+    return created.length;
+  }
+
+  private async createAiSegment(
+    label: AiLabelDescriptor,
+    model: AiModelDescriptor,
+  ): Promise<SegmentationSegment> {
+    if (!this.state) throw new Error('没有已打开的序列');
+    const timestamp = new Date().toISOString();
+    const description = `${model.display_name} ${model.version}`;
+    if (!this.remoteSeriesOpen) {
+      const id = `local-ai-segment-${makeId()}`;
+      return {
+        id,
+        project_id: `local-ai-project-${makeId()}`,
+        segment_number: this.segmentationSegments.length + 1,
+        label: label.display_name,
+        description,
+        color_r: label.color[0],
+        color_g: label.color[1],
+        color_b: label.color[2],
+        algorithm_type: 'automatic',
+        tags: [...new Set(label.tags)],
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+    }
+    const studyUid = this.state.metadata.study_uid;
+    const seriesUid = this.state.metadata.series_uid;
+    if (!studyUid || !seriesUid) throw new Error('当前序列缺少 DICOM UID');
+    const created = await createSegmentationProject(studyUid, seriesUid, {
+      id: makeId(),
+      segment_id: makeId(),
+      name: `AI ${label.display_name}`,
+      segment_label: label.display_name,
+      segment_description: description,
+      color: label.color,
+      algorithm_type: 'automatic',
+      tags: [...new Set(label.tags)],
+    });
+    this.segmentationProjects.push(created.project);
+    return created.segment;
+  }
+
   private async applyMaskTagFilter(tag: string): Promise<void> {
     this.maskTagFilter = tag.trim();
     const generation = ++this.maskTagQueryGeneration;
@@ -1404,6 +1635,7 @@ export class App {
       this.segmentationSegment = visible[0] ?? null;
     }
     this.updateMaskSegmentOptions();
+    this.updateAiControls();
     this.updateUi();
     this.render();
   }
@@ -1922,6 +2154,7 @@ export class App {
       if (!maskMenuPanel.hidden) {
         positionMaskMenu();
         this.updateMaskSegmentOptions();
+        void this.loadAiModels();
       }
     });
     maskMenuPanel.addEventListener('click', (event) => event.stopPropagation());
@@ -1945,6 +2178,14 @@ export class App {
     });
     requiredElement<HTMLSelectElement>('mask-tag-filter').addEventListener('change', (event) => {
       void this.applyMaskTagFilter((event.currentTarget as HTMLSelectElement).value);
+    });
+    requiredElement<HTMLSelectElement>('ai-model-select').addEventListener('change', (event) => {
+      this.aiSelectedModelId = (event.currentTarget as HTMLSelectElement).value;
+      this.aiStatus = '';
+      this.updateAiControls();
+    });
+    requiredElement<HTMLButtonElement>('ai-segment-run').addEventListener('click', () => {
+      void this.runSelectedAiSegmentation();
     });
     requiredElement<HTMLButtonElement>('cancel-transfer').addEventListener('click', () => {
       if (this.transferKind) void cancelTransfer(this.transferKind).catch((error) => this.showError(errorMessage(error)));
@@ -2002,9 +2243,10 @@ export class App {
       void this.confirmSelectedRollback();
     });
     requiredElement<HTMLButtonElement>('cancel-download').addEventListener('click', () => {
-      if (this.mprBuildActive) void cancelMprBuild();
+      if (this.aiRunning) void cancelAiSegmentation();
+      else if (this.mprBuildActive) void cancelMprBuild();
       else void cancelRemoteDownload();
-      setText('loading-text', '正在取消下载...');
+      setText('loading-text', this.aiRunning ? '正在取消 AI 分割...' : '正在取消下载...');
       requiredElement<HTMLButtonElement>('cancel-download').disabled = true;
     });
     requiredElement<HTMLButtonElement>('open-btn').addEventListener('click', () => void this.openFiles());
@@ -2214,6 +2456,16 @@ export class App {
           ? `上传 ${formatBytes(payload.completed_bytes)} / ${formatBytes(payload.total_bytes)}`
           : `处理 ${payload.completed_files} / ${payload.total_files}`;
         setText('worklist-status', text);
+      }),
+    );
+    void import('@tauri-apps/api/event').then(({ listen }) =>
+      listen<AiSegmentationProgress>('ai-segmentation-progress', ({ payload }) => {
+        if (!this.aiRunning) return;
+        const suffix = payload.total > 1 ? ` ${payload.completed} / ${payload.total}` : '';
+        const message = `${payload.message}${suffix}`;
+        this.aiStatus = message;
+        setText('loading-text', message);
+        setText('ai-model-status', message);
       }),
     );
   }
@@ -4426,6 +4678,7 @@ export class App {
     const volumeControls = requiredElement<HTMLElement>('vr-controls');
     volumeControls.hidden = this.viewerMode !== 'vr';
     this.updateMaskSegmentOptions();
+    this.updateAiControls();
     const maskButton = requiredElement<HTMLButtonElement>('mask-menu-button');
     const maskPanel = requiredElement<HTMLElement>('mask-menu-panel');
     if (!hasSeries) maskPanel.hidden = true;

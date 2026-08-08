@@ -1,4 +1,6 @@
 import type {
+  AiModelDescriptor,
+  AiSegmentationResult,
   DicomRevision,
   ImportTransferResponse,
   PatientSummary,
@@ -195,6 +197,25 @@ export async function chooseCaCertificate(): Promise<string | null> {
 export async function openSeries(paths: string[]): Promise<SeriesMetadata> {
   const invoke = await getInvoke();
   return invoke<SeriesMetadata>('open_series', { paths });
+}
+
+export async function listAiModels(): Promise<AiModelDescriptor[]> {
+  const invoke = await getInvoke();
+  return invoke<AiModelDescriptor[]>('list_ai_models');
+}
+
+export async function runAiSegmentation(
+  handle: number,
+  stackIndex: number,
+  modelId: string,
+): Promise<AiSegmentationResult> {
+  const invoke = await getInvoke();
+  return invoke<AiSegmentationResult>('run_ai_segmentation', { handle, stackIndex, modelId });
+}
+
+export async function cancelAiSegmentation(): Promise<boolean> {
+  const invoke = await getInvoke();
+  return invoke<boolean>('cancel_ai_segmentation');
 }
 
 export async function closeSeries(handle: number): Promise<void> {

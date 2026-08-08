@@ -1,14 +1,59 @@
 //! Tauri IPC commands used by the viewer frontend.
 
+use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
     DownloadProgress, PatientSummary, RemoteState, RemoteUser, SeriesSummary, StudySummary,
 };
 use crate::state::{SeriesMetadata, ViewerState};
+use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[tauri::command]
+pub async fn list_ai_models(
+    state: State<'_, AiState>,
+) -> Result<Vec<pacs_ai::ModelDescriptor>, String> {
+    let worker = state.worker();
+    tauri::async_runtime::spawn_blocking(move || worker.models())
+        .await
+        .map_err(|error| format!("AI 模型检查任务失败: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn run_ai_segmentation(
+    handle: u64,
+    stack_index: u32,
+    model_id: String,
+    app: AppHandle,
+    viewer: State<'_, ViewerState>,
+    ai: State<'_, AiState>,
+) -> Result<SegmentationResult, String> {
+    let series = viewer
+        .ai_series_input(handle, stack_index)
+        .map_err(|error| error.to_string())?;
+    let ai = ai.inner().clone();
+    let (job_id, cancellation) = ai.begin()?;
+    let worker = ai.worker();
+    let request = SegmentationRequest::new(job_id, model_id, series);
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        worker.segment(&request, &cancellation, &mut |progress| {
+            let _ = app.emit("ai-segmentation-progress", progress);
+        })
+    })
+    .await;
+    ai.finish(job_id);
+    let result = task.map_err(|error| format!("AI 分割任务失败: {error}"))?;
+    result.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn cancel_ai_segmentation(state: State<'_, AiState>) -> bool {
+    state.cancel()
+}
 
 #[tauri::command]
 pub async fn open_series(

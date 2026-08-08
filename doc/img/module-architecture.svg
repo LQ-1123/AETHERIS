@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Remote PACS 模块分层架构</title>
+  <desc id="desc">展示桌面应用、服务入口、业务编排、基础能力和持久化之间的模块关系。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0 L0 6 L9 3 Z" fill="#5b6872"/></marker>
+    <filter id="s"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/></filter>
+    <style>
+      .bg{fill:#f6f8fa}.band{fill:#fff;stroke:#c4ccd3;stroke-width:1.5}.box{stroke-width:1.5;filter:url(#s)}
+      .ui{fill:#fff2df;stroke:#b77b2e}.entry{fill:#e7f1fa;stroke:#4d7f9f}.domain{fill:#e9f5ee;stroke:#4b8067}.base{fill:#f2eaf5;stroke:#84608f}.data{fill:#f4f0ea;stroke:#8e755b}
+      .title{font:700 30px system-ui,"PingFang SC",sans-serif;fill:#202a32}.layer{font:700 18px system-ui,"PingFang SC",sans-serif;fill:#394752}.label{font:700 17px system-ui,"PingFang SC",sans-serif;fill:#26323b}.small{font:13px system-ui,"PingFang SC",sans-serif;fill:#52606a}.line{fill:none;stroke:#5b6872;stroke-width:1.8;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect class="bg" width="1440" height="900"/>
+  <text class="title" x="720" y="48" text-anchor="middle">Remote PACS 模块分层架构</text>
+
+  <rect class="band" x="55" y="80" width="1330" height="130" rx="8"/><text class="layer" x="80" y="112">交互层</text>
+  <rect class="box ui" x="245" y="105" width="410" height="80" rx="6"/><text class="label" x="450" y="137" text-anchor="middle">apps/viewer 前端</text><text class="small" x="450" y="162" text-anchor="middle">TypeScript · Canvas · 工作列表 · 阅片 · 管理面板</text>
+  <rect class="box ui" x="785" y="105" width="410" height="80" rx="6"/><text class="label" x="990" y="137" text-anchor="middle">apps/viewer/src-tauri</text><text class="small" x="990" y="162" text-anchor="middle">本地文件 · 远程下载 · 解码缓存 · MPR/VR · 命令桥</text>
+
+  <rect class="band" x="55" y="235" width="1330" height="130" rx="8"/><text class="layer" x="80" y="267">服务入口层</text>
+  <rect class="box entry" x="175" y="260" width="300" height="80" rx="6"/><text class="label" x="325" y="292" text-anchor="middle">pacsd</text><text class="small" x="325" y="317" text-anchor="middle">启动、配置、TLS、Worker 编排</text>
+  <rect class="box entry" x="570" y="260" width="300" height="80" rx="6"/><text class="label" x="720" y="292" text-anchor="middle">pacs-web</text><text class="small" x="720" y="317" text-anchor="middle">Axum · DICOMweb · REST API</text>
+  <rect class="box entry" x="965" y="260" width="300" height="80" rx="6"/><text class="label" x="1115" y="292" text-anchor="middle">pacs-dimse</text><text class="small" x="1115" y="317" text-anchor="middle">SCP/SCU · 命令集 · Association</text>
+
+  <rect class="band" x="55" y="390" width="1330" height="190" rx="8"/><text class="layer" x="80" y="422">领域与业务层</text>
+  <rect class="box domain" x="135" y="440" width="250" height="100" rx="6"/><text class="label" x="260" y="473" text-anchor="middle">pacs-core</text><text class="small" x="260" y="498" text-anchor="middle">UID、元数据、几何、查询</text><text class="small" x="260" y="520" text-anchor="middle">字符集、像素间距</text>
+  <rect class="box domain" x="460" y="440" width="250" height="100" rx="6"/><text class="label" x="585" y="473" text-anchor="middle">pacs-auth</text><text class="small" x="585" y="498" text-anchor="middle">Argon2、JWT、Refresh</text><text class="small" x="585" y="520" text-anchor="middle">RBAC、API Key、审计</text>
+  <rect class="box domain" x="785" y="440" width="250" height="100" rx="6"/><text class="label" x="910" y="473" text-anchor="middle">pacs-codec</text><text class="small" x="910" y="498" text-anchor="middle">帧解码、RGB 标准化</text><text class="small" x="910" y="520" text-anchor="middle">Modality/VOI/LUT</text>
+  <rect class="box domain" x="1110" y="440" width="190" height="100" rx="6"/><text class="label" x="1205" y="473" text-anchor="middle">pacs-ai</text><text class="small" x="1205" y="500" text-anchor="middle">仅接口预留</text><text class="small" x="1205" y="520" text-anchor="middle">无推理实现</text>
+
+  <rect class="band" x="55" y="605" width="1330" height="125" rx="8"/><text class="layer" x="80" y="637">数据访问与存储层</text>
+  <rect class="box base" x="290" y="630" width="340" height="75" rx="6"/><text class="label" x="460" y="661" text-anchor="middle">pacs-db</text><text class="small" x="460" y="685" text-anchor="middle">SQLx · 事务 · 迁移 · 任务租约</text>
+  <rect class="box base" x="810" y="630" width="340" height="75" rx="6"/><text class="label" x="980" y="661" text-anchor="middle">pacs-store</text><text class="small" x="980" y="685" text-anchor="middle">原子落盘 · 哈希分片 · 分层迁移</text>
+
+  <rect class="band" x="55" y="755" width="1330" height="100" rx="8"/><text class="layer" x="80" y="787">基础设施</text>
+  <rect class="box data" x="290" y="780" width="340" height="50" rx="6"/><text class="label" x="460" y="812" text-anchor="middle">PostgreSQL</text>
+  <rect class="box data" x="810" y="780" width="340" height="50" rx="6"/><text class="label" x="980" y="812" text-anchor="middle">本地不可变文件系统</text>
+
+  <path class="line" d="M990 185 V225 Q990 245 870 280"/><path class="line" d="M450 185 V225 Q450 245 570 280"/>
+  <path class="line" d="M325 340 V380 Q325 400 285 440"/><path class="line" d="M720 340 V420"/><path class="line" d="M1115 340 V420"/>
+  <path class="line" d="M720 340 Q720 385 585 440"/><path class="line" d="M1115 340 Q1085 405 910 440"/>
+  <path class="line" d="M260 540 Q300 605 430 630"/><path class="line" d="M585 540 V610 Q585 620 540 630"/><path class="line" d="M910 540 Q900 590 940 630"/>
+  <path class="line" d="M460 705 V780"/><path class="line" d="M980 705 V780"/>
+</svg>

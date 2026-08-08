@@ -3019,6 +3019,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pacs-ai"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
+ "uuid",
+]
+
+[[package]]
 name = "pacs-codec"
 version = "0.1.0"
 dependencies = [
@@ -3051,6 +3063,7 @@ dependencies = [
  "chrono",
  "dicom",
  "dicom-json",
+ "pacs-ai",
  "pacs-codec",
  "pacs-core",
  "rayon",

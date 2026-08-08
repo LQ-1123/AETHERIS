@@ -7,12 +7,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
 mod commands;
 mod mpr;
 mod protocol;
 mod remote;
 mod state;
 
+use ai::AiState;
 use remote::RemoteState;
 use state::ViewerState;
 
@@ -30,9 +32,17 @@ fn main() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            use tauri::Manager as _;
+            app.manage(AiState::new(app.handle()));
+            Ok(())
+        })
         .manage(state)
         .manage(remote)
         .invoke_handler(tauri::generate_handler![
+            commands::list_ai_models,
+            commands::run_ai_segmentation,
+            commands::cancel_ai_segmentation,
             commands::open_series,
             commands::close_series,
             commands::select_image_stack,

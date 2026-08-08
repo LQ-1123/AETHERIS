@@ -94,7 +94,10 @@ async fn segmentation_masks_are_sparse_batch_updated_and_versioned() {
             series_instance_uid: &series_uid,
             name: "Manual mask",
             segment_label: "Lesion",
+            segment_description: None,
             color: [55, 213, 216],
+            algorithm_type: "manual",
+            tags: &[],
             user_id,
         },
     )
@@ -102,6 +105,7 @@ async fn segmentation_masks_are_sparse_batch_updated_and_versioned() {
     .unwrap();
     assert_eq!(project.id, project_id);
     assert_eq!(segment.id, segment_id);
+    assert_eq!(segment.algorithm_type, "manual");
     assert!(segment.tags.is_empty());
     assert_eq!(
         list_segmentation_projects(&pool, 1, &study_uid, &series_uid)

@@ -8,6 +8,7 @@ use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use dicom::core::Tag;
 use dicom::dictionary_std::{tags, uids};
 use dicom::object::{DefaultDicomObject, open_file};
+use pacs_ai::{SeriesInput as AiSeriesInput, SliceInput as AiSliceInput};
 use pacs_codec::{Frames, GrayLut, Photometric, Pipeline, VoiFunction};
 use pacs_core::geometry::{SliceInput, Vec3, group_slices_by_orientation, sort_slices};
 use pacs_core::spacing::{Confidence, PixelSpacing, Source, resolve};
@@ -353,6 +354,76 @@ impl ViewerState {
             .get(&handle)
             .ok_or(ViewerError::UnknownHandle(handle))?
             .metadata(handle, stack_index)
+    }
+
+    pub fn ai_series_input(
+        &self,
+        handle: SeriesHandle,
+        stack_index: u32,
+    ) -> Result<AiSeriesInput, ViewerError> {
+        let inner = self.lock();
+        let series = inner
+            .series
+            .get(&handle)
+            .ok_or(ViewerError::UnknownHandle(handle))?;
+        let stack = series
+            .image_stacks
+            .get(stack_index as usize)
+            .ok_or(ViewerError::UnknownImageStack { stack_index })?;
+        let modality = series.identity.patient.modality.clone();
+        if !modality
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("CT"))
+        {
+            return Err(ViewerError::Unsupported(
+                "当前 AI 模型仅支持 CT 序列".to_owned(),
+            ));
+        }
+        if stack.frames.len() < 2 {
+            return Err(ViewerError::InvalidSeries(
+                "AI 分割至少需要两张 CT 切片".to_owned(),
+            ));
+        }
+        let first = &stack.frames[0];
+        let mut paths = std::collections::HashSet::new();
+        let mut slices = Vec::with_capacity(stack.frames.len());
+        for (index, frame) in stack.frames.iter().enumerate() {
+            if !frame.pixel_format.is_grayscale() {
+                return Err(ViewerError::Unsupported(
+                    "彩色影像不能使用当前 AI 分割模型".to_owned(),
+                ));
+            }
+            if frame.rows != first.rows || frame.cols != first.cols {
+                return Err(ViewerError::InvalidSeries(
+                    "AI 分割要求所有切片尺寸一致".to_owned(),
+                ));
+            }
+            if frame.source_frame != 1 || !paths.insert(frame.path.clone()) {
+                return Err(ViewerError::Unsupported(
+                    "当前 AI Worker 暂不支持多帧 DICOM".to_owned(),
+                ));
+            }
+            if frame.position.is_none()
+                || frame.orientation.is_none()
+                || frame.row_spacing_mm.is_none()
+                || frame.col_spacing_mm.is_none()
+            {
+                return Err(ViewerError::InvalidSeries(format!(
+                    "第 {} 张切片缺少 AI 分割所需的患者空间几何信息",
+                    index + 1
+                )));
+            }
+            slices.push(AiSliceInput {
+                source_index: index as u32,
+                path: frame.path.clone(),
+            });
+        }
+        Ok(AiSeriesInput {
+            modality,
+            rows: first.rows,
+            cols: first.cols,
+            slices,
+        })
     }
 
     pub fn close(&self, handle: SeriesHandle) -> Result<(), ViewerError> {

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="820" viewBox="0 0 1440 820" role="img" aria-labelledby="title desc">
+  <title id="title">DICOM 生命周期状态与保护机制</title>
+  <desc id="desc">Study 在热层、冷层和隔离区之间迁移，隔离后经审批与宽限期清除，Legal Hold 可阻断和暂停流程。</desc>
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0 L0 6 L9 3 Z" fill="#586671"/></marker>
+    <filter id="s"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.14"/></filter>
+    <style>
+      .bg{fill:#f6f8fa}.state{stroke-width:2;filter:url(#s)}.hot{fill:#fff0df;stroke:#b97528}.cold{fill:#e8f2fa;stroke:#507f9f}.quarantine{fill:#f2eaf5;stroke:#865f91}.purge{fill:#fbe9e8;stroke:#b45c55}.hold{fill:#eaf5ee;stroke:#4c8267}.title{font:700 30px system-ui,"PingFang SC",sans-serif;fill:#202b33}.label{font:700 20px system-ui,"PingFang SC",sans-serif;fill:#27333c}.small{font:14px system-ui,"PingFang SC",sans-serif;fill:#52606a}.line{fill:none;stroke:#586671;stroke-width:2;marker-end:url(#a)}.block{stroke:#b45c55;stroke-width:2.5;stroke-dasharray:8 6}.note{font:13px system-ui,"PingFang SC",sans-serif;fill:#5a6670}
+    </style>
+  </defs>
+  <rect class="bg" width="1440" height="820"/><text class="title" x="720" y="52" text-anchor="middle">Study 级 DICOM 生命周期状态与保护机制</text>
+  <rect class="state hot" x="90" y="180" width="250" height="150" rx="10"/><text class="label" x="215" y="225" text-anchor="middle">Hot 热层</text><text class="small" x="215" y="257" text-anchor="middle">新入库默认位置</text><text class="small" x="215" y="283" text-anchor="middle">在线检索与读取</text><text class="small" x="215" y="309" text-anchor="middle">允许接收新实例</text>
+  <rect class="state cold" x="595" y="180" width="250" height="150" rx="10"/><text class="label" x="720" y="225" text-anchor="middle">Cold 冷层</text><text class="small" x="720" y="257" text-anchor="middle">仍可 WADO 读取</text><text class="small" x="720" y="283" text-anchor="middle">相同实例重传幂等</text><text class="small" x="720" y="309" text-anchor="middle">新增实例前须恢复</text>
+  <rect class="state quarantine" x="1100" y="180" width="250" height="150" rx="10"/><text class="label" x="1225" y="225" text-anchor="middle">Quarantine 隔离区</text><text class="small" x="1225" y="257" text-anchor="middle">从查询与取回隐藏</text><text class="small" x="1225" y="283" text-anchor="middle">等待治理决策</text><text class="small" x="1225" y="309" text-anchor="middle">仅受控管理接口可见</text>
+  <path class="line" d="M340 235 H595"/><text class="small" x="467" y="220" text-anchor="middle">策略/手工转冷</text>
+  <path class="line" d="M595 285 H340"/><text class="small" x="467" y="310" text-anchor="middle">恢复到热层</text>
+  <path class="line" d="M845 235 H1100"/><text class="small" x="972" y="220" text-anchor="middle">隔离</text>
+  <path class="line" d="M1100 285 H845"/><text class="small" x="972" y="310" text-anchor="middle">管理员恢复</text>
+
+  <rect class="state purge" x="1090" y="515" width="270" height="165" rx="10"/><text class="label" x="1225" y="558" text-anchor="middle">物理清除完成</text><text class="small" x="1225" y="590" text-anchor="middle">Study 数据与相关制品删除</text><text class="small" x="1225" y="616" text-anchor="middle">删除清单逐文件幂等</text><text class="small" x="1225" y="642" text-anchor="middle">治理事件永久保留</text>
+  <rect class="state purge" x="640" y="515" width="270" height="165" rx="10"/><text class="label" x="775" y="558" text-anchor="middle">清除申请</text><text class="small" x="775" y="590" text-anchor="middle">申请 → 审批/拒绝</text><text class="small" x="775" y="616" text-anchor="middle">审批后进入宽限期</text><text class="small" x="775" y="642" text-anchor="middle">到期由 Worker 执行</text>
+  <path class="line" d="M1160 330 Q1080 430 910 555"/><text class="small" x="1030" y="445" text-anchor="middle">仅隔离 Study 可申请</text>
+  <path class="line" d="M910 598 H1090"/><text class="small" x="1000" y="585" text-anchor="middle">审批 + 宽限期结束</text>
+
+  <rect class="state hold" x="80" y="500" width="370" height="190" rx="10"/><text class="label" x="265" y="545" text-anchor="middle">Legal Hold 法律保全</text><text class="small" x="265" y="580" text-anchor="middle">以 Institution + Study 为作用域</text><text class="small" x="265" y="608" text-anchor="middle">阻止隔离与清除</text><text class="small" x="265" y="636" text-anchor="middle">宽限期中设置 Hold：冻结剩余秒数</text><text class="small" x="265" y="664" text-anchor="middle">解除后恢复同一任务与剩余时长</text>
+  <path class="block" d="M450 570 H640"/><text class="small" x="545" y="553" text-anchor="middle">暂停/阻断</text>
+  <path class="block" d="M450 525 Q720 390 1100 300"/>
+
+  <text class="note" x="720" y="765" text-anchor="middle">每次迁移执行：流式复制 → SHA-256 校验 → 数据库切换 → 目标读取验证 → 删除源文件；任一中间失败至少保留一个可读副本</text>
+</svg>

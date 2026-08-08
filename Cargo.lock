@@ -2649,10 +2649,10 @@ dependencies = [
 name = "pacs-ai"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "pacs-core",
+ "base64",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "uuid",
 ]

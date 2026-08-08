@@ -214,6 +214,57 @@ export interface CreatedSegmentationProject {
   segment: SegmentationSegment;
 }
 
+export interface AiLabelDescriptor {
+  id: string;
+  display_name: string;
+  color: [number, number, number];
+  tags: string[];
+}
+
+export interface AiModelDescriptor {
+  id: string;
+  display_name: string;
+  version: string;
+  description: string;
+  supported_modalities: string[];
+  labels: AiLabelDescriptor[];
+  estimated_peak_memory_mb: number;
+  model_download_mb: number;
+  device: string | null;
+  available: boolean;
+  unavailable_reason: string | null;
+}
+
+export interface AiMaskSlice {
+  source_index: number;
+  rows: number;
+  cols: number;
+  encoding: 'rle-v1';
+  data_base64: string;
+}
+
+export interface AiSegmentResult {
+  label: AiLabelDescriptor;
+  voxel_count: number;
+  masks: AiMaskSlice[];
+}
+
+export interface AiSegmentationResult {
+  protocol_version: number;
+  job_id: string;
+  model_id: string;
+  elapsed_ms: number;
+  segments: AiSegmentResult[];
+}
+
+export interface AiSegmentationProgress {
+  job_id: string;
+  stage: string;
+  completed: number;
+  total: number;
+  message: string;
+}
+
 export interface PatientPoint3D {
   x: number;
   y: number;

@@ -16,7 +16,7 @@ crates/
   pacs-auth/    账号、argon2 哈希、token、RBAC、审计
   pacs-web/     axum: QIDO/WADO/STOW-RS + 认证 API
   pacs-codec/   像素解码、缩略图、帧提取
-  pacs-ai/      AI 接口预留(仅 trait 与任务表，无实现)
+  pacs-ai/      本地 AI Worker 协议、任务取消与 Mask 结果校验
   pacsd/        服务端主程序
 apps/viewer/    Tauri 2 客户端(可脱离服务端打开本地 DICOM)
 ```
@@ -76,6 +76,17 @@ npm run build
 npm test
 npm run tauri dev
 ```
+
+启用轻量本地肺部分割：
+
+```sh
+./ai-worker/setup.sh
+npm run tauri dev
+```
+
+默认模型为 `lungmask R231`，权重约 119 MB，首次推理时下载。Apple Silicon 会自动
+使用 MPS；DICOM 仅由本地 Worker 读取，不上传到推理服务。可通过
+`PACS_AI_PYTHON` 和 `PACS_AI_WORKER` 替换 Python 环境或兼容 Worker。
 
 登录时使用默认地址 `https://127.0.0.1:8443`，CA 证书选择
 `<PACS_STORAGE_ROOT>/tls/ca.crt`。登录成功后可以按姓名或 Patient ID 搜索，依次展开

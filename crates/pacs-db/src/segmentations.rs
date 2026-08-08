@@ -57,7 +57,10 @@ pub struct NewSegmentationProject<'a> {
     pub series_instance_uid: &'a str,
     pub name: &'a str,
     pub segment_label: &'a str,
+    pub segment_description: Option<&'a str>,
     pub color: [i16; 3],
+    pub algorithm_type: &'a str,
+    pub tags: &'a [String],
     pub user_id: i64,
 }
 
@@ -139,17 +142,21 @@ pub async fn create_segmentation_project(
     .ok_or(DbError::NotFound)?;
     let segment = sqlx::query_as::<_, SegmentationSegment>(
         "INSERT INTO segmentation_segments (
-            id, project_fk, segment_number, label, color_r, color_g, color_b, algorithm_type
-         ) VALUES ($1, $2, 1, $3, $4, $5, $6, 'manual')
+            id, project_fk, segment_number, label, description,
+            color_r, color_g, color_b, algorithm_type, tags
+         ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, project_fk AS project_id, segment_number, label, description,
                    color_r, color_g, color_b, algorithm_type, tags, created_at, updated_at",
     )
     .bind(input.segment_id)
     .bind(input.id)
     .bind(input.segment_label)
+    .bind(input.segment_description)
     .bind(input.color[0])
     .bind(input.color[1])
     .bind(input.color[2])
+    .bind(input.algorithm_type)
+    .bind(input.tags)
     .fetch_one(&mut *transaction)
     .await?;
     transaction.commit().await?;

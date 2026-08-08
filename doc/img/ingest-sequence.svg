@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="980" viewBox="0 0 1500 980" role="img" aria-labelledby="title desc">
+  <title id="title">DICOM 可靠入库时序</title>
+  <desc id="desc">展示从接收请求、解析和预检，到文件同步、数据库事务以及成功响应的严格顺序。</desc>
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0 0 L0 6 L9 3 Z" fill="#53616c"/></marker>
+    <style>
+      .bg{fill:#f7f9fa}.head{fill:#e9f2f8;stroke:#5a809a;stroke-width:1.5}.life{stroke:#aab4bc;stroke-width:1.4;stroke-dasharray:6 6}.msg{stroke:#53616c;stroke-width:1.7;marker-end:url(#a)}.ret{stroke:#53616c;stroke-width:1.5;stroke-dasharray:6 5;marker-end:url(#a)}.critical{fill:#fff4e6;stroke:#bb7c2b;stroke-width:1.5}.success{fill:#eaf5ee;stroke:#4e8469;stroke-width:1.5}.title{font:700 30px system-ui,"PingFang SC",sans-serif;fill:#202b33}.label{font:700 16px system-ui,"PingFang SC",sans-serif;fill:#26323b}.text{font:14px system-ui,"PingFang SC",sans-serif;fill:#3f4d57}.note{font:13px system-ui,"PingFang SC",sans-serif;fill:#5a6670}
+    </style>
+  </defs>
+  <rect class="bg" width="1500" height="980"/><text class="title" x="750" y="48" text-anchor="middle">DICOM 可靠入库时序（C-STORE / STOW-RS / 批量导入共用核心）</text>
+  <g><rect class="head" x="55" y="80" width="210" height="60" rx="6"/><text class="label" x="160" y="116" text-anchor="middle">发送端</text></g>
+  <g><rect class="head" x="325" y="80" width="210" height="60" rx="6"/><text class="label" x="430" y="116" text-anchor="middle">协议入口</text></g>
+  <g><rect class="head" x="595" y="80" width="210" height="60" rx="6"/><text class="label" x="700" y="116" text-anchor="middle">pacs-core / ingest</text></g>
+  <g><rect class="head" x="865" y="80" width="210" height="60" rx="6"/><text class="label" x="970" y="116" text-anchor="middle">pacs-store</text></g>
+  <g><rect class="head" x="1135" y="80" width="210" height="60" rx="6"/><text class="label" x="1240" y="116" text-anchor="middle">PostgreSQL</text></g>
+  <line class="life" x1="160" y1="140" x2="160" y2="900"/><line class="life" x1="430" y1="140" x2="430" y2="900"/><line class="life" x1="700" y1="140" x2="700" y2="900"/><line class="life" x1="970" y1="140" x2="970" y2="900"/><line class="life" x1="1240" y1="140" x2="1240" y2="900"/>
+
+  <line class="msg" x1="160" y1="190" x2="430" y2="190"/><text class="text" x="295" y="180" text-anchor="middle">1. 发送 DICOM Dataset</text>
+  <line class="msg" x1="430" y1="245" x2="700" y2="245"/><text class="text" x="565" y="235" text-anchor="middle">2. 解析对象并保留原始字节</text>
+  <rect class="critical" x="585" y="275" width="230" height="80" rx="6"/><text class="text" x="700" y="304" text-anchor="middle">3. UID 与层级校验</text><text class="note" x="700" y="329" text-anchor="middle">提取元数据、规范化文本</text>
+  <line class="msg" x1="700" y1="385" x2="1240" y2="385"/><text class="text" x="970" y="375" text-anchor="middle">4. 入库预检：UID 所有权、历史版本、Study 层级</text>
+  <line class="ret" x1="1240" y1="430" x2="700" y2="430"/><text class="note" x="970" y="420" text-anchor="middle">Accept / Duplicate / Conflict</text>
+  <line class="msg" x1="700" y1="480" x2="970" y2="480"/><text class="text" x="835" y="470" text-anchor="middle">5. 交付 Part 10 字节与 SHA-256</text>
+  <rect class="critical" x="850" y="510" width="240" height="145" rx="6"/><text class="text" x="970" y="540" text-anchor="middle">6. 不可变原子落盘</text><text class="note" x="970" y="568" text-anchor="middle">写 .tmp 临时文件</text><text class="note" x="970" y="592" text-anchor="middle">fsync(file)</text><text class="note" x="970" y="616" text-anchor="middle">rename 到最终路径</text><text class="note" x="970" y="640" text-anchor="middle">fsync(parent directory)</text>
+  <line class="msg" x1="970" y1="690" x2="1240" y2="690"/><text class="text" x="1105" y="680" text-anchor="middle">7. 开启入库事务</text>
+  <rect class="critical" x="1120" y="715" width="240" height="100" rx="6"/><text class="text" x="1240" y="744" text-anchor="middle">8. 写 Patient/Study/Series</text><text class="note" x="1240" y="769" text-anchor="middle">Instance + Version 1</text><text class="note" x="1240" y="793" text-anchor="middle">重算聚合字段并 COMMIT</text>
+  <line class="ret" x1="1240" y1="845" x2="430" y2="845"/><text class="text" x="835" y="835" text-anchor="middle">9. 只有事务提交成功，入口才获得成功结果</text>
+  <line class="msg" x1="430" y1="890" x2="160" y2="890"/><text class="text" x="295" y="880" text-anchor="middle">10. 返回 C-STORE 0x0000 / HTTP 成功</text>
+  <rect class="success" x="410" y="920" width="680" height="42" rx="6"/><text class="label" x="750" y="947" text-anchor="middle">承诺边界：成功响应意味着文件目录项已持久化，且数据库索引事务已提交</text>
+</svg>

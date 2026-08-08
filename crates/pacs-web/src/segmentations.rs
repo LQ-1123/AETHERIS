@@ -74,7 +74,16 @@ struct CreateProjectRequest {
     segment_id: Uuid,
     name: String,
     segment_label: String,
+    segment_description: Option<String>,
     color: [i16; 3],
+    #[serde(default = "default_algorithm_type")]
+    algorithm_type: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+fn default_algorithm_type() -> String {
+    "manual".to_owned()
 }
 
 #[derive(Serialize)]
@@ -182,6 +191,11 @@ async fn create_project(
     validate_series(&path.study_uid, &path.series_uid)?;
     let name = request.name.trim();
     let label = request.segment_label.trim();
+    let description = request
+        .segment_description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     if name.is_empty()
         || name.chars().count() > 120
         || label.is_empty()
@@ -200,6 +214,20 @@ async fn create_project(
             "显示颜色分量必须为 0–255".to_owned(),
         ));
     }
+    if description.is_some_and(|value| value.chars().count() > 1_024) {
+        return Err(SegmentationError::BadRequest(
+            "Segment 描述不能超过 1024 个字符".to_owned(),
+        ));
+    }
+    if !matches!(
+        request.algorithm_type.as_str(),
+        "manual" | "semiautomatic" | "automatic"
+    ) {
+        return Err(SegmentationError::BadRequest(
+            "Segment 算法类型无效".to_owned(),
+        ));
+    }
+    let tags = normalize_tags(request.tags)?;
     let (project, segment) = pacs_db::create_segmentation_project(
         &state.pool,
         pacs_db::NewSegmentationProject {
@@ -210,7 +238,10 @@ async fn create_project(
             series_instance_uid: &path.series_uid,
             name,
             segment_label: label,
+            segment_description: description,
             color: request.color,
+            algorithm_type: &request.algorithm_type,
+            tags: &tags,
             user_id: identity.user_id,
         },
     )
@@ -221,7 +252,11 @@ async fn create_project(
         &identity,
         &path,
         Action::SegmentationCreated,
-        serde_json::json!({"project_id": project.id, "segment_id": segment.id}),
+        serde_json::json!({
+            "project_id": project.id,
+            "segment_id": segment.id,
+            "algorithm_type": segment.algorithm_type,
+        }),
         None,
     )
     .await;

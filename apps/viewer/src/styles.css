@@ -378,6 +378,50 @@ input:disabled {
   gap: 7px;
 }
 
+.mask-ai-control {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  height: 31px;
+  padding: 0 3px 0 7px;
+  border: 1px solid #42474a;
+  border-radius: 4px;
+  color: #8fd2d8;
+  background: #292d30;
+}
+
+.mask-ai-control > svg {
+  width: 14px;
+  height: 14px;
+}
+
+#ai-model-select {
+  min-width: 0;
+  width: 100%;
+  height: 27px;
+  border: 0;
+  outline: 0;
+  color: #e7e9eb;
+  background: transparent;
+  font-size: 11px;
+}
+
+#ai-segment-run {
+  width: 27px;
+  height: 27px;
+}
+
+.mask-ai-status {
+  min-height: 14px;
+  grid-column: 1 / -1;
+  color: #9fa9ac;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 .mask-color-swatch {
   display: block;
   width: 16px;

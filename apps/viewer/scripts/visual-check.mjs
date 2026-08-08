@@ -61,6 +61,13 @@ try {
   const desktopMenuBounds = await menuBounds(page, '#measurement-menu-panel');
   await page.screenshot({ path: `${outputDirectory}/toolbar-menu-desktop.png`, fullPage: true });
   await page.keyboard.press('Escape');
+  await page.evaluate(() => {
+    document.querySelector('#mask-menu-button').disabled = false;
+  });
+  await page.click('#mask-menu-button');
+  const desktopMaskBounds = await menuBounds(page, '#mask-menu-panel');
+  await page.screenshot({ path: `${outputDirectory}/mask-ai-desktop.png`, fullPage: true });
+  await page.click('#mask-menu-button');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#view-menu-button').scrollIntoViewIfNeeded();
@@ -68,6 +75,11 @@ try {
   const mobileMenuBounds = await menuBounds(page, '#view-menu-panel');
   await page.screenshot({ path: `${outputDirectory}/toolbar-menu-mobile.png`, fullPage: true });
   await page.keyboard.press('Escape');
+  await page.locator('#mask-menu-button').scrollIntoViewIfNeeded();
+  await page.click('#mask-menu-button');
+  const mobileMaskBounds = await menuBounds(page, '#mask-menu-panel');
+  await page.screenshot({ path: `${outputDirectory}/mask-ai-mobile.png`, fullPage: true });
+  await page.click('#mask-menu-button');
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => {
     document.querySelector('#mpr-projection-control').hidden = true;
@@ -150,12 +162,17 @@ try {
   if (!desktopMenuBounds.insideViewport || !mobileMenuBounds.insideViewport) {
     throw new Error(`工具栏菜单超出视口: ${JSON.stringify({ desktopMenuBounds, mobileMenuBounds })}`);
   }
+  if (!desktopMaskBounds.insideViewport || !mobileMaskBounds.insideViewport) {
+    throw new Error(`Mask 菜单超出视口: ${JSON.stringify({ desktopMaskBounds, mobileMaskBounds })}`);
+  }
   if (browserErrors.length) throw new Error(`浏览器错误: ${browserErrors.join(' | ')}`);
   console.log(JSON.stringify({
     toolbarMetrics,
     wideToolbarMetrics,
     desktopMenuBounds,
     mobileMenuBounds,
+    desktopMaskBounds,
+    mobileMaskBounds,
     desktopPixels,
     mobilePixels,
     outputDirectory,
