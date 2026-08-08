@@ -1433,7 +1433,7 @@ export class App {
     }));
     try {
       const [catalog, configurations] = await Promise.all([
-        listAiCatalog(),
+        refreshAiPlugins(),
         listAiPluginConfigurations(),
       ]);
       this.aiPlugins = catalog.plugins;
@@ -1489,6 +1489,11 @@ export class App {
     plugin: AiPluginDescriptor,
     configuration?: AiPluginConfiguration,
   ): HTMLElement {
+    const pluginModels = this.aiModels.filter((model) => model.plugin_id === plugin.id);
+    const available = plugin.available
+      && (pluginModels.length === 0 || pluginModels.some((model) => model.available));
+    const unavailableReason = plugin.unavailable_reason
+      ?? pluginModels.find((model) => !model.available)?.unavailable_reason;
     const row = document.createElement('article');
     row.className = 'ai-plugin-installed-row';
     const heading = document.createElement('div');
@@ -1496,15 +1501,14 @@ export class App {
     const name = document.createElement('strong');
     name.textContent = plugin.name;
     const badge = document.createElement('span');
-    badge.className = `ai-plugin-status-badge ${plugin.available ? 'is-available' : 'is-unavailable'}`;
-    badge.textContent = plugin.available ? '可用' : '不可用';
+    badge.className = `ai-plugin-status-badge ${available ? 'is-available' : 'is-unavailable'}`;
+    badge.textContent = available ? '可用' : '不可用';
     heading.append(name, badge);
 
     const metadata = document.createElement('p');
     const source = plugin.source === 'bundled' ? '内置插件' : plugin.source === 'legacy' ? '兼容 Worker' : '外部插件';
     const version = plugin.version ? ` · ${plugin.version}` : '';
-    const models = this.aiModels.filter((model) => model.plugin_id === plugin.id).length;
-    metadata.textContent = `${source}${version} · ${models} 个模型`;
+    metadata.textContent = `${source}${version} · ${pluginModels.length} 个模型`;
     row.append(heading, metadata);
     if (configuration?.path) {
       const path = document.createElement('code');
@@ -1512,10 +1516,10 @@ export class App {
       path.title = configuration.path;
       row.append(path);
     }
-    if (!plugin.available && plugin.unavailable_reason) {
+    if (!available && unavailableReason) {
       const reason = document.createElement('p');
       reason.className = 'ai-plugin-installed-error';
-      reason.textContent = plugin.unavailable_reason;
+      reason.textContent = unavailableReason;
       row.append(reason);
     }
     return row;
@@ -1558,7 +1562,14 @@ export class App {
       const catalog = await checkAiPlugin(name, path);
       const plugin = catalog.plugins[0];
       if (!plugin?.available) throw new Error(plugin?.unavailable_reason ?? '插件不可用');
-      result.textContent = `检测通过：${plugin.name} ${plugin.version}，发现 ${catalog.models.length} 个模型。`;
+      const availableModels = catalog.models.filter((model) => model.available);
+      if (!availableModels.length) {
+        throw new Error(
+          catalog.models.find((model) => model.unavailable_reason)?.unavailable_reason
+          ?? '插件没有可用模型',
+        );
+      }
+      result.textContent = `检测通过：${plugin.name} ${plugin.version}，${availableModels.length}/${catalog.models.length} 个模型可用。`;
       result.dataset.state = 'success';
       result.dataset.signature = signature;
       save.disabled = false;

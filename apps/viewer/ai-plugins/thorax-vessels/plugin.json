@@ -1,8 +1,8 @@
 {
   "manifest_version": 1,
-  "id": "org.aetheris.lungmask",
-  "name": "LungMask",
-  "version": "0.3.0",
+  "id": "org.aetheris.thorax-vessels",
+  "name": "胸部血管与气道",
+  "version": "1.0.0",
   "worker_protocol": 1,
   "launcher": {
     "kind": "python",

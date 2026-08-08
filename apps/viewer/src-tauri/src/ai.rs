@@ -145,6 +145,13 @@ impl AiState {
                 .clone()
                 .unwrap_or_else(|| "插件不可用".to_owned()));
         }
+        if !checked.models.iter().any(|model| model.available) {
+            return Err(checked
+                .models
+                .iter()
+                .find_map(|model| model.unavailable_reason.clone())
+                .unwrap_or_else(|| "插件没有可用模型".to_owned()));
+        }
         plugin.id = status.id.clone();
         plugin.version = status.version.clone();
 

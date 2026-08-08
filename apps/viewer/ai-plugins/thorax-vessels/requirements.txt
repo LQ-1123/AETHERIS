@@ -1,0 +1,3 @@
+# Kept separate because TotalSegmentator has a substantially larger runtime.
+TotalSegmentator>=2.4,<3
+SimpleITK>=2.3,<3

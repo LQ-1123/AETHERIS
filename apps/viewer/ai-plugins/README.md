@@ -22,6 +22,18 @@ Installed plugins are local code with the same file access as the viewer. Only
 install plugins from a trusted source. Version 1 validates paths and process
 output but does not provide code signing or an operating-system network sandbox.
 
+## Bundled model adapters
+
+- `lungmask`: the lightweight default for left/right lungs and five lung lobes.
+  It is the recommended first choice for a 16 GB Apple Silicon Mac.
+- `thorax-vessels`: an optional focused TotalSegmentator adapter for pulmonary
+  vessels and trachea/bronchi. It has its own setup script and defaults to CPU
+  so its larger runtime is never installed or loaded unless explicitly chosen.
+
+Model weights are not committed to Git. Each worker downloads weights through
+its upstream runtime on first inference and exits after the result is written,
+which releases PyTorch/MPS memory before the next AI job.
+
 ## Worker protocol v1
 
 `worker.py --models` prints a final JSON line containing:

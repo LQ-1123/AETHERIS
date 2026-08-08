@@ -15,8 +15,7 @@ from typing import Any
 
 
 PROTOCOL_VERSION = 1
-MODEL_ID = "lungmask-r231"
-MODEL_LABELS = (
+LUNG_LABELS = (
     {
         "id": "right-lung",
         "display_name": "右肺",
@@ -30,6 +29,61 @@ MODEL_LABELS = (
         "tags": ["AI", "肺", "左肺"],
     },
 )
+LOBE_LABELS = (
+    {
+        "id": "left-upper-lobe",
+        "display_name": "左肺上叶",
+        "color": [236, 112, 99],
+        "tags": ["AI", "肺叶", "左肺上叶"],
+    },
+    {
+        "id": "left-lower-lobe",
+        "display_name": "左肺下叶",
+        "color": [245, 176, 65],
+        "tags": ["AI", "肺叶", "左肺下叶"],
+    },
+    {
+        "id": "right-upper-lobe",
+        "display_name": "右肺上叶",
+        "color": [88, 214, 141],
+        "tags": ["AI", "肺叶", "右肺上叶"],
+    },
+    {
+        "id": "right-middle-lobe",
+        "display_name": "右肺中叶",
+        "color": [93, 173, 226],
+        "tags": ["AI", "肺叶", "右肺中叶"],
+    },
+    {
+        "id": "right-lower-lobe",
+        "display_name": "右肺下叶",
+        "color": [165, 105, 189],
+        "tags": ["AI", "肺叶", "右肺下叶"],
+    },
+)
+
+MODEL_SPECS = {
+    "lungmask-r231": {
+        "display_name": "左右肺分割 R231",
+        "description": "轻量 CT 左右肺分割",
+        "labels": LUNG_LABELS,
+        "modelname": "R231",
+        "fillmodel": None,
+        "batch_size": 4,
+        "memory_mb": 3600,
+        "download_mb": 119,
+    },
+    "lungmask-lobes-r231": {
+        "display_name": "五肺叶分割 LTRCLobes",
+        "description": "CT 左上叶、左下叶、右上叶、右中叶和右下叶分割",
+        "labels": LOBE_LABELS,
+        "modelname": "LTRCLobes",
+        "fillmodel": "R231",
+        "batch_size": 2,
+        "memory_mb": 4600,
+        "download_mb": 238,
+    },
+}
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -59,24 +113,24 @@ def model_catalog() -> dict[str, Any]:
         version = importlib.metadata.version("lungmask") if available else "0.2.21"
     except importlib.metadata.PackageNotFoundError:
         version = "0.2.21"
-    return {
-        "protocol_version": PROTOCOL_VERSION,
-        "models": [
+    models = []
+    for model_id, spec in MODEL_SPECS.items():
+        models.append(
             {
-                "id": MODEL_ID,
-                "display_name": "肺部分割 R231",
+                "id": model_id,
+                "display_name": spec["display_name"],
                 "version": version,
-                "description": "CT 左右肺分割",
+                "description": spec["description"],
                 "supported_modalities": ["CT"],
-                "labels": list(MODEL_LABELS),
-                "estimated_peak_memory_mb": 3600,
-                "model_download_mb": 119,
+                "labels": list(spec["labels"]),
+                "estimated_peak_memory_mb": spec["memory_mb"],
+                "model_download_mb": spec["download_mb"],
                 "device": device,
                 "available": available,
                 "unavailable_reason": reason,
             }
-        ],
-    }
+        )
+    return {"protocol_version": PROTOCOL_VERSION, "models": models}
 
 
 def parse_request(path: Path) -> dict[str, Any]:
@@ -86,7 +140,7 @@ def parse_request(path: Path) -> dict[str, Any]:
         raise WorkerFailure("无法读取 AI 请求") from error
     if request.get("protocol_version") != PROTOCOL_VERSION:
         raise WorkerFailure("AI Worker 协议版本不兼容")
-    if request.get("model_id") != MODEL_ID:
+    if request.get("model_id") not in MODEL_SPECS:
         raise WorkerFailure("请求的 AI 模型不可用")
     series = request.get("series")
     if not isinstance(series, dict) or len(series.get("slices", [])) < 2:
@@ -146,13 +200,15 @@ def run_segmentation(request: dict[str, Any], output_path: Path) -> None:
         raise WorkerFailure("本地 AI 依赖尚未安装") from error
 
     job_id = request["job_id"]
+    spec = MODEL_SPECS[request["model_id"]]
     emit_progress(job_id, "loading", 1, 4, "正在读取本地 CT 体数据")
     image = read_volume(request)
-    emit_progress(job_id, "model", 2, 4, "正在加载肺部分割模型")
+    emit_progress(job_id, "model", 2, 4, "正在加载肺部分割模型（首次运行会下载权重）")
     try:
         inferer = LMInferer(
-            modelname="R231",
-            batch_size=4,
+            modelname=spec["modelname"],
+            fillmodel=spec["fillmodel"],
+            batch_size=spec["batch_size"],
             volume_postprocessing=True,
             tqdm_disable=True,
         )
@@ -171,7 +227,7 @@ def run_segmentation(request: dict[str, Any], output_path: Path) -> None:
         raise WorkerFailure("AI 输出尺寸与输入序列不一致")
 
     segments = []
-    for label_value, descriptor in enumerate(MODEL_LABELS, start=1):
+    for label_value, descriptor in enumerate(spec["labels"], start=1):
         binary = labels == label_value
         masks = [
             {

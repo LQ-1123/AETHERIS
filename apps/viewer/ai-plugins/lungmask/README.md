@@ -12,9 +12,10 @@ From `apps/viewer`, run:
 ./ai-plugins/lungmask/setup.sh
 ```
 
-The default `lungmask R231` weights are about 119 MB and download on the first
-inference. On Apple Silicon, PyTorch uses MPS automatically when available.
-The tested peak memory for a 393-slice 512 x 512 CT volume is about 3.4 GB.
+The plugin exposes two models: the 119 MB `R231` left/right lung model and the
+combined `LTRCLobes` + `R231` five-lobe model. Weights download on first use.
+On Apple Silicon, PyTorch uses MPS automatically when available. The lobe model
+uses a smaller batch size to keep its expected peak below 5 GB on a 16 GB Mac.
 
 Use `PACS_AI_PYTHON` to select another Python environment. The legacy
 `PACS_AI_WORKER` override remains available for protocol-compatible workers.

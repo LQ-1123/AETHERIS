@@ -2,7 +2,12 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PYTHON_BIN=${PACS_AI_SETUP_PYTHON:-python3}
+if command -v python3.11 >/dev/null 2>&1; then
+  DEFAULT_PYTHON=python3.11
+else
+  DEFAULT_PYTHON=python3
+fi
+PYTHON_BIN=${PACS_AI_SETUP_PYTHON:-$DEFAULT_PYTHON}
 
 "$PYTHON_BIN" -m venv "$SCRIPT_DIR/.venv"
 "$SCRIPT_DIR/.venv/bin/python" -m pip install --upgrade pip
