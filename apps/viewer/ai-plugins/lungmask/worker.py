@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local, versioned AI segmentation worker for the desktop viewer."""
+"""Bundled LungMask plugin implementing the AETHERIS Worker v1 protocol."""
 
 from __future__ import annotations
 

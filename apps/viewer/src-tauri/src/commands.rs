@@ -15,12 +15,62 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[tauri::command]
 pub async fn list_ai_models(
     state: State<'_, AiState>,
-) -> Result<Vec<pacs_ai::ModelDescriptor>, String> {
-    let worker = state.worker();
-    tauri::async_runtime::spawn_blocking(move || worker.models())
+) -> Result<Vec<pacs_ai::RegisteredModelDescriptor>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.catalog().map(|catalog| catalog.models))
         .await
         .map_err(|error| format!("AI 模型检查任务失败: {error}"))?
-        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_ai_catalog(state: State<'_, AiState>) -> Result<pacs_ai::AiCatalog, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.catalog())
+        .await
+        .map_err(|error| format!("AI 插件检查任务失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn refresh_ai_plugins(state: State<'_, AiState>) -> Result<pacs_ai::AiCatalog, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.refresh_catalog())
+        .await
+        .map_err(|error| format!("AI 插件刷新任务失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn check_ai_plugin(
+    name: String,
+    path: String,
+    state: State<'_, AiState>,
+) -> Result<pacs_ai::AiCatalog, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.check_plugin(&name, PathBuf::from(path).as_path())
+    })
+    .await
+    .map_err(|error| format!("AI 插件检测任务失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn add_ai_plugin(
+    name: String,
+    path: String,
+    state: State<'_, AiState>,
+) -> Result<pacs_ai::AiCatalog, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.add_plugin(&name, PathBuf::from(path).as_path())
+    })
+    .await
+    .map_err(|error| format!("AI 插件保存任务失败: {error}"))?
+}
+
+#[tauri::command]
+pub fn list_ai_plugin_configurations(
+    state: State<'_, AiState>,
+) -> Vec<crate::ai::AiPluginConfiguration> {
+    state.configured_plugins()
 }
 
 #[tauri::command]
@@ -36,13 +86,22 @@ pub async fn run_ai_segmentation(
         .ai_series_input(handle, stack_index)
         .map_err(|error| error.to_string())?;
     let ai = ai.inner().clone();
+    let requested_model_id = model_id;
+    let resolver = ai.clone();
+    let resolved =
+        tauri::async_runtime::spawn_blocking(move || resolver.resolve_model(&requested_model_id))
+            .await
+            .map_err(|error| format!("AI 模型路由任务失败: {error}"))??;
     let (job_id, cancellation) = ai.begin()?;
-    let worker = ai.worker();
-    let request = SegmentationRequest::new(job_id, model_id, series);
+    let worker = resolved.worker;
+    let registered_model_id = resolved.registered_id;
+    let request = SegmentationRequest::new(job_id, resolved.model_id, series);
     let task = tauri::async_runtime::spawn_blocking(move || {
-        worker.segment(&request, &cancellation, &mut |progress| {
+        let mut result = worker.segment(&request, &cancellation, &mut |progress| {
             let _ = app.emit("ai-segmentation-progress", progress);
-        })
+        })?;
+        result.model_id = registered_model_id;
+        Ok::<_, pacs_ai::AiError>(result)
     })
     .await;
     ai.finish(job_id);
@@ -184,12 +243,7 @@ pub async fn render_mpr_slice(
             projection: request.projection,
             slab_thickness_mm: request.slab_thickness_mm,
         };
-        state.render_mpr_slice(
-            request.handle,
-            request.plane,
-            request.slice_index,
-            &options,
-        )
+        state.render_mpr_slice(request.handle, request.plane, request.slice_index, &options)
     })
     .await
     .map_err(|error| format!("MPR 切面任务失败: {error}"))?
@@ -440,13 +494,7 @@ pub async fn update_segmentation_segment_tags(
     state: State<'_, RemoteState>,
 ) -> Result<serde_json::Value, String> {
     state
-        .update_segmentation_segment_tags(
-            &study_uid,
-            &series_uid,
-            &project_id,
-            &segment_id,
-            input,
-        )
+        .update_segmentation_segment_tags(&study_uid, &series_uid, &project_id, &segment_id, input)
         .await
         .map_err(|error| error.to_string())
 }

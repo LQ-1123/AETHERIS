@@ -1,6 +1,8 @@
 import type {
   AiModelDescriptor,
+  AiPluginConfiguration,
   AiSegmentationResult,
+  AiCatalog,
   DicomRevision,
   ImportTransferResponse,
   PatientSummary,
@@ -202,6 +204,37 @@ export async function openSeries(paths: string[]): Promise<SeriesMetadata> {
 export async function listAiModels(): Promise<AiModelDescriptor[]> {
   const invoke = await getInvoke();
   return invoke<AiModelDescriptor[]>('list_ai_models');
+}
+
+export async function listAiCatalog(): Promise<AiCatalog> {
+  const invoke = await getInvoke();
+  return invoke<AiCatalog>('list_ai_catalog');
+}
+
+export async function refreshAiPlugins(): Promise<AiCatalog> {
+  const invoke = await getInvoke();
+  return invoke<AiCatalog>('refresh_ai_plugins');
+}
+
+export async function chooseAiPluginFolder(): Promise<string | null> {
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({ multiple: false, directory: true });
+  return typeof selected === 'string' ? selected : null;
+}
+
+export async function checkAiPlugin(name: string, path: string): Promise<AiCatalog> {
+  const invoke = await getInvoke();
+  return invoke<AiCatalog>('check_ai_plugin', { name, path });
+}
+
+export async function addAiPlugin(name: string, path: string): Promise<AiCatalog> {
+  const invoke = await getInvoke();
+  return invoke<AiCatalog>('add_ai_plugin', { name, path });
+}
+
+export async function listAiPluginConfigurations(): Promise<AiPluginConfiguration[]> {
+  const invoke = await getInvoke();
+  return invoke<AiPluginConfiguration[]>('list_ai_plugin_configurations');
 }
 
 export async function runAiSegmentation(

@@ -41,6 +41,11 @@ fn main() {
         .manage(remote)
         .invoke_handler(tauri::generate_handler![
             commands::list_ai_models,
+            commands::list_ai_catalog,
+            commands::refresh_ai_plugins,
+            commands::check_ai_plugin,
+            commands::add_ai_plugin,
+            commands::list_ai_plugin_configurations,
             commands::run_ai_segmentation,
             commands::cancel_ai_segmentation,
             commands::open_series,

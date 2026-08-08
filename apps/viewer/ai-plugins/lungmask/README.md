@@ -1,4 +1,4 @@
-# Local AI worker
+# LungMask AI plugin
 
 The desktop viewer runs this worker as a local child process. DICOM files are
 read from their existing local paths and are never sent to the PACS server or
@@ -9,15 +9,15 @@ an external inference API.
 From `apps/viewer`, run:
 
 ```sh
-./ai-worker/setup.sh
+./ai-plugins/lungmask/setup.sh
 ```
 
 The default `lungmask R231` weights are about 119 MB and download on the first
 inference. On Apple Silicon, PyTorch uses MPS automatically when available.
 The tested peak memory for a 393-slice 512 x 512 CT volume is about 3.4 GB.
 
-Use `PACS_AI_PYTHON` to select another Python environment and
-`PACS_AI_WORKER` to select a protocol-compatible worker script.
+Use `PACS_AI_PYTHON` to select another Python environment. The legacy
+`PACS_AI_WORKER` override remains available for protocol-compatible workers.
 
 ## Protocol
 

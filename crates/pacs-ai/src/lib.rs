@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -24,6 +24,18 @@ pub const WORKER_PROTOCOL_VERSION: u32 = 1;
 const MAX_RESULT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_MASK_BYTES: usize = 64 * 1024 * 1024;
 const MAX_INPUT_VOXELS: u64 = 320_000_000;
+const MAX_MODELS_PER_WORKER: usize = 64;
+const MAX_LABELS_PER_MODEL: usize = 256;
+const MAX_STDERR_BYTES: usize = 32 * 1024;
+const DEFAULT_CATALOG_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_INFERENCE_TIMEOUT: Duration = Duration::from_secs(60 * 30);
+
+mod plugins;
+
+pub use plugins::{
+    AiCatalog, PluginLauncher, PluginManifest, PluginRegistry, PluginRoot, PluginSource,
+    PluginStatus, RegisteredModelDescriptor, ResolvedModel,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelDescriptor {
@@ -145,8 +157,21 @@ pub trait SegmentationEngine: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
-    pub python: PathBuf,
-    pub script: PathBuf,
+    pub program: PathBuf,
+    pub args: Vec<String>,
+    pub catalog_timeout: Duration,
+    pub inference_timeout: Duration,
+}
+
+impl WorkerConfig {
+    pub fn new(program: PathBuf, args: Vec<String>) -> Self {
+        Self {
+            program,
+            args,
+            catalog_timeout: DEFAULT_CATALOG_TIMEOUT,
+            inference_timeout: DEFAULT_INFERENCE_TIMEOUT,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -164,29 +189,54 @@ impl LocalWorker {
     }
 
     fn command(&self) -> Command {
-        let mut command = Command::new(&self.config.python);
-        command.arg(&self.config.script);
+        let mut command = Command::new(&self.config.program);
+        command.args(&self.config.args);
         command
     }
 }
 
 impl SegmentationEngine for LocalWorker {
     fn models(&self) -> Result<Vec<ModelDescriptor>, AiError> {
-        if !self.config.script.is_file() {
-            return Err(AiError::Unavailable("AI Worker 文件不存在".to_owned()));
-        }
-        let output = self
+        let mut child = self
             .command()
             .arg("--models")
-            .stderr(Stdio::null())
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|error| AiError::Unavailable(format!("无法启动 AI Worker: {error}")))?;
-        if !output.status.success() {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AiError::Protocol("无法读取 AI Worker 模型列表".to_owned()))?;
+        let reader = thread::spawn(move || {
+            let mut retained = std::collections::VecDeque::with_capacity(256);
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if line.len() > 64 * 1024 {
+                    continue;
+                }
+                if retained.len() == 256 {
+                    retained.pop_front();
+                }
+                retained.push_back(line);
+            }
+            retained.into_iter().collect::<Vec<_>>().join("\n")
+        });
+        let stderr = child
+            .stderr
+            .take()
+            .map(|stderr| thread::spawn(move || read_tail(stderr, MAX_STDERR_BYTES)));
+        let status = wait_for_exit(&mut child, self.config.catalog_timeout, "AI 插件探测超时")?;
+        let output = reader.join().unwrap_or_default();
+        let stderr = stderr
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default();
+        if !status.success() {
+            log_worker_stderr("AI Worker 模型探测失败", &stderr);
             return Err(AiError::Unavailable(
                 "AI Worker 环境检查失败，请先安装本地推理依赖".to_owned(),
             ));
         }
-        let catalog: ModelCatalog = last_json_line(&output.stdout)
+        let catalog: ModelCatalog = last_json_line(output.as_bytes())
             .ok_or_else(|| AiError::Protocol("AI Worker 未返回有效的模型列表".to_owned()))?;
         validate_catalog(catalog)
     }
@@ -198,10 +248,6 @@ impl SegmentationEngine for LocalWorker {
         progress: &mut dyn FnMut(SegmentationProgress),
     ) -> Result<SegmentationResult, AiError> {
         validate_request(request)?;
-        if !self.config.script.is_file() {
-            return Err(AiError::Unavailable("AI Worker 文件不存在".to_owned()));
-        }
-
         let directory = tempfile::Builder::new()
             .prefix("remote-pacs-ai-")
             .tempdir()?;
@@ -216,7 +262,7 @@ impl SegmentationEngine for LocalWorker {
             .arg("--output")
             .arg(&result_path)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| AiError::Unavailable(format!("无法启动 AI Worker: {error}")))?;
 
@@ -232,6 +278,10 @@ impl SegmentationEngine for LocalWorker {
                 }
             }
         });
+        let stderr = child
+            .stderr
+            .take()
+            .map(|stderr| thread::spawn(move || read_tail(stderr, MAX_STDERR_BYTES)));
 
         let mut worker_error = None;
         let status = wait_for_worker(
@@ -241,14 +291,19 @@ impl SegmentationEngine for LocalWorker {
             &receiver,
             progress,
             &mut worker_error,
+            self.config.inference_timeout,
         )?;
         let _ = reader.join();
+        let stderr = stderr
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default();
         drain_events(&receiver, request.job_id, progress, &mut worker_error);
 
         if cancellation.is_cancelled() {
             return Err(AiError::Cancelled);
         }
         if !status.success() {
+            log_worker_stderr("AI Worker 推理失败", &stderr);
             return Err(AiError::WorkerFailed(
                 worker_error.unwrap_or_else(|| "AI Worker 执行失败".to_owned()),
             ));
@@ -264,6 +319,33 @@ impl SegmentationEngine for LocalWorker {
     }
 }
 
+fn read_tail(mut reader: impl Read, max_bytes: usize) -> Vec<u8> {
+    let mut retained = std::collections::VecDeque::with_capacity(max_bytes);
+    let mut buffer = [0_u8; 4_096];
+    while let Ok(count) = reader.read(&mut buffer) {
+        if count == 0 {
+            break;
+        }
+        for byte in &buffer[..count] {
+            if retained.len() == max_bytes {
+                retained.pop_front();
+            }
+            retained.push_back(*byte);
+        }
+    }
+    retained.into_iter().collect()
+}
+
+fn log_worker_stderr(context: &str, stderr: &[u8]) {
+    if stderr.is_empty() {
+        return;
+    }
+    tracing::warn!(
+        worker_stderr = %String::from_utf8_lossy(stderr),
+        "{context}"
+    );
+}
+
 fn wait_for_worker(
     child: &mut Child,
     expected_job_id: Uuid,
@@ -271,6 +353,7 @@ fn wait_for_worker(
     receiver: &mpsc::Receiver<String>,
     progress: &mut dyn FnMut(SegmentationProgress),
     worker_error: &mut Option<String>,
+    timeout: Duration,
 ) -> Result<std::process::ExitStatus, AiError> {
     let started = Instant::now();
     loop {
@@ -283,7 +366,7 @@ fn wait_for_worker(
         if let Some(status) = child.try_wait()? {
             return Ok(status);
         }
-        if started.elapsed() > Duration::from_secs(60 * 30) {
+        if started.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
             return Err(AiError::WorkerFailed(
@@ -291,6 +374,25 @@ fn wait_for_worker(
             ));
         }
         thread::sleep(Duration::from_millis(80));
+    }
+}
+
+fn wait_for_exit(
+    child: &mut Child,
+    timeout: Duration,
+    timeout_message: &str,
+) -> Result<std::process::ExitStatus, AiError> {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if started.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AiError::Unavailable(timeout_message.to_owned()));
+        }
+        thread::sleep(Duration::from_millis(40));
     }
 }
 
@@ -347,16 +449,51 @@ fn validate_catalog(catalog: ModelCatalog) -> Result<Vec<ModelDescriptor>, AiErr
             catalog.protocol_version
         )));
     }
+    if catalog.models.len() > MAX_MODELS_PER_WORKER {
+        return Err(AiError::Protocol("AI Worker 返回的模型数量过多".to_owned()));
+    }
     let mut ids = HashSet::new();
     for model in &catalog.models {
-        if model.id.trim().is_empty()
-            || model.display_name.trim().is_empty()
+        if !valid_protocol_id(&model.id, 96)
+            || !valid_protocol_text(&model.display_name, 120)
+            || !valid_protocol_text(&model.version, 120)
+            || model.description.chars().count() > 2_048
+            || model.supported_modalities.len() > 16
+            || model.labels.is_empty()
+            || model.labels.len() > MAX_LABELS_PER_MODEL
             || !ids.insert(model.id.as_str())
         {
             return Err(AiError::Protocol("AI Worker 模型定义无效".to_owned()));
         }
+        let mut label_ids = HashSet::new();
+        for label in &model.labels {
+            if !valid_protocol_id(&label.id, 96)
+                || !valid_protocol_text(&label.display_name, 120)
+                || label.tags.len() > 16
+                || label.tags.iter().any(|tag| tag.chars().count() > 40)
+                || !label_ids.insert(label.id.as_str())
+            {
+                return Err(AiError::Protocol("AI Worker Label 定义无效".to_owned()));
+            }
+        }
     }
     Ok(catalog.models)
+}
+
+fn valid_protocol_id(value: &str, max_length: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+}
+
+fn valid_protocol_text(value: &str, max_length: usize) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= max_length
 }
 
 fn validate_request(request: &SegmentationRequest) -> Result<(), AiError> {
@@ -522,5 +659,23 @@ mod tests {
 "#;
         let catalog: ModelCatalog = last_json_line(bytes).unwrap();
         assert_eq!(catalog.protocol_version, WORKER_PROTOCOL_VERSION);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn catalog_probe_timeout_terminates_the_worker() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("hang.sh");
+        fs::write(&script, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+        let mut config = WorkerConfig::new(script, Vec::new());
+        config.catalog_timeout = Duration::from_millis(100);
+        let started = Instant::now();
+        assert!(LocalWorker::new(config).models().is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

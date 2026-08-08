@@ -223,6 +223,10 @@ export interface AiLabelDescriptor {
 
 export interface AiModelDescriptor {
   id: string;
+  plugin_id: string;
+  plugin_name: string;
+  plugin_version: string;
+  model_id: string;
   display_name: string;
   version: string;
   description: string;
@@ -233,6 +237,27 @@ export interface AiModelDescriptor {
   device: string | null;
   available: boolean;
   unavailable_reason: string | null;
+}
+
+export interface AiPluginDescriptor {
+  id: string;
+  name: string;
+  version: string;
+  source: 'bundled' | 'user' | 'legacy';
+  available: boolean;
+  unavailable_reason: string | null;
+}
+
+export interface AiCatalog {
+  plugins: AiPluginDescriptor[];
+  models: AiModelDescriptor[];
+}
+
+export interface AiPluginConfiguration {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
 }
 
 export interface AiMaskSlice {

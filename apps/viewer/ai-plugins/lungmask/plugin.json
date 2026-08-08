@@ -1,0 +1,11 @@
+{
+  "manifest_version": 1,
+  "id": "org.aetheris.lungmask",
+  "name": "LungMask",
+  "version": "0.2.21",
+  "worker_protocol": 1,
+  "launcher": {
+    "kind": "python",
+    "script": "worker.py"
+  }
+}

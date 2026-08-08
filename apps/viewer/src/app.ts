@@ -1,4 +1,5 @@
 import {
+  addAiPlugin,
   beginMprPrefetch,
   buildLut,
   cancelAiSegmentation,
@@ -7,11 +8,13 @@ import {
   cancelRemoteDownload,
   cancelTransfer,
   chooseCaCertificate,
+  chooseAiPluginFolder,
   chooseDicomFiles,
   chooseImportFiles,
   chooseImportFolder,
   closeSeries,
   closeMpr,
+  checkAiPlugin,
   confirmTransform,
   createSegmentationProject,
   deleteSegmentationProject,
@@ -19,7 +22,8 @@ import {
   createSharedAnnotation,
   getTransformSchema,
   listInstanceRevisionsBySop,
-  listAiModels,
+  listAiCatalog,
+  listAiPluginConfigurations,
   listPatientStudies,
   listPatients,
   listRouteDestinations,
@@ -44,6 +48,7 @@ import {
   remoteLogout,
   renderMprSlice,
   runAiSegmentation,
+  refreshAiPlugins,
   selectImageStack,
   sendRouteScope,
   updateSharedAnnotation,
@@ -90,6 +95,8 @@ import { importConflictMessage, importSummary } from './transfer-report';
 import type {
   AiLabelDescriptor,
   AiModelDescriptor,
+  AiPluginDescriptor,
+  AiPluginConfiguration,
   AiSegmentationProgress,
   AiSegmentationResult,
   Annotation,
@@ -341,6 +348,7 @@ export class App {
   private maskBrushRadius = 5;
   private maskOpacity = 0.38;
   private aiModels: AiModelDescriptor[] = [];
+  private aiPlugins: AiPluginDescriptor[] = [];
   private aiSelectedModelId = '';
   private aiModelsLoaded = false;
   private aiModelsLoading = false;
@@ -1383,13 +1391,15 @@ export class App {
     select.value = this.maskTagFilter;
   }
 
-  private async loadAiModels(): Promise<void> {
-    if (this.aiModelsLoading || this.aiModelsLoaded) return;
+  private async loadAiModels(refresh = false): Promise<void> {
+    if (this.aiModelsLoading || (this.aiModelsLoaded && !refresh)) return;
     this.aiModelsLoading = true;
-    this.aiStatus = '正在检查本地 AI Worker...';
+    this.aiStatus = refresh ? '正在刷新本地 AI 插件...' : '正在检查本地 AI 插件...';
     this.updateAiControls();
     try {
-      this.aiModels = await listAiModels();
+      const catalog = refresh ? await refreshAiPlugins() : await listAiCatalog();
+      this.aiPlugins = catalog.plugins;
+      this.aiModels = catalog.models;
       this.aiModelsLoaded = true;
       const selected = this.aiModels.find((model) => model.id === this.aiSelectedModelId);
       this.aiSelectedModelId = selected?.id
@@ -1398,41 +1408,244 @@ export class App {
         ?? '';
       this.aiStatus = '';
     } catch (error) {
+      this.aiPlugins = [];
       this.aiModels = [];
       this.aiModelsLoaded = false;
-      console.warn('本地 AI Worker 探测失败', error);
-      this.aiStatus = '本地 AI Worker 不可用';
+      console.warn('本地 AI 插件探测失败', error);
+      this.aiStatus = '本地 AI 插件不可用';
     } finally {
       this.aiModelsLoading = false;
       this.updateAiControls();
     }
   }
 
+  private async openAiPluginDialog(): Promise<void> {
+    const dialog = requiredElement<HTMLDialogElement>('ai-plugin-dialog');
+    requiredElement<HTMLInputElement>('ai-plugin-name').value = '';
+    requiredElement<HTMLInputElement>('ai-plugin-path').value = '';
+    this.invalidateAiPluginCheck();
+    if (!dialog.open) dialog.showModal();
+    requiredElement<HTMLInputElement>('ai-plugin-name').focus();
+    const list = requiredElement<HTMLElement>('ai-plugin-installed-list');
+    list.replaceChildren(Object.assign(document.createElement('p'), {
+      className: 'ai-plugin-empty',
+      textContent: '正在读取插件...',
+    }));
+    try {
+      const [catalog, configurations] = await Promise.all([
+        listAiCatalog(),
+        listAiPluginConfigurations(),
+      ]);
+      this.aiPlugins = catalog.plugins;
+      this.aiModels = catalog.models;
+      this.aiModelsLoaded = true;
+      this.renderInstalledAiPlugins(catalog.plugins, configurations);
+    } catch (error) {
+      list.replaceChildren(Object.assign(document.createElement('p'), {
+        className: 'ai-plugin-empty ai-plugin-empty-error',
+        textContent: `读取插件失败：${errorMessage(error)}`,
+      }));
+    }
+  }
+
+  private renderInstalledAiPlugins(
+    plugins: AiPluginDescriptor[],
+    configurations: AiPluginConfiguration[],
+  ): void {
+    const list = requiredElement<HTMLElement>('ai-plugin-installed-list');
+    const count = requiredElement<HTMLElement>('ai-plugin-installed-count');
+    const matchedConfigurations = new Set<AiPluginConfiguration>();
+    const rows = plugins.map((plugin) => {
+      const configuration = configurations.find((candidate) => (
+        (candidate.id && candidate.id === plugin.id)
+        || (!candidate.id && candidate.name === plugin.name)
+      ));
+      if (configuration) matchedConfigurations.add(configuration);
+      return this.aiPluginRow(plugin, configuration);
+    });
+    for (const configuration of configurations) {
+      if (matchedConfigurations.has(configuration)) continue;
+      rows.push(this.aiPluginRow({
+        id: configuration.id,
+        name: configuration.name,
+        version: configuration.version,
+        source: 'user',
+        available: false,
+        unavailable_reason: '插件配置存在，但当前未能加载',
+      }, configuration));
+    }
+    count.textContent = `${rows.length} 个`;
+    if (rows.length) {
+      list.replaceChildren(...rows);
+    } else {
+      list.replaceChildren(Object.assign(document.createElement('p'), {
+        className: 'ai-plugin-empty',
+        textContent: '尚未发现 AI 插件。',
+      }));
+    }
+  }
+
+  private aiPluginRow(
+    plugin: AiPluginDescriptor,
+    configuration?: AiPluginConfiguration,
+  ): HTMLElement {
+    const row = document.createElement('article');
+    row.className = 'ai-plugin-installed-row';
+    const heading = document.createElement('div');
+    heading.className = 'ai-plugin-installed-row-heading';
+    const name = document.createElement('strong');
+    name.textContent = plugin.name;
+    const badge = document.createElement('span');
+    badge.className = `ai-plugin-status-badge ${plugin.available ? 'is-available' : 'is-unavailable'}`;
+    badge.textContent = plugin.available ? '可用' : '不可用';
+    heading.append(name, badge);
+
+    const metadata = document.createElement('p');
+    const source = plugin.source === 'bundled' ? '内置插件' : plugin.source === 'legacy' ? '兼容 Worker' : '外部插件';
+    const version = plugin.version ? ` · ${plugin.version}` : '';
+    const models = this.aiModels.filter((model) => model.plugin_id === plugin.id).length;
+    metadata.textContent = `${source}${version} · ${models} 个模型`;
+    row.append(heading, metadata);
+    if (configuration?.path) {
+      const path = document.createElement('code');
+      path.textContent = configuration.path;
+      path.title = configuration.path;
+      row.append(path);
+    }
+    if (!plugin.available && plugin.unavailable_reason) {
+      const reason = document.createElement('p');
+      reason.className = 'ai-plugin-installed-error';
+      reason.textContent = plugin.unavailable_reason;
+      row.append(reason);
+    }
+    return row;
+  }
+
+  private closeAiPluginDialog(): void {
+    const dialog = requiredElement<HTMLDialogElement>('ai-plugin-dialog');
+    if (dialog.open) dialog.close();
+  }
+
+  private invalidateAiPluginCheck(): void {
+    const result = requiredElement<HTMLElement>('ai-plugin-check-result');
+    result.textContent = '填写名称和路径后先检测插件。';
+    result.dataset.state = '';
+    result.dataset.signature = '';
+    requiredElement<HTMLButtonElement>('ai-plugin-save').disabled = true;
+  }
+
+  private aiPluginFormValues(): { name: string; path: string; signature: string } {
+    const name = requiredElement<HTMLInputElement>('ai-plugin-name').value.trim();
+    const path = requiredElement<HTMLInputElement>('ai-plugin-path').value.trim();
+    return { name, path, signature: `${name}\u0000${path}` };
+  }
+
+  private async detectAiPlugin(): Promise<void> {
+    const { name, path, signature } = this.aiPluginFormValues();
+    const result = requiredElement<HTMLElement>('ai-plugin-check-result');
+    const check = requiredElement<HTMLButtonElement>('ai-plugin-check');
+    const save = requiredElement<HTMLButtonElement>('ai-plugin-save');
+    if (!name || !path) {
+      result.textContent = '请填写插件名称并选择插件目录。';
+      result.dataset.state = 'error';
+      return;
+    }
+    check.disabled = true;
+    save.disabled = true;
+    result.textContent = '正在启动 Worker 并检测模型...';
+    result.dataset.state = 'checking';
+    try {
+      const catalog = await checkAiPlugin(name, path);
+      const plugin = catalog.plugins[0];
+      if (!plugin?.available) throw new Error(plugin?.unavailable_reason ?? '插件不可用');
+      result.textContent = `检测通过：${plugin.name} ${plugin.version}，发现 ${catalog.models.length} 个模型。`;
+      result.dataset.state = 'success';
+      result.dataset.signature = signature;
+      save.disabled = false;
+    } catch (error) {
+      result.textContent = `检测失败：${errorMessage(error)}`;
+      result.dataset.state = 'error';
+      result.dataset.signature = '';
+    } finally {
+      check.disabled = false;
+    }
+  }
+
+  private async saveAiPlugin(): Promise<void> {
+    const { name, path, signature } = this.aiPluginFormValues();
+    const result = requiredElement<HTMLElement>('ai-plugin-check-result');
+    const save = requiredElement<HTMLButtonElement>('ai-plugin-save');
+    if (result.dataset.signature !== signature) {
+      this.invalidateAiPluginCheck();
+      result.textContent = '名称或路径已变化，请重新检测插件。';
+      result.dataset.state = 'error';
+      return;
+    }
+    save.disabled = true;
+    result.textContent = '正在保存插件配置...';
+    result.dataset.state = 'checking';
+    try {
+      const catalog = await addAiPlugin(name, path);
+      this.aiPlugins = catalog.plugins;
+      this.aiModels = catalog.models;
+      this.aiModelsLoaded = true;
+      this.aiSelectedModelId = this.aiModels.find((model) => model.available)?.id
+        ?? this.aiModels[0]?.id
+        ?? '';
+      this.aiStatus = `已增加插件：${name}`;
+      this.updateAiControls();
+      this.closeAiPluginDialog();
+    } catch (error) {
+      result.textContent = `增加失败：${errorMessage(error)}`;
+      result.dataset.state = 'error';
+      save.disabled = false;
+    }
+  }
+
   private updateAiControls(): void {
     const select = requiredElement<HTMLSelectElement>('ai-model-select');
+    const refresh = requiredElement<HTMLButtonElement>('ai-plugins-refresh');
     const run = requiredElement<HTMLButtonElement>('ai-segment-run');
     const status = requiredElement<HTMLElement>('ai-model-status');
     const previous = this.aiSelectedModelId;
     select.replaceChildren();
+    refresh.disabled = this.aiModelsLoading || this.aiRunning || this.busy;
     if (!this.aiModels.length) {
       const option = document.createElement('option');
       option.value = '';
-      option.textContent = this.aiModelsLoading ? '正在检查本地 AI...' : '本地 AI 不可用';
+      option.textContent = this.aiModelsLoading ? '正在检查本地 AI...' : '没有可用模型';
       select.append(option);
       select.value = '';
       select.disabled = true;
       run.disabled = true;
-      status.textContent = this.aiStatus;
+      const unavailable = this.aiPlugins.find((plugin) => !plugin.available);
+      status.textContent = this.aiStatus
+        || unavailable?.unavailable_reason
+        || '未发现本地 AI 插件';
       return;
     }
-    for (const model of this.aiModels) {
-      const option = document.createElement('option');
-      option.value = model.id;
-      option.disabled = !model.available;
-      option.textContent = model.available
-        ? model.display_name
-        : `${model.display_name}（不可用）`;
-      select.append(option);
+    for (const plugin of this.aiPlugins) {
+      const group = document.createElement('optgroup');
+      group.label = `${plugin.name} ${plugin.version}`.trim();
+      const models = plugin.available
+        ? this.aiModels.filter((model) => model.plugin_id === plugin.id)
+        : [];
+      if (!models.length) {
+        const option = document.createElement('option');
+        option.disabled = true;
+        option.textContent = plugin.available ? '没有模型' : '插件不可用';
+        group.append(option);
+      }
+      for (const model of models) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.disabled = !model.available;
+        option.textContent = model.available
+          ? model.display_name
+          : `${model.display_name}（不可用）`;
+        group.append(option);
+      }
+      select.append(group);
     }
     const selected = this.aiModels.find((model) => model.id === previous)
       ?? this.aiModels.find((model) => model.available)
@@ -1457,12 +1670,12 @@ export class App {
     if (this.aiStatus) {
       status.textContent = this.aiStatus;
     } else if (!selected.available) {
-      status.textContent = selected.unavailable_reason ?? '本地 AI Worker 不可用';
+      status.textContent = selected.unavailable_reason ?? '本地 AI 插件不可用';
     } else if (!supportsSeries) {
       status.textContent = `当前序列不支持 ${selected.display_name}`;
     } else {
       const device = selected.device ? ` · ${selected.device}` : '';
-      status.textContent = `权重约 ${selected.model_download_mb} MB · 峰值内存约 ${selected.estimated_peak_memory_mb} MB${device}`;
+      status.textContent = `${selected.plugin_name} · 权重约 ${selected.model_download_mb} MB · 峰值内存约 ${selected.estimated_peak_memory_mb} MB${device}`;
     }
   }
 
@@ -2244,6 +2457,32 @@ export class App {
     });
     requiredElement<HTMLButtonElement>('ai-segment-run').addEventListener('click', () => {
       void this.runSelectedAiSegmentation();
+    });
+    requiredElement<HTMLButtonElement>('ai-plugins-refresh').addEventListener('click', () => {
+      void this.loadAiModels(true);
+    });
+    requiredElement<HTMLButtonElement>('ai-plugins-manage-btn').addEventListener('click', () => {
+      closeToolbarMenus();
+      void this.openAiPluginDialog();
+    });
+    for (const id of ['ai-plugin-close', 'ai-plugin-cancel']) {
+      requiredElement<HTMLButtonElement>(id).addEventListener('click', () => this.closeAiPluginDialog());
+    }
+    for (const id of ['ai-plugin-name', 'ai-plugin-path']) {
+      requiredElement<HTMLInputElement>(id).addEventListener('input', () => this.invalidateAiPluginCheck());
+    }
+    requiredElement<HTMLButtonElement>('ai-plugin-browse').addEventListener('click', async () => {
+      const path = await chooseAiPluginFolder();
+      if (!path) return;
+      requiredElement<HTMLInputElement>('ai-plugin-path').value = path;
+      this.invalidateAiPluginCheck();
+    });
+    requiredElement<HTMLButtonElement>('ai-plugin-check').addEventListener('click', () => {
+      void this.detectAiPlugin();
+    });
+    requiredElement<HTMLFormElement>('ai-plugin-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.saveAiPlugin();
     });
     requiredElement<HTMLButtonElement>('cancel-transfer').addEventListener('click', () => {
       if (this.transferKind) void cancelTransfer(this.transferKind).catch((error) => this.showError(errorMessage(error)));

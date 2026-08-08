@@ -233,6 +233,9 @@
         <button id="lifecycle-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM 生命周期" hidden>
           <i data-lucide="archive-restore"></i><span>生命周期管理</span>
         </button>
+        <button id="ai-plugins-manage-btn" class="toolbar-menu-item" type="button" role="menuitem" title="增加本地 AI 插件">
+          <i data-lucide="package-plus"></i><span>增加 AI 插件</span>
+        </button>
         <div class="toolbar-menu-separator" role="separator"></div>
         <button id="logout-btn" class="toolbar-menu-item" type="button" role="menuitem" title="退出登录">
           <i data-lucide="log-out"></i><span>退出登录</span>
@@ -262,6 +265,9 @@
           <select id="ai-model-select" data-requires-series aria-label="选择 AI 分割模型">
             <option value="">本地 AI</option>
           </select>
+          <button id="ai-plugins-refresh" class="icon-button" data-requires-series type="button" title="刷新 AI 插件" aria-label="刷新 AI 插件">
+            <i data-lucide="refresh-cw"></i>
+          </button>
           <button id="ai-segment-run" class="icon-button" data-requires-series type="button" title="运行 AI 分割" aria-label="运行 AI 分割">
             <i data-lucide="play"></i>
           </button>
@@ -466,6 +472,39 @@
         <output id="cine-fps">15.0 fps</output>
       </footer>
     </main>
+
+    <dialog id="ai-plugin-dialog" class="operational-dialog ai-plugin-dialog" aria-labelledby="ai-plugin-dialog-title">
+      <form id="ai-plugin-form">
+        <header class="dialog-heading">
+          <div>
+            <h2 id="ai-plugin-dialog-title">增加 AI 插件</h2>
+            <span>选择包含 plugin.json 的本地插件目录</span>
+          </div>
+          <button id="ai-plugin-close" class="icon-button" type="button" aria-label="关闭"><i data-lucide="x"></i></button>
+        </header>
+        <section class="ai-plugin-installed" aria-labelledby="ai-plugin-installed-title">
+          <div class="ai-plugin-section-heading">
+            <h3 id="ai-plugin-installed-title">已加载插件</h3>
+            <span id="ai-plugin-installed-count"></span>
+          </div>
+          <div id="ai-plugin-installed-list" class="ai-plugin-installed-list" aria-live="polite">
+            <p class="ai-plugin-empty">正在读取插件...</p>
+          </div>
+        </section>
+        <div class="ai-plugin-section-heading ai-plugin-add-heading"><h3>增加外部插件</h3></div>
+        <div class="ai-plugin-fields">
+          <label><span>显示名称</span><input id="ai-plugin-name" maxlength="120" required placeholder="例如：胸部器官分割" autocomplete="off" /></label>
+          <label><span>插件路径</span><span class="ai-plugin-path-control"><input id="ai-plugin-path" required placeholder="包含 plugin.json 的绝对路径" autocomplete="off" /><button id="ai-plugin-browse" type="button">选择目录</button></span></label>
+        </div>
+        <p class="ai-plugin-trust-note">插件是受信任的本地程序，检测和运行时会启动该目录声明的 Worker。请只添加可信来源。</p>
+        <p id="ai-plugin-check-result" class="ai-plugin-check-result" aria-live="polite">填写名称和路径后先检测插件。</p>
+        <footer class="dialog-actions">
+          <button id="ai-plugin-check" type="button">检测插件</button>
+          <button id="ai-plugin-cancel" type="button">取消</button>
+          <button id="ai-plugin-save" class="primary-button" type="submit" disabled>增加插件</button>
+        </footer>
+      </form>
+    </dialog>
 
     <dialog id="tag-editor-dialog" class="operational-dialog" aria-labelledby="tag-editor-title">
       <form id="tag-editor-form">

@@ -1,0 +1,2 @@
+# Kept isolated in this plugin's virtual environment.
+lungmask==0.2.21
