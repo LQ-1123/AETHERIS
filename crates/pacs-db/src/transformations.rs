@@ -579,7 +579,7 @@ pub async fn job_sources(pool: &PgPool, job_id: Uuid) -> Result<Vec<TransformSou
                item.source_version_fk AS current_version_id,
                v.version_number, v.storage_path, v.file_sha256,
                v.study_instance_uid, v.series_instance_uid, v.sop_instance_uid,
-               i.sop_class_uid, v.transfer_syntax_uid,
+               i.sop_class_uid, v.transfer_syntax_uid, st.storage_tier,
                CASE
                  WHEN j.target_type = 'patient' THEN p.id::text = j.target_key
                  WHEN j.target_type = 'study' THEN v.study_instance_uid = j.target_key

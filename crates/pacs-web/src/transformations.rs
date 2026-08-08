@@ -458,7 +458,10 @@ async fn process_runnable_job(state: WebState, runnable: pacs_db::RunnableJob) {
         if matches!(&error, WorkerError::NotRunnable) {
             return;
         }
-        tracing::error!(%job_id, %error, "DICOM 转换任务失败");
+        // Display is intentionally safe for API responses, but it hides sqlx's source error.
+        // Server logs need the Debug chain so operators can distinguish pool timeouts, decode
+        // failures and PostgreSQL constraint errors without exposing those details to clients.
+        tracing::error!(%job_id, ?error, "DICOM 转换任务失败");
         if let Err(mark_error) =
             pacs_db::mark_job_failed(&state.pool, job_id, error.public_message()).await
         {

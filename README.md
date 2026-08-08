@@ -29,7 +29,7 @@ apps/viewer/    Tauri 2 客户端(可脱离服务端打开本地 DICOM)
 先创建管理员账号并启动服务端，再用 DCMTK 模拟设备发送影像：
 
 ```sh
-cargo run -p pacsd -- admin --username admin --password 'replace-with-a-strong-password'
+cargo run -p pacsd -- admin --username admin --password 'sunyulin'
 cargo run -p pacsd
 
 echoscu  -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112
@@ -39,6 +39,10 @@ storescu -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112 x.dcm
 `echoscu` 成功表示关联和 C-ECHO 正常；`storescu` 返回 Success 后，影像已经持久化到
 `PACS_STORAGE_ROOT` 并完成 Postgres 分层索引。重复发送相同 SOP Instance UID 不会产生
 重复实例。
+
+### DCMTK 多设备模拟器
+
+本地测试可运行 `python3 tools/dcmtk-simulator.py`，然后打开 `http://127.0.0.1:8787`。页面支持拖拽 DICOM 文件夹、配置多台 Calling/Called AE 设备，并发调用 DCMTK `storescu` 上传到 PACS。需先安装 DCMTK（macOS：`brew install dcmtk`）；端口可用 `SIMULATOR_PORT` 修改。
 
 管理员可在服务器上为用户创建固定角色账号：
 
