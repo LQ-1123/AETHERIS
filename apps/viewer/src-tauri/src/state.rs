@@ -955,6 +955,27 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
     }
 
     validate_multi_file_series(&parsed)?;
+    // Projection/localizer images are valid DICOM images but are not always
+    // populated with patient-space geometry. Keep them viewable as standalone
+    // stacks while retaining strict geometry checks for sortable stacks.
+    let mut standalone_indices = Vec::new();
+    let mut sortable_indices = Vec::new();
+    for (index, file) in parsed.iter().enumerate() {
+        let has_geometry = file
+            .position
+            .as_deref()
+            .is_some_and(|values| values.len() >= 3)
+            && file
+                .orientation
+                .as_deref()
+                .is_some_and(|values| values.len() >= 6);
+        if has_geometry {
+            sortable_indices.push(index);
+        } else {
+            standalone_indices.push(index);
+        }
+    }
+
     let mut plans = {
         let slices = parsed
             .iter()
@@ -963,9 +984,21 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
                 orientation: file.orientation.as_deref().unwrap_or(&[]),
             })
             .collect::<Vec<_>>();
-        let orientation_groups = group_slices_by_orientation(&slices).map_err(geometry_error)?;
+        let sortable_slices = sortable_indices
+            .iter()
+            .map(|&source_index| slices[source_index])
+            .collect::<Vec<_>>();
+        if sortable_slices.is_empty() {
+            Vec::new()
+        } else {
+            let orientation_groups =
+                group_slices_by_orientation(&sortable_slices).map_err(geometry_error)?;
         let mut dimension_groups = Vec::<Vec<usize>>::new();
         for orientation_group in orientation_groups {
+            let orientation_group = orientation_group
+                .into_iter()
+                .map(|local_index| sortable_indices[local_index])
+                .collect::<Vec<_>>();
             let mut compatible_dimensions = Vec::<Vec<usize>>::new();
             for source_index in orientation_group {
                 let file = &parsed[source_index];
@@ -1015,6 +1048,7 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
                 })
             })
             .collect::<Result<Vec<_>, ViewerError>>()?
+        }
     };
 
     plans.sort_by(|left, right| {
@@ -1025,7 +1059,7 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
             .then_with(|| left.first_source_index.cmp(&right.first_source_index))
     });
     let mut slots = parsed.into_iter().map(Some).collect::<Vec<_>>();
-    Ok(plans
+    let mut prepared = plans
         .into_iter()
         .map(|plan| PreparedImageStack {
             files: plan
@@ -1036,7 +1070,21 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
             normal: Some(plan.normal),
             warnings: plan.warnings,
         })
-        .collect())
+        .collect::<Vec<_>>();
+    for source_index in standalone_indices {
+        let file = slots[source_index]
+            .take()
+            .expect("独立图像组索引必须唯一且有效");
+        prepared.push(PreparedImageStack {
+            files: vec![file],
+            normal: None,
+            warnings: vec![
+                "该图像缺少 ImagePositionPatient/ImageOrientationPatient，仅作为单张图像显示，不能安全排序或用于 MPR"
+                    .to_owned(),
+            ],
+        });
+    }
+    Ok(prepared)
 }
 
 fn geometry_error(error: pacs_core::geometry::GeometryError) -> ViewerError {
@@ -1840,7 +1888,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multi_file_series_without_patient_geometry() {
+    fn keeps_geometryless_files_as_standalone_images() {
         let directory = tempfile::tempdir().unwrap();
         let study = unique_uid();
         let series = unique_uid();
@@ -1851,10 +1899,19 @@ mod tests {
         let second = directory.path().join("missing-position.dcm");
         object.write_to_file(&second).unwrap();
 
-        let error = ViewerState::new()
-            .open_series(vec![first, second])
-            .unwrap_err();
-        assert!(error.to_string().contains("无法按 ImagePositionPatient"));
+        let state = ViewerState::new();
+        let metadata = state.open_series(vec![first, second]).unwrap();
+        assert_eq!(metadata.image_stacks.len(), 2);
+        assert_eq!(metadata.frames.len(), 1, "几何完整的主堆栈应默认打开");
+
+        let standalone = state.select_image_stack(metadata.handle, 1).unwrap();
+        assert_eq!(standalone.frames.len(), 1);
+        assert!(
+            standalone
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("仅作为单张图像显示"))
+        );
     }
 
     #[test]

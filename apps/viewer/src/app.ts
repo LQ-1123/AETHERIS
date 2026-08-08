@@ -1765,6 +1765,7 @@ export class App {
     const settings: Partial<Record<VolumePreset, [number, number]>> = {
       soft_tissue: [40, 400],
       bone: [500, 2000],
+      bone_color: [500, 1800],
       lung: [-600, 1500],
       pet: [(range[0] + range[1]) / 2, Math.max(1, range[1] - range[0])],
       grayscale: [this.state.windowCenter, this.state.windowWidth],

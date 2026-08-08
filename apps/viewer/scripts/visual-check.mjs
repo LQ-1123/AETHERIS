@@ -120,7 +120,7 @@ try {
         available: true,
         unavailable_reason: null,
       },
-      { windowCenter: 300, windowWidth: 1800, preset: 'bone', quality: 'medium' },
+      { windowCenter: 500, windowWidth: 1800, preset: 'bone_color', quality: 'medium' },
     );
     renderer.resize(window.innerWidth, window.innerHeight);
     window.__phase6VolumeRenderer = renderer;

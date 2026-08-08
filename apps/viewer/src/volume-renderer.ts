@@ -18,7 +18,13 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { VolumeRenderingMetadata } from './types';
 
-export type VolumePreset = 'grayscale' | 'soft_tissue' | 'bone' | 'lung' | 'pet';
+export type VolumePreset =
+  | 'grayscale'
+  | 'soft_tissue'
+  | 'bone'
+  | 'bone_color'
+  | 'lung'
+  | 'pet';
 export type VolumeQuality = 'low' | 'medium' | 'high';
 
 export interface VolumeRenderSettings {
@@ -38,8 +44,9 @@ const PRESET_INDEX: Record<VolumePreset, number> = {
   grayscale: 0,
   soft_tissue: 1,
   bone: 2,
-  lung: 3,
-  pet: 4,
+  bone_color: 3,
+  lung: 4,
+  pet: 5,
 };
 
 export class VolumeRenderer {
@@ -220,6 +227,31 @@ const FRAGMENT_SHADER = `
     return mix(red, yellow, (value - 0.72) / 0.28);
   }
 
+  vec3 boneColor(float physical) {
+    if (physical < 120.0) {
+      return mix(vec3(0.10, 0.30, 0.33), vec3(0.28, 0.62, 0.64), smoothstep(40.0, 120.0, physical));
+    }
+    if (physical < 260.0) {
+      return mix(vec3(0.28, 0.62, 0.64), vec3(0.52, 0.28, 0.15), smoothstep(120.0, 260.0, physical));
+    }
+    if (physical < 500.0) {
+      return mix(vec3(0.52, 0.28, 0.15), vec3(0.72, 0.46, 0.25), smoothstep(260.0, 500.0, physical));
+    }
+    if (physical < 900.0) {
+      return mix(vec3(0.72, 0.46, 0.25), vec3(0.91, 0.76, 0.53), smoothstep(500.0, 900.0, physical));
+    }
+    return mix(vec3(0.91, 0.76, 0.53), vec3(1.0, 0.94, 0.80), smoothstep(900.0, 1800.0, physical));
+  }
+
+  float boneAlpha(float physical) {
+    if (physical < 80.0) return 0.0;
+    if (physical < 160.0) return smoothstep(80.0, 160.0, physical) * 0.035;
+    if (physical < 280.0) return smoothstep(160.0, 280.0, physical) * 0.075;
+    if (physical < 520.0) return smoothstep(280.0, 520.0, physical) * 0.15;
+    if (physical < 900.0) return smoothstep(520.0, 900.0, physical) * 0.24;
+    return mix(0.24, 0.34, smoothstep(900.0, 1800.0, physical));
+  }
+
   vec4 transfer(float normalized) {
     float physical = mix(uValueMin, uValueMax, normalized);
     float value = clamp((physical - (uWindowCenter - uWindowWidth * 0.5)) / uWindowWidth, 0.0, 1.0);
@@ -235,6 +267,12 @@ const FRAGMENT_SHADER = `
       color = mix(vec3(0.45, 0.24, 0.12), vec3(1.0, 0.96, 0.84), value);
       alpha = smoothstep(0.48, 0.82, value) * 0.12;
     } else if (uPreset < 3.5) {
+      color = boneColor(physical);
+      alpha = boneAlpha(physical);
+      // Keep the HU window useful as a visibility control for the material map.
+      alpha *= smoothstep(0.02, 0.22, value);
+      alpha *= 1.0 - smoothstep(0.94, 1.0, value);
+    } else if (uPreset < 4.5) {
       color = mix(vec3(0.12, 0.28, 0.34), vec3(0.92, 0.96, 0.9), value);
       alpha = smoothstep(0.06, 0.5, value) * (1.0 - smoothstep(0.72, 1.0, value)) * 0.08;
     } else {
@@ -243,6 +281,18 @@ const FRAGMENT_SHADER = `
     }
     alpha = 1.0 - pow(1.0 - alpha, 256.0 / uSteps);
     return vec4(color, alpha);
+  }
+
+  vec3 volumeNormal(vec3 position) {
+    vec3 texel = 1.0 / vec3(textureSize(uVolume, 0));
+    float x = texture(uVolume, position + vec3(texel.x, 0.0, 0.0)).r
+      - texture(uVolume, position - vec3(texel.x, 0.0, 0.0)).r;
+    float y = texture(uVolume, position + vec3(0.0, texel.y, 0.0)).r
+      - texture(uVolume, position - vec3(0.0, texel.y, 0.0)).r;
+    float z = texture(uVolume, position + vec3(0.0, 0.0, texel.z)).r
+      - texture(uVolume, position - vec3(0.0, 0.0, texel.z)).r;
+    vec3 normal = vec3(x, y, z);
+    return length(normal) > 0.0001 ? normalize(normal) : vec3(0.0, 0.0, 1.0);
   }
 
   void main() {
@@ -259,6 +309,14 @@ const FRAGMENT_SHADER = `
       if (float(index) >= uSteps || accumulated.a > 0.985) break;
       float sampleValue = texture(uVolume, position).r;
       vec4 sampleColor = transfer(sampleValue);
+      if (uPreset > 2.5 && uPreset < 3.5 && sampleColor.a > 0.001) {
+        vec3 normal = volumeNormal(position);
+        if (dot(normal, direction) > 0.0) normal = -normal;
+        vec3 lightDirection = normalize(vec3(-0.45, 0.65, 0.75));
+        float diffuse = 0.38 + 0.62 * max(dot(normal, lightDirection), 0.0);
+        float specular = pow(max(dot(reflect(-lightDirection, normal), -direction), 0.0), 24.0) * 0.16;
+        sampleColor.rgb *= diffuse + specular;
+      }
       accumulated.rgb += (1.0 - accumulated.a) * sampleColor.a * sampleColor.rgb;
       accumulated.a += (1.0 - accumulated.a) * sampleColor.a;
       position += stepVector;
