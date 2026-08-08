@@ -772,22 +772,26 @@ impl Volume {
     }
 
     fn sample_voxel(&self, x: f64, y: f64, z: f64) -> Option<f64> {
-        let maximum_x = (self.cols - 1) as f64;
-        let maximum_y = (self.rows - 1) as f64;
-        let maximum_z = (self.slices - 1) as f64;
+        // MPR bounds are voxel edges, so the valid sample domain extends half
+        // a voxel beyond the first/last center. Clamp there to the edge voxel
+        // instead of producing a black half-voxel border.
+        let minimum = -0.5;
+        let maximum_x = self.cols as f64 - 0.5;
+        let maximum_y = self.rows as f64 - 0.5;
+        let maximum_z = self.slices as f64 - 0.5;
         let epsilon = 1e-6;
-        if x < -epsilon
-            || y < -epsilon
-            || z < -epsilon
+        if x < minimum - epsilon
+            || y < minimum - epsilon
+            || z < minimum - epsilon
             || x > maximum_x + epsilon
             || y > maximum_y + epsilon
             || z > maximum_z + epsilon
         {
             return None;
         }
-        let x = x.clamp(0.0, maximum_x);
-        let y = y.clamp(0.0, maximum_y);
-        let z = z.clamp(0.0, maximum_z);
+        let x = x.clamp(0.0, (self.cols - 1) as f64);
+        let y = y.clamp(0.0, (self.rows - 1) as f64);
+        let z = z.clamp(0.0, (self.slices - 1) as f64);
         let x0 = x.floor() as usize;
         let y0 = y.floor() as usize;
         let z0 = z.floor() as usize;
@@ -1035,10 +1039,16 @@ pub(crate) fn decode_stored_values(
 }
 
 fn build_planes(min: Vec3, max: Vec3, spacing: f64) -> [PlaneMetadata; 3] {
-    let count = |length: f64| (length / spacing).ceil() as u32 + 1;
-    let x_count = count(max.x - min.x);
-    let y_count = count(max.y - min.y);
-    let z_count = count(max.z - min.z);
+    let grid = |minimum: f64, maximum: f64| {
+        let length = (maximum - minimum).max(0.0);
+        let count = (length / spacing).ceil().max(1.0) as u32;
+        let sampled_span = f64::from(count.saturating_sub(1)) * spacing;
+        let margin = ((length - sampled_span) / 2.0).max(0.0);
+        (count, minimum + margin, maximum - margin)
+    };
+    let (x_count, x_min, x_max) = grid(min.x, max.x);
+    let (y_count, y_min, _y_max) = grid(min.y, max.y);
+    let (z_count, z_min, z_max) = grid(min.z, max.z);
     [
         PlaneMetadata {
             plane: Plane::Axial,
@@ -1047,7 +1057,7 @@ fn build_planes(min: Vec3, max: Vec3, spacing: f64) -> [PlaneMetadata; 3] {
             slice_count: z_count,
             pixel_spacing_mm: spacing,
             slice_spacing_mm: spacing,
-            origin: [max.x, min.y, min.z],
+            origin: [x_max, y_min, z_min],
             x_axis: [-1.0, 0.0, 0.0],
             y_axis: [0.0, 1.0, 0.0],
             normal: [0.0, 0.0, 1.0],
@@ -1059,7 +1069,7 @@ fn build_planes(min: Vec3, max: Vec3, spacing: f64) -> [PlaneMetadata; 3] {
             slice_count: y_count,
             pixel_spacing_mm: spacing,
             slice_spacing_mm: spacing,
-            origin: [max.x, min.y, max.z],
+            origin: [x_max, y_min, z_max],
             x_axis: [-1.0, 0.0, 0.0],
             y_axis: [0.0, 0.0, -1.0],
             normal: [0.0, 1.0, 0.0],
@@ -1071,7 +1081,7 @@ fn build_planes(min: Vec3, max: Vec3, spacing: f64) -> [PlaneMetadata; 3] {
             slice_count: x_count,
             pixel_spacing_mm: spacing,
             slice_spacing_mm: spacing,
-            origin: [min.x, min.y, max.z],
+            origin: [x_min, y_min, z_max],
             x_axis: [0.0, 1.0, 0.0],
             y_axis: [0.0, 0.0, -1.0],
             normal: [1.0, 0.0, 0.0],
@@ -1105,9 +1115,20 @@ fn normalized_float_bits(value: f64) -> u64 {
 fn volume_bounds(geometry: &SourceGeometry) -> (Vec3, Vec3) {
     let mut minimum = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
     let mut maximum = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for z in [0.0, (geometry.slices - 1) as f64 * geometry.slice_spacing] {
-        for y in [0.0, (geometry.rows - 1) as f64 * geometry.row_spacing] {
-            for x in [0.0, (geometry.cols - 1) as f64 * geometry.col_spacing] {
+    // DICOM positions locate voxel centers. Include half a voxel outside the
+    // first and last centers so sparse stacks retain their full physical depth.
+    for z in [
+        -0.5 * geometry.slice_spacing,
+        (geometry.slices as f64 - 0.5) * geometry.slice_spacing,
+    ] {
+        for y in [
+            -0.5 * geometry.row_spacing,
+            (geometry.rows as f64 - 0.5) * geometry.row_spacing,
+        ] {
+            for x in [
+                -0.5 * geometry.col_spacing,
+                (geometry.cols as f64 - 0.5) * geometry.col_spacing,
+            ] {
                 let point = add(
                     add(
                         add(geometry.origin, scale(geometry.row_direction, x)),
@@ -1253,6 +1274,33 @@ mod tests {
         let first = volume.resampled_slice(Plane::Axial, 0, plane);
         let second = volume.resampled_slice(Plane::Axial, 0, plane);
         assert!(Arc::ptr_eq(&first, &second), "再次访问同一切面应命中缓存");
+    }
+
+    #[test]
+    fn sparse_slices_keep_their_full_physical_depth() {
+        let volume = Volume::build(
+            0,
+            vec![source(0.0, [0, 10, 20, 30]), source(5.0, [100, 110, 120, 130])],
+            || false,
+            |_, _| {},
+        )
+        .unwrap();
+        let metadata = volume.metadata();
+        assert_eq!(metadata.patient_bounds_min[2], -2.5);
+        assert_eq!(metadata.patient_bounds_max[2], 7.5);
+        let coronal = metadata
+            .planes
+            .iter()
+            .find(|plane| plane.plane == Plane::Coronal)
+            .unwrap();
+        assert_eq!(coronal.rows, 10, "两张 5 mm 间隔的切片应覆盖完整的 10 mm 体厚");
+        assert!(
+            volume
+                .resampled_slice(Plane::Coronal, 0, coronal)
+                .iter()
+                .all(|value| value.is_finite()),
+            "体素边界内的重采样不应产生黑色边框"
+        );
     }
 
     #[test]
