@@ -163,6 +163,28 @@ pub async fn create_segmentation_project(
     Ok((project, segment))
 }
 
+pub async fn delete_segmentation_project(
+    pool: &PgPool,
+    institution_id: i64,
+    study_uid: &str,
+    series_uid: &str,
+    project_id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "DELETE FROM segmentation_projects
+         WHERE institution_id = $1 AND study_instance_uid = $2
+           AND series_instance_uid = $3 AND id = $4",
+    )
+    .bind(institution_id)
+    .bind(study_uid)
+    .bind(series_uid)
+    .bind(project_id)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
+}
+
 pub async fn list_segmentation_segments(
     pool: &PgPool,
     institution_id: i64,

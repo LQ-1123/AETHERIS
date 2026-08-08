@@ -66,6 +66,7 @@ fn main() {
             commands::update_shared_annotation,
             commands::list_segmentation_projects,
             commands::create_segmentation_project,
+            commands::delete_segmentation_project,
             commands::list_segmentation_segments,
             commands::update_segmentation_segment_tags,
             commands::list_segmentation_masks,

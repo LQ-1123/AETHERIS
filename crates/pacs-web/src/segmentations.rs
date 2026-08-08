@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{delete, get, put};
 use axum::{Json, Router};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -19,6 +19,10 @@ pub fn segmentation_routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route(
             "/studies/{study_uid}/series/{series_uid}/segmentations",
             get(list_projects).post(create_project),
+        )
+        .route(
+            "/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}",
+            delete(delete_project),
         )
         .route(
             "/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}/segments",
@@ -264,6 +268,39 @@ async fn create_project(
         StatusCode::CREATED,
         Json(CreatedProject { project, segment }),
     ))
+}
+
+async fn delete_project(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(path): Path<ProjectPath>,
+) -> Result<StatusCode, SegmentationError> {
+    validate_series(&path.study_uid, &path.series_uid)?;
+    let deleted = pacs_db::delete_segmentation_project(
+        &state.pool,
+        identity.institution_id,
+        &path.study_uid,
+        &path.series_uid,
+        path.project_id,
+    )
+    .await
+    .map_err(SegmentationError::db)?;
+    if !deleted {
+        return Err(SegmentationError::NotFound);
+    }
+    audit(
+        &state,
+        &identity,
+        &SeriesPath {
+            study_uid: path.study_uid,
+            series_uid: path.series_uid,
+        },
+        Action::SegmentationDeleted,
+        serde_json::json!({ "project_id": path.project_id }),
+        None,
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn list_segments(

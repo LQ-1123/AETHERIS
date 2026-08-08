@@ -328,6 +328,25 @@ impl RemoteState {
         self.authorized_json(Method::POST, url, Some(input)).await
     }
 
+    pub async fn delete_segmentation_project(
+        &self,
+        study_uid: &str,
+        series_uid: &str,
+        project_id: &str,
+    ) -> Result<(), RemoteError> {
+        validate_uid(study_uid)?;
+        validate_uid(series_uid)?;
+        uuid::Uuid::parse_str(project_id)
+            .map_err(|_| RemoteError::InvalidResponse("分割项目 ID 无效".to_owned()))?;
+        let url = self
+            .session_url(&format!(
+                "api/studies/{study_uid}/series/{series_uid}/segmentations/{project_id}"
+            ))
+            .await?;
+        self.authorized_request(Method::DELETE, url, None).await?;
+        Ok(())
+    }
+
     pub async fn list_segmentation_segments(
         &self,
         study_uid: &str,

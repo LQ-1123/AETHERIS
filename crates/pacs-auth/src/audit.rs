@@ -38,6 +38,7 @@ pub enum Action {
     AnnotationUpdated,
     AnnotationDeleted,
     SegmentationCreated,
+    SegmentationDeleted,
     SegmentationTagsUpdated,
     SegmentationMaskUpdated,
 }
@@ -61,6 +62,7 @@ impl Action {
             Self::AnnotationUpdated => "annotation_updated",
             Self::AnnotationDeleted => "annotation_deleted",
             Self::SegmentationCreated => "segmentation_created",
+            Self::SegmentationDeleted => "segmentation_deleted",
             Self::SegmentationTagsUpdated => "segmentation_tags_updated",
             Self::SegmentationMaskUpdated => "segmentation_mask_updated",
         }
@@ -222,6 +224,7 @@ mod tests {
             Action::AnnotationUpdated,
             Action::AnnotationDeleted,
             Action::SegmentationCreated,
+            Action::SegmentationDeleted,
             Action::SegmentationTagsUpdated,
             Action::SegmentationMaskUpdated,
         ];

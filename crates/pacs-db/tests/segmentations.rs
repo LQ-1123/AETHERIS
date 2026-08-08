@@ -6,9 +6,10 @@ use pacs_core::fixture::{ct_instance, unique_uid};
 use pacs_core::{InstanceMetadata, extract_metadata};
 use pacs_db::{
     DbError, NewSegmentationProject, SegmentationMaskUpdate, StorageRecord,
-    UpdateSegmentationSegmentTags, create_segmentation_project, find_segmentation_segments_by_tag,
-    ingest_instance, list_segmentation_projects, list_segmentation_segment_masks,
-    list_segmentation_segments, update_segmentation_segment_tags, upsert_segmentation_masks_batch,
+    UpdateSegmentationSegmentTags, create_segmentation_project, delete_segmentation_project,
+    find_segmentation_segments_by_tag, ingest_instance, list_segmentation_projects,
+    list_segmentation_segment_masks, list_segmentation_segments, update_segmentation_segment_tags,
+    upsert_segmentation_masks_batch,
 };
 use sqlx::migrate::MigrateDatabase;
 use sqlx::{PgPool, Postgres};
@@ -218,4 +219,38 @@ async fn segmentation_masks_are_sparse_batch_updated_and_versioned() {
     .await
     .unwrap();
     assert_eq!(updated[0].revision, 2);
+
+    assert!(
+        !delete_segmentation_project(&pool, 2, &study_uid, &series_uid, project_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !delete_segmentation_project(&pool, 1, &study_uid, &unique_uid(), project_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        delete_segmentation_project(&pool, 1, &study_uid, &series_uid, project_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        list_segmentation_projects(&pool, 1, &study_uid, &series_uid)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        list_segmentation_segments(&pool, 1, project_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        list_segmentation_segment_masks(&pool, 1, project_id, segment_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

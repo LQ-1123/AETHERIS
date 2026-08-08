@@ -373,7 +373,7 @@ input:disabled {
 .mask-segment-control {
   display: grid;
   min-width: 0;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 7px;
 }
@@ -441,6 +441,12 @@ input:disabled {
   color: #e7e9eb;
   background: #292d30;
   font-size: 11px;
+}
+
+#mask-segment-delete {
+  width: 28px;
+  height: 28px;
+  color: #d88f8b;
 }
 
 .mask-mode-control {

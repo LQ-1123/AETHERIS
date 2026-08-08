@@ -14,6 +14,7 @@ import {
   closeMpr,
   confirmTransform,
   createSegmentationProject,
+  deleteSegmentationProject,
   exportFromPacs,
   createSharedAnnotation,
   getTransformSchema,
@@ -336,6 +337,7 @@ export class App {
   private maskMatchedSegmentIds: Set<string> | null = null;
   private maskTagQueryGeneration = 0;
   private maskTagSaving = false;
+  private maskDeleting = false;
   private maskBrushRadius = 5;
   private maskOpacity = 0.38;
   private aiModels: AiModelDescriptor[] = [];
@@ -1352,6 +1354,10 @@ export class App {
     tagInput.disabled = !this.segmentationSegment || this.maskTagSaving;
     requiredElement<HTMLButtonElement>('mask-tag-save').disabled = !this.segmentationSegment
       || this.maskTagSaving;
+    requiredElement<HTMLButtonElement>('mask-segment-delete').disabled = !this.segmentationSegment
+      || this.maskDeleting
+      || (this.segmentationSegment != null
+        && this.maskSyncingSegments.has(this.segmentationSegment.id));
     this.updateMaskTagFilterOptions();
   }
 
@@ -1691,6 +1697,55 @@ export class App {
     this.updateMaskSegmentOptions();
     this.render();
     this.updateUi();
+  }
+
+  private async deleteSelectedSegmentation(): Promise<void> {
+    const selected = this.segmentationSegment;
+    if (!selected || this.maskDeleting) return;
+    if (this.maskSyncingSegments.has(selected.id)) {
+      this.showError('当前分割仍在保存，请稍后再删除');
+      return;
+    }
+    if (!window.confirm(`删除分割“${selected.label}”及其全部 Mask 数据？此操作无法撤销。`)) {
+      return;
+    }
+    this.maskDeleting = true;
+    this.updateMaskSegmentOptions();
+    try {
+      if (this.remoteSeriesOpen) {
+        const studyUid = this.state?.metadata.study_uid;
+        const seriesUid = this.state?.metadata.series_uid;
+        if (!studyUid || !seriesUid) throw new Error('当前序列缺少 DICOM UID');
+        await deleteSegmentationProject(studyUid, seriesUid, selected.project_id);
+      }
+      const removedIds = new Set(
+        this.segmentationSegments
+          .filter((segment) => segment.project_id === selected.project_id)
+          .map((segment) => segment.id),
+      );
+      this.segmentationProjects = this.segmentationProjects.filter(
+        (project) => project.id !== selected.project_id,
+      );
+      this.segmentationSegments = this.segmentationSegments.filter(
+        (segment) => !removedIds.has(segment.id),
+      );
+      for (const segmentId of removedIds) {
+        this.maskVolumes.delete(segmentId);
+        this.maskDirtySlices.delete(segmentId);
+        this.maskSyncErrors.delete(segmentId);
+        this.maskMatchedSegmentIds?.delete(segmentId);
+      }
+      this.maskUndoEntries = this.maskUndoEntries.filter((entry) => !removedIds.has(entry.segmentId));
+      this.maskRedoEntries = this.maskRedoEntries.filter((entry) => !removedIds.has(entry.segmentId));
+      this.segmentationSegment = this.visibleMaskSegments()[0] ?? null;
+    } catch (error) {
+      this.showError(`删除分割失败: ${errorMessage(error)}`);
+    } finally {
+      this.maskDeleting = false;
+      this.updateMaskSegmentOptions();
+      this.render();
+      this.updateUi();
+    }
   }
 
   private async ensureSegmentationWorkspace(): Promise<void> {
@@ -2171,6 +2226,9 @@ export class App {
     window.addEventListener('resize', closeToolbarMenus);
     requiredElement<HTMLSelectElement>('mask-segment-select').addEventListener('change', (event) => {
       void this.selectMaskSegment((event.currentTarget as HTMLSelectElement).value);
+    });
+    requiredElement<HTMLButtonElement>('mask-segment-delete').addEventListener('click', () => {
+      void this.deleteSelectedSegmentation();
     });
     requiredElement<HTMLFormElement>('mask-tag-form').addEventListener('submit', (event) => {
       event.preventDefault();

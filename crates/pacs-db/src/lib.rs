@@ -75,9 +75,10 @@ pub use router::{
 pub use segmentations::{
     NewSegmentationProject, SegmentationMask, SegmentationMaskUpdate, SegmentationProject,
     SegmentationSegment, UpdateSegmentationSegmentTags, UpsertSegmentationMask,
-    create_segmentation_project, find_segmentation_segments_by_tag, list_segmentation_masks,
-    list_segmentation_projects, list_segmentation_segment_masks, list_segmentation_segments,
-    update_segmentation_segment_tags, upsert_segmentation_mask, upsert_segmentation_masks_batch,
+    create_segmentation_project, delete_segmentation_project, find_segmentation_segments_by_tag,
+    list_segmentation_masks, list_segmentation_projects, list_segmentation_segment_masks,
+    list_segmentation_segments, update_segmentation_segment_tags, upsert_segmentation_mask,
+    upsert_segmentation_masks_batch,
 };
 pub use transfers::{
     ExportArtifact, ExportSource, ImportUpload, UploadStatus, advance_upload, create_import_upload,

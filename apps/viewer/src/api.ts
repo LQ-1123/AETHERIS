@@ -319,6 +319,15 @@ export async function createSegmentationProject(
   return invoke<CreatedSegmentationProject>('create_segmentation_project', { studyUid, seriesUid, input });
 }
 
+export async function deleteSegmentationProject(
+  studyUid: string,
+  seriesUid: string,
+  projectId: string,
+): Promise<void> {
+  const invoke = await getInvoke();
+  return invoke<void>('delete_segmentation_project', { studyUid, seriesUid, projectId });
+}
+
 export async function listSegmentationSegments(
   studyUid: string,
   seriesUid: string,

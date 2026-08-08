@@ -404,6 +404,19 @@ pub async fn create_segmentation_project(
 }
 
 #[tauri::command]
+pub async fn delete_segmentation_project(
+    study_uid: String,
+    series_uid: String,
+    project_id: String,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .delete_segmentation_project(&study_uid, &series_uid, &project_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn list_segmentation_segments(
     study_uid: String,
     series_uid: String,
