@@ -181,7 +181,12 @@ async fn main() -> Result<()> {
             pacs_web::dicom_transformation_routes(api_state.clone(), auth_service.clone()),
         );
     let http_app = Router::new()
+        .merge(pacs_web::api_checker_routes())
         .nest("/auth", pacs_auth::http::routes(auth_service.clone()))
+        .nest(
+            "/api/v1/auth",
+            pacs_auth::http::routes(auth_service.clone()),
+        )
         .nest(
             "/api/v1",
             pacs_auth::service_accounts::management_routes(auth_service.clone())
@@ -199,6 +204,10 @@ async fn main() -> Result<()> {
                 ))
                 .merge(pacs_web::lifecycle_routes(
                     transform_state,
+                    auth_service.clone(),
+                ))
+                .merge(pacs_web::clinical_routes(
+                    api_state.clone(),
                     auth_service.clone(),
                 )),
         )

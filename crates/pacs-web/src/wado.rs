@@ -51,6 +51,7 @@ pub async fn retrieve_instance(
     Path((study, series, sop)): Path<(String, String, String)>,
 ) -> Result<Response, WadoError> {
     let (study, series, sop) = validate_uids(&study, &series, &sop)?;
+    authorize_series(&state, &identity, series.as_str()).await?;
     let store = state.store.as_ref().ok_or(WadoError::StorageUnavailable)?;
     let instance = locate(&state, identity.institution_id, &study, &series, &sop).await?;
 
@@ -87,6 +88,7 @@ pub async fn retrieve_metadata(
     Path((study, series, sop)): Path<(String, String, String)>,
 ) -> Result<Response, WadoError> {
     let (study, series, sop) = validate_uids(&study, &series, &sop)?;
+    authorize_series(&state, &identity, series.as_str()).await?;
     let store = state.store.as_ref().ok_or(WadoError::StorageUnavailable)?;
     let instance = locate(&state, identity.institution_id, &study, &series, &sop).await?;
     let path = store
@@ -147,6 +149,7 @@ pub async fn retrieve_frames(
     Path((study, series, sop, frame_list)): Path<(String, String, String, String)>,
 ) -> Result<Response, WadoError> {
     let (study, series, sop) = validate_uids(&study, &series, &sop)?;
+    authorize_series(&state, &identity, series.as_str()).await?;
     let requested = parse_frame_list(&frame_list)?;
     let store = state.store.as_ref().ok_or(WadoError::StorageUnavailable)?;
     let instance = locate(&state, identity.institution_id, &study, &series, &sop).await?;
@@ -266,6 +269,30 @@ fn validate_uids(study: &str, series: &str, sop: &str) -> Result<(Uid, Uid, Uid)
 
 fn parse_uid(raw: &str, field: &'static str) -> Result<Uid, WadoError> {
     Uid::parse(raw).map_err(|source| WadoError::InvalidUid { field, source })
+}
+
+async fn authorize_series(
+    state: &WebState,
+    identity: &Identity,
+    series_uid: &str,
+) -> Result<(), WadoError> {
+    let allowed = pacs_db::can_access_series(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        identity.role == pacs_auth::Role::Admin,
+        series_uid,
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "影像设备范围校验失败");
+        WadoError::Internal
+    })?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(WadoError::NotFound)
+    }
 }
 
 async fn locate(

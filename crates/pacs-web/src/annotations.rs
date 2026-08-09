@@ -76,6 +76,7 @@ async fn list(
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Vec<pacs_db::AnnotationRecord>>, AnnotationError> {
     validate_path(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     let records = pacs_db::list_annotations(
         &state.pool,
         identity.institution_id,
@@ -95,6 +96,7 @@ async fn create(
     Json(request): Json<CreateAnnotation>,
 ) -> Result<(StatusCode, Json<pacs_db::AnnotationRecord>), AnnotationError> {
     validate_path(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     validate_annotation(
         request.schema_version,
         &request.kind,
@@ -134,6 +136,7 @@ async fn update(
     Json(request): Json<UpdateAnnotation>,
 ) -> Result<Json<pacs_db::AnnotationRecord>, AnnotationError> {
     validate_path(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     if request.expected_revision <= 0 || !request.geometry.is_object() {
         return Err(AnnotationError::BadRequest(
             "expected_revision 必须为正数且 geometry 必须是对象".to_owned(),
@@ -171,6 +174,27 @@ async fn update(
     )
     .await;
     Ok(Json(record))
+}
+
+async fn authorize(
+    state: &WebState,
+    identity: &Identity,
+    series_uid: &str,
+) -> Result<(), AnnotationError> {
+    let allowed = pacs_db::can_access_series(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        identity.role == pacs_auth::Role::Admin,
+        series_uid,
+    )
+    .await
+    .map_err(AnnotationError::db)?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(AnnotationError::NotFound)
+    }
 }
 
 fn validate_path(study_uid: &str, series_uid: &str) -> Result<(), AnnotationError> {

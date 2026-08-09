@@ -58,12 +58,21 @@ fn user_from_row(row: UserRow) -> Result<User, RepoError> {
 }
 
 pub async fn create_user(pool: &PgPool, new: NewUser<'_>) -> Result<User, RepoError> {
+    create_user_for_institution(pool, 1, new).await
+}
+
+pub async fn create_user_for_institution(
+    pool: &PgPool,
+    institution_id: i64,
+    new: NewUser<'_>,
+) -> Result<User, RepoError> {
     let row: UserRow = sqlx::query_as(
-        "INSERT INTO users (username, display_name, password_hash, role, must_change_password)
-         VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO users (institution_id, username, display_name, password_hash, role, must_change_password)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, institution_id, username, display_name, role,
                    is_active, must_change_password, last_login_at, created_at",
     )
+    .bind(institution_id)
     .bind(new.username)
     .bind(new.display_name)
     .bind(new.password_hash)
@@ -81,6 +90,21 @@ pub async fn create_user(pool: &PgPool, new: NewUser<'_>) -> Result<User, RepoEr
         }
     })?;
     user_from_row(row)
+}
+
+pub async fn list_users_for_institution(
+    pool: &PgPool,
+    institution_id: i64,
+) -> Result<Vec<User>, RepoError> {
+    let rows: Vec<UserRow> = sqlx::query_as(
+        "SELECT id, institution_id, username, display_name, role,
+                is_active, must_change_password, last_login_at, created_at
+         FROM users WHERE institution_id=$1 ORDER BY username",
+    )
+    .bind(institution_id)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(user_from_row).collect()
 }
 
 /// 带密码哈希的查询结果。

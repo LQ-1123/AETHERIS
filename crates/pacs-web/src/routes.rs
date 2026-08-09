@@ -115,14 +115,7 @@ async fn search_studies(
     Extension(identity): Extension<Identity>,
     UrlQuery(params): UrlQuery<Vec<(String, String)>>,
 ) -> Result<Response, ApiError> {
-    execute(
-        &state,
-        identity.institution_id,
-        QueryLevel::Study,
-        params,
-        &[],
-    )
-    .await
+    execute(&state, &identity, QueryLevel::Study, params, &[]).await
 }
 
 /// `GET /studies/{study_uid}/series`
@@ -135,7 +128,7 @@ async fn search_series(
     let study = validated_uid(&study_uid, "StudyInstanceUID")?;
     execute(
         &state,
-        identity.institution_id,
+        &identity,
         QueryLevel::Series,
         params,
         &[(tags::STUDY_INSTANCE_UID, study)],
@@ -154,7 +147,7 @@ async fn search_instances(
     let series = validated_uid(&series_uid, "SeriesInstanceUID")?;
     execute(
         &state,
-        identity.institution_id,
+        &identity,
         QueryLevel::Image,
         params,
         &[
@@ -182,7 +175,7 @@ fn validated_uid(raw: &str, field: &'static str) -> Result<Uid, ApiError> {
 /// 永远查不到的矛盾条件,而调用方收到空结果却看不出哪里错了。
 async fn execute(
     state: &WebState,
-    institution_id: i64,
+    identity: &Identity,
     level: QueryLevel,
     params: Vec<(String, String)>,
     path_constraints: &[(dicom::core::Tag, Uid)],
@@ -204,25 +197,64 @@ async fn execute(
     //     应当被截掉,不是让请求失败。
     // 把 `limit` 传给 `find` 当上限的话,`?limit=2` 在有三条结果时会回 413,
     // 分页就彻底失效了。
-    let results =
-        pacs_db::find_for_institution(&state.pool, &query, state.max_results, institution_id)
-            .await
-            .map_err(|error| match error {
-                pacs_db::DbError::TooManyResults { limit } => ApiError::TooManyResults { limit },
-                other => {
-                    tracing::error!(%other, "QIDO-RS 查询失败");
-                    ApiError::Internal
-                }
-            })?;
+    let results = pacs_db::find_for_institution(
+        &state.pool,
+        &query,
+        state.max_results,
+        identity.institution_id,
+    )
+    .await
+    .map_err(|error| match error {
+        pacs_db::DbError::TooManyResults { limit } => ApiError::TooManyResults { limit },
+        other => {
+            tracing::error!(%other, "QIDO-RS 查询失败");
+            ApiError::Internal
+        }
+    })?;
 
     // 分页在本地切。`find` 没有 offset,而加上它会改动阶段 4 已验收的接口;
     // 结果集已被 max_results 封顶,内存是有界的。真到了这个切法成为瓶颈的时候
     // (单层级几千条以上),再把 LIMIT/OFFSET 下推到 SQL。
     let effective_limit = request.limit.unwrap_or(state.max_results);
 
-    let page: Vec<&InMemDicomObject> = results
-        .identifiers
-        .iter()
+    let mut visible = Vec::new();
+    for object in &results.identifiers {
+        let allowed = if identity.role == pacs_auth::Role::Admin {
+            true
+        } else if level == QueryLevel::Study {
+            if let Some(uid) = dicom_uid(object, tags::STUDY_INSTANCE_UID) {
+                pacs_db::can_access_study(
+                    &state.pool,
+                    identity.institution_id,
+                    identity.user_id,
+                    false,
+                    &uid,
+                )
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            }
+        } else if matches!(level, QueryLevel::Series | QueryLevel::Image) {
+            let uid = dicom_uid(object, tags::SERIES_INSTANCE_UID).unwrap_or_default();
+            pacs_db::can_access_series(
+                &state.pool,
+                identity.institution_id,
+                identity.user_id,
+                false,
+                &uid,
+            )
+            .await
+            .unwrap_or(false)
+        } else {
+            false
+        };
+        if allowed {
+            visible.push(object);
+        }
+    }
+    let page: Vec<&InMemDicomObject> = visible
+        .into_iter()
         .skip(request.offset)
         .take(effective_limit)
         .collect();
@@ -260,6 +292,15 @@ async fn execute(
     }
 
     Ok(response)
+}
+
+fn dicom_uid(object: &InMemDicomObject, tag: dicom::core::Tag) -> Option<String> {
+    object
+        .element(tag)
+        .ok()?
+        .to_str()
+        .ok()
+        .map(|value| value.trim().to_owned())
 }
 
 /// 编成 DICOM JSON Model(PS3.18 附录 F)的数组。

@@ -142,7 +142,7 @@ where
         remote_addr: peer,
     };
     handler.association_opened(&observed).await;
-    let result = scp::serve(association, handler, config.max_dataset_bytes).await;
+    let result = scp::serve(association, handler, config.max_dataset_bytes, peer).await;
     handler.association_closed(&observed).await;
     result?;
     Ok(())

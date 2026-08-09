@@ -13,6 +13,7 @@
 //! 跑在真实数据库上的集成测试来保证。
 
 mod annotations;
+mod clinical;
 pub mod find;
 pub mod ingest;
 mod jobs;
@@ -138,4 +139,12 @@ pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
 pub use annotations::{
     AnnotationRecord, AnnotationUpdate, NewAnnotation, create_annotation, list_annotations,
     update_annotation,
+};
+pub use clinical::{
+    ApproveDevice, ClinicalWorkItem, DiagnosticReport, DicomDevice, ReportVersion, approve_device,
+    assign_work_item, begin_report_amendment, can_access_series, can_access_study, claim_work_item,
+    create_report, institution_today, list_clinical_work, list_devices, list_report_versions,
+    list_reports, observe_device, record_dimse_origin, release_work_item,
+    replace_user_device_grants, resolve_series_source, set_device_status, sign_report,
+    update_report_draft, user_device_grants,
 };

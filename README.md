@@ -65,6 +65,14 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+### API 检测中心
+
+启动 `pacsd` 后打开 `https://127.0.0.1:8443/api-checker`。页面会自动读取
+`/api/v1/openapi.json` 并合并 DICOMweb、Viewer、标注、分割和传输路由，支持登录、
+单接口请求、认证防护批量扫描、GET 冒烟测试及检测结果 JSON 导出。批量检测不会自动
+执行写接口；`POST`、`PUT`、`PATCH` 和 `DELETE` 必须填写参数后手动发送，避免误改
+临床数据。
+
 ### Viewer
 
 Viewer 支持单文件多帧和同一 Study/Series 的多文件灰度序列。多文件序列严格按

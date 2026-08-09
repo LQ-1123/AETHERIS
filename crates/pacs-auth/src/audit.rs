@@ -41,6 +41,13 @@ pub enum Action {
     SegmentationDeleted,
     SegmentationTagsUpdated,
     SegmentationMaskUpdated,
+    DeviceApproved,
+    DeviceGrantChanged,
+    WorkItemClaimed,
+    WorkItemAssigned,
+    ReportDrafted,
+    ReportSigned,
+    ReportAmendmentStarted,
 }
 
 impl Action {
@@ -65,6 +72,13 @@ impl Action {
             Self::SegmentationDeleted => "segmentation_deleted",
             Self::SegmentationTagsUpdated => "segmentation_tags_updated",
             Self::SegmentationMaskUpdated => "segmentation_mask_updated",
+            Self::DeviceApproved => "device_approved",
+            Self::DeviceGrantChanged => "device_grant_changed",
+            Self::WorkItemClaimed => "work_item_claimed",
+            Self::WorkItemAssigned => "work_item_assigned",
+            Self::ReportDrafted => "report_drafted",
+            Self::ReportSigned => "report_signed",
+            Self::ReportAmendmentStarted => "report_amendment_started",
         }
     }
 }

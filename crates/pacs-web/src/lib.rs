@@ -12,6 +12,8 @@
 //! 这两项的取舍记录在此,避免后续误以为是漏做。
 
 pub mod annotations;
+pub mod api_checker;
+pub mod clinical;
 pub mod ingest;
 pub mod lifecycle;
 pub mod qido;
@@ -25,6 +27,8 @@ pub mod wado;
 pub mod worklist;
 
 pub use annotations::annotation_routes;
+pub use api_checker::routes as api_checker_routes;
+pub use clinical::routes as clinical_routes;
 pub use lifecycle::{routes as lifecycle_routes, start_lifecycle_worker};
 pub use router::{routes as router_routes, start_worker as start_router_worker};
 pub use routes::{WebState, dicomweb_routes};

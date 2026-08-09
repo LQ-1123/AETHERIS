@@ -383,6 +383,39 @@ async fn openapi_document() -> Json<serde_json::Value> {
                 "get": {"security": [{"userAccessToken": []}], "responses": {"200": {"description": "Service account list"}}},
                 "post": {"security": [{"userAccessToken": []}], "responses": {"201": {"description": "Account and one-time API key"}}}
             },
+            "/api/v1/roles": {
+                "get": {"summary": "List fixed human roles and permissions", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Role catalog"}}}
+            },
+            "/api/v1/users": {
+                "get": {"summary": "List institution users", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "User list"}}},
+                "post": {"summary": "Create a user with temporary password and device grants", "security": [{"userAccessToken": []}], "responses": {"201": {"description": "User created"}}}
+            },
+            "/api/v1/users/{user_id}/device-grants": {
+                "get": {"summary": "List user device grants", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Device UUID list"}}},
+                "put": {"summary": "Atomically replace user device grants", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Updated device UUID list"}}}
+            },
+            "/api/v1/devices": {
+                "get": {"summary": "List observed and approved DICOM devices", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Device list"}}}
+            },
+            "/api/v1/devices/{device_id}/approve": {
+                "post": {"summary": "Approve a device identified by Calling AE and source IP", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Approved device"}}}
+            },
+            "/api/v1/worklist": {
+                "get": {"summary": "List date- and device-scoped diagnostic Series", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Clinical work queue"}}}
+            },
+            "/api/v1/worklist/{work_id}/claim": {
+                "post": {"summary": "Exclusively claim one Series", "security": [{"userAccessToken": []}], "responses": {"204": {"description": "Claimed"}, "409": {"description": "Already claimed or stale revision"}}}
+            },
+            "/api/v1/reports": {
+                "get": {"summary": "List accessible reports for a Study", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Report list"}}},
+                "post": {"summary": "Create a Study report for claimed Series", "security": [{"userAccessToken": []}], "responses": {"201": {"description": "Draft created"}}}
+            },
+            "/api/v1/reports/{report_id}/draft": {
+                "put": {"summary": "Update a report draft with optimistic revision", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Updated draft"}, "409": {"description": "Stale revision"}}}
+            },
+            "/api/v1/reports/{report_id}/sign": {
+                "post": {"summary": "Sign an immutable report version", "security": [{"userAccessToken": []}], "responses": {"204": {"description": "Signed"}, "422": {"description": "Required clinical content missing"}}}
+            },
             "/api/v1/router/destinations": {
                 "get": {"summary": "List DICOM route destinations", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Destination list and connection state"}}},
                 "post": {"summary": "Register a station connection request", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"201": {"description": "Pending station request created"}}}

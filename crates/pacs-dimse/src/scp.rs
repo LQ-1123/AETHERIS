@@ -28,6 +28,8 @@ pub struct IncomingInstance<'a> {
     pub file_bytes: &'a [u8],
     /// 发送方的 AE Title。协议本身不认证,这个值可以伪造,只作审计线索。
     pub calling_ae_title: &'a str,
+    /// TCP peer address. Combined with Calling AE Title this identifies a configured device.
+    pub remote_addr: SocketAddr,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +85,7 @@ pub async fn serve<S, H>(
     mut association: AsyncServerAssociation<S>,
     handler: &H,
     max_dataset_bytes: usize,
+    remote_addr: SocketAddr,
 ) -> Result<(), MessageError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -108,7 +111,14 @@ where
                 command::c_echo_rsp(&message.command, Status::SUCCESS)
             }
             Ok(CommandField::CStoreRq) => {
-                let status = handle_store(&association, &message, handler, &calling_ae_title).await;
+                let status = handle_store(
+                    &association,
+                    &message,
+                    handler,
+                    &calling_ae_title,
+                    remote_addr,
+                )
+                .await;
                 command::c_store_rsp(&message.command, status)
             }
             Ok(CommandField::CFindRq) => {
@@ -163,6 +173,7 @@ async fn handle_store<S, H>(
     message: &DimseMessage,
     handler: &H,
     calling_ae_title: &str,
+    remote_addr: SocketAddr,
 ) -> Status
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -241,6 +252,7 @@ where
             metadata: &metadata,
             file_bytes: &file_bytes,
             calling_ae_title,
+            remote_addr,
         })
         .await
     {

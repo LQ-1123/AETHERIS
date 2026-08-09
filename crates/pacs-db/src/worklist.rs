@@ -86,6 +86,8 @@ pub struct SeriesSummary {
 pub async fn list_patients(
     pool: &PgPool,
     institution_id: i64,
+    user_id: i64,
+    is_admin: bool,
     query: &str,
     limit: i64,
     offset: i64,
@@ -95,21 +97,28 @@ pub async fn list_patients(
     let name_pattern = contains_pattern(&normalized);
     let rows: Vec<PatientRow> = sqlx::query_as(
         "SELECT p.id, p.patient_id, p.issuer_of_patient_id, p.name, p.birth_date, p.sex,
-                COUNT(st.id)::BIGINT,
-                COALESCE(SUM(st.number_of_series), 0)::BIGINT,
-                COALESCE(SUM(st.number_of_instances), 0)::BIGINT,
+                COUNT(DISTINCT st.id)::BIGINT,
+                COUNT(DISTINCT se.id)::BIGINT,
+                COALESCE(SUM(se.number_of_instances), 0)::BIGINT,
                 MAX(st.study_date)
          FROM patients p
          JOIN studies st ON st.patient_fk = p.id AND st.institution_id = $1
               AND st.storage_tier <> 'quarantine'
+         JOIN series se ON se.study_fk=st.id
+         LEFT JOIN dicom_devices d ON d.id=se.source_device_fk
          WHERE p.institution_id = $1
-           AND ($2 = '' OR p.patient_id ILIKE $3 ESCAPE '\\'
-                OR p.name_normalized LIKE $4 ESCAPE '\\')
+           AND ($3 OR (d.status='active' AND se.source_status='trusted'
+                AND EXISTS(SELECT 1 FROM user_device_grants g
+                           WHERE g.user_fk=$2 AND g.device_fk=d.id)))
+           AND ($4 = '' OR p.patient_id ILIKE $5 ESCAPE '\\'
+                OR p.name_normalized LIKE $6 ESCAPE '\\')
          GROUP BY p.id
          ORDER BY MAX(st.study_date) DESC NULLS LAST, p.patient_id, p.id
-         LIMIT $5 OFFSET $6",
+         LIMIT $7 OFFSET $8",
     )
     .bind(institution_id)
+    .bind(user_id)
+    .bind(is_admin)
     .bind(query)
     .bind(id_pattern)
     .bind(name_pattern)
@@ -151,6 +160,8 @@ pub async fn list_patients(
 pub async fn list_patient_studies(
     pool: &PgPool,
     institution_id: i64,
+    user_id: i64,
+    is_admin: bool,
     patient_id: i64,
 ) -> Result<Vec<StudySummary>, DbError> {
     let rows: Vec<StudyRow> = sqlx::query_as(
@@ -164,12 +175,19 @@ pub async fn list_patient_studies(
            AND p.institution_id = $2
            AND st.institution_id = $2
            AND st.storage_tier <> 'quarantine'
+           AND ($4 OR EXISTS(
+                SELECT 1 FROM series visible
+                JOIN dicom_devices d ON d.id=visible.source_device_fk AND d.status='active'
+                JOIN user_device_grants g ON g.device_fk=d.id AND g.user_fk=$3
+                WHERE visible.study_fk=st.id AND visible.source_status='trusted'))
          ORDER BY st.study_date DESC NULLS LAST,
                   st.study_time DESC NULLS LAST,
                   st.study_instance_uid",
     )
     .bind(patient_id)
     .bind(institution_id)
+    .bind(user_id)
+    .bind(is_admin)
     .fetch_all(pool)
     .await?;
 
@@ -206,6 +224,8 @@ pub async fn list_patient_studies(
 pub async fn list_study_series(
     pool: &PgPool,
     institution_id: i64,
+    user_id: i64,
+    is_admin: bool,
     study_uid: &str,
 ) -> Result<Vec<SeriesSummary>, DbError> {
     let rows: Vec<SeriesRow> = sqlx::query_as(
@@ -219,10 +239,16 @@ pub async fn list_study_series(
            AND st.institution_id = $2
            AND st.storage_tier <> 'quarantine'
            AND p.institution_id = $2
+           AND ($4 OR (se.source_status='trusted' AND EXISTS(
+                SELECT 1 FROM dicom_devices d WHERE d.id=se.source_device_fk
+                  AND d.status='active' AND EXISTS(
+                    SELECT 1 FROM user_device_grants g WHERE g.user_fk=$3 AND g.device_fk=d.id))))
          ORDER BY se.series_number NULLS LAST, se.series_instance_uid",
     )
     .bind(study_uid)
     .bind(institution_id)
+    .bind(user_id)
+    .bind(is_admin)
     .fetch_all(pool)
     .await?;
 

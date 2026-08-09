@@ -57,6 +57,8 @@ async fn patients(
     let rows = pacs_db::list_patients(
         &state.pool,
         identity.institution_id,
+        identity.user_id,
+        identity.role == pacs_auth::Role::Admin,
         params.query.trim(),
         i64::from(limit),
         offset,
@@ -74,9 +76,15 @@ async fn patient_studies(
     if patient_id <= 0 {
         return Err(WorklistError::BadRequest("病人 ID 无效".to_owned()));
     }
-    let rows = pacs_db::list_patient_studies(&state.pool, identity.institution_id, patient_id)
-        .await
-        .map_err(WorklistError::db)?;
+    let rows = pacs_db::list_patient_studies(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        identity.role == pacs_auth::Role::Admin,
+        patient_id,
+    )
+    .await
+    .map_err(WorklistError::db)?;
     Ok(Json(rows))
 }
 
@@ -87,9 +95,15 @@ async fn study_series(
 ) -> Result<Json<Vec<pacs_db::SeriesSummary>>, WorklistError> {
     pacs_core::Uid::parse(&study_uid)
         .map_err(|_| WorklistError::BadRequest("StudyInstanceUID 无效".to_owned()))?;
-    let rows = pacs_db::list_study_series(&state.pool, identity.institution_id, &study_uid)
-        .await
-        .map_err(WorklistError::db)?;
+    let rows = pacs_db::list_study_series(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        identity.role == pacs_auth::Role::Admin,
+        &study_uid,
+    )
+    .await
+    .map_err(WorklistError::db)?;
     Ok(Json(rows))
 }
 

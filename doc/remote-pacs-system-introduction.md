@@ -4,17 +4,17 @@
 >
 > 研究对象：`remote_pacs` 当前工作区源码
 >
-> 基线日期：2026-08-07
+> 基线日期：2026-08-09
 >
 > 系统版本：0.1.0
 >
-> 说明：本文严格区分“已实现能力”和“后续规划”，文中功能均以当前代码、数据库迁移 `0001`—`0018` 和 Viewer 实现为依据。
+> 说明：本文严格区分“已实现能力”和“后续规划”，文中功能均以当前代码、数据库迁移 `0001`—`0020`、服务端 API 和 Viewer 实现为依据。
 
 ## 摘要
 
 医学影像归档与通信系统（Picture Archiving and Communication System，PACS）需要在设备互操作、数据持久性、临床查询、图像显示、权限隔离和合规审计之间取得平衡。传统的单体式影像管理程序往往将数据库连接、文件目录和查看逻辑直接暴露给客户端，难以满足多账号分发、访问吊销、数据版本追踪和长期存储治理等要求。为解决上述问题，本文设计并实现了一套以 Rust 为核心的 Remote PACS 系统。系统由 `pacsd` 服务端、PostgreSQL 元数据数据库、不可变 DICOM 文件归档和 Tauri 桌面 Viewer 组成；设备侧通过 DIMSE 协议接入，应用侧通过 HTTPS、DICOMweb 和版本化 REST API 访问。
 
-系统在接收路径上采用“原始字节保真、文件先持久化、数据库后提交、最后返回成功”的一致性策略，通过 UID 校验、SHA-256 摘要、原子重命名与数据库唯一约束实现幂等入库。在查询与阅片路径上，系统提供 C-FIND、QIDO-RS、WADO-RS、STOW-RS、工作列表、二维阅片、多平面重建（MPR）、MIP/MinIP、GPU 体渲染、CT/PET 定量测量、共享标注和三维稀疏 Mask 编辑。针对临床数据修订，系统不覆盖原件，而是维护逻辑实例与不可变版本链，并使用预览、一次性确认、乐观并发控制和像素哈希校验保护修订过程。针对平台运维，系统实现了服务账号、后台任务租约、可恢复导入、ZIP 导出、DIMSE/STOW 路由、冷热分层、隔离区、Legal Hold 和审批清除。
+系统在接收路径上采用“原始字节保真、文件先持久化、数据库后提交、最后返回成功”的一致性策略，通过 UID 校验、SHA-256 摘要、原子重命名与数据库唯一约束实现幂等入库。在查询与阅片路径上，系统提供 C-FIND、QIDO-RS、WADO-RS、STOW-RS、设备授权工作列表、二维阅片、多平面重建（MPR）、MIP/MinIP、GPU 体渲染、CT/PET 定量测量、共享标注和三维稀疏 Mask 编辑。管理员能够管理账号、固定角色、来源设备及“医生—设备”可见范围；放射科医生能够查看今日待诊序列、排他领取任务、打开影像并完成草稿、签发和修订报告。除影像渲染外，管理与临床业务通过独立窗口调用开放 API 完成，避免继续向 Viewer 内堆叠业务逻辑。针对临床数据修订，系统不覆盖原件，而是维护逻辑实例与不可变版本链，并使用预览、一次性确认、乐观并发控制和像素哈希校验保护修订过程。针对平台运维，系统实现了服务账号、后台任务租约、可恢复导入、ZIP 导出、DIMSE/STOW 路由、冷热分层、隔离区、Legal Hold 和审批清除。
 
 实现结果表明，以强类型领域模型约束 DICOM UID 和空间几何，以 PostgreSQL 维护关系索引与任务状态，以文件系统保存不可变大对象，可以在不让客户端直接接触数据库的前提下形成完整的影像接收、检索、阅片、协作和治理闭环。本文进一步给出系统需求、技术选型、总体架构、数据设计、主要功能和关键算法，并分析当前实现边界与后续演进方向。
 
@@ -57,9 +57,9 @@ Remote PACS 将这些问题视为同一系统中的一致性与边界设计问�
 | 参与者 | 主要职责 | 典型入口 |
 |---|---|---|
 | 影像设备或 DICOM 工具 | 连通性检测、影像发送、层级查询 | DIMSE C-ECHO/C-STORE/C-FIND |
-| 放射科医生 | 检索、阅片、测量、共享标注、查看修订历史 | Tauri Viewer + HTTPS |
+| 放射科医生 | 查看今日待诊、领取任务、阅片、测量、标注、写报告与签发 | 医生业务窗口 + Tauri Viewer + HTTPS |
 | 技师 | 影像导入、Tag 修订、阅片与质量处理 | Viewer、STOW-RS、管理 API |
-| 系统管理员 | 用户、路由、存储生命周期、审批和治理 | Viewer 管理面板、`/api/v1` |
+| 系统管理员 | 用户、角色、设备审批、设备可见范围、路由和存储治理 | 独立管理员窗口、`/api/v1` |
 | 外部平台或自动化工作站 | 批量上传、导出、路由和管理集成 | 服务账号 API Key + Scope |
 
 数据库、文件系统和后台 Worker 是系统内部参与者。PostgreSQL 负责关系一致性、任务状态和审计，文件系统负责大对象持久化，Worker 负责长耗时作业；三者不向普通客户端直接开放。
@@ -94,6 +94,11 @@ Remote PACS 将这些问题视为同一系统中的一致性与边界设计问�
 | FR-22 | 标准 DICOM SEG 发布 | 将编辑 Mask 发布为标准 SEG 对象 | 尚未实现 |
 | FR-23 | AI 推理 | 模型执行、结果落库与自动分割 | 尚未实现 |
 | FR-24 | GPU 三维体渲染 | WebGL2 体纹理、传递函数、质量档位和交互视角 | 已实现，受 GPU/WebGL2 能力约束 |
+| FR-25 | 来源设备管理 | 按 Calling AE 与来源 IP 发现设备，支持审批、命名、禁用和人工归属 | 已实现 |
+| FR-26 | 医生设备授权 | 医生仅能访问管理员授予设备所上传的影像 | 已实现 |
+| FR-27 | 今日待诊与排他领取 | 按日期和状态查询、Revision 乐观锁领取/释放/指派 | 已实现 |
+| FR-28 | 诊断报告工作流 | 创建、保存草稿、签发、发起修订和查询不可变版本 | 已实现 |
+| FR-29 | 外部 API 检测 | 浏览器内登录、单接口调用、防护扫描、GET 冒烟和结果导出 | 已实现 |
 
 ### 2.3 非功能需求
 
@@ -121,11 +126,13 @@ Remote PACS 将这些问题视为同一系统中的一致性与边界设计问�
 
 **用例一：设备发送 CT 检查。** CT 与 PACS 建立 Association，服务端协商 SOP Class 和传输语法，接收 Dataset，校验 UID 与层级，完成文件原子落盘和数据库事务后返回成功；新实例随后独立触发路由规则，路由失败不影响本地接收结果。
 
-**用例二：医生远程阅片。** 医生使用账号和自签 CA 登录 Viewer，按患者姓名或 Patient ID 搜索，展开检查与序列，下载当前有效版本，完成窗宽窗位、MPR、MIP、测量和标注；共享标注按 Revision 自动同步。
+**用例二：医生完成今日诊断。** 医生登录独立业务窗口，查看其获授权设备产生的今日待诊序列，以 Revision 排他领取病人任务；点击病人后调用 Viewer 打开检查，完成窗宽窗位、MPR、MIP、测量和标注，再回到业务窗口填写报告草稿并签发。影像显示与业务状态通过 API 上下文衔接，但分别由不同窗口负责。
 
 **用例三：技师修订错误 Tag。** 技师选择患者、检查或序列层级，提交白名单 Tag 和原因，先查看影响范围与旧/新值，再使用一次性令牌确认。Worker 基于当前版本生成派生文件，确认 PixelData 哈希不变后事务化激活新版本；历史版本仍可查询和回滚。
 
 **用例四：管理员清理到期检查。** 管理员预演生命周期策略，将 Study 转移到隔离区，提交清除申请并由管理员审批。宽限期结束后 Worker 依据不可变文件清单执行物理删除；若期间建立 Legal Hold，则任务进入暂停状态并冻结剩余宽限时间。
+
+**用例五：管理员配置医生可见设备。** 新 CT 以 Calling AE 与来源 IP 首次接入后进入 `pending` 状态。管理员核对后批准并命名为 CT1，再创建医生 A 的 `radiologist` 账号，将 CT1、CT2、MR1 的 UUID 作为完整授权集合写入。此后医生 A 的待诊列表、Viewer 查询、DICOMweb 读取、共享标注和分割均只返回这些设备来源的数据；未授权资源以 404 隐藏存在性。
 
 ---
 
@@ -205,8 +212,8 @@ PostgreSQL 当前是系统唯一关系数据库实现；本地热层、冷层和
 
 1. DIMSE：C-ECHO、C-STORE 和 Patient Root/Study Root C-FIND；路由侧另提供 C-ECHO/C-STORE SCU。
 2. DICOMweb：`/dicomweb/studies` 下的 QIDO-RS、WADO-RS 和 STOW-RS。
-3. Viewer API：`/api` 下的工作列表、共享标注、分割和 `/api/dicom` 修订接口。
-4. 开放管理 API：`/api/v1` 下的服务账号、导入导出、Router、Lifecycle 与 OpenAPI 文档。
+3. Viewer API：`/api` 下的患者/检查/序列、共享标注、分割，以及 `/api/dicom` 修订接口。
+4. 管理与临床 API：`/api/v1` 下的用户、角色、设备授权、待诊工作项、诊断报告、服务账号、导入导出、Router、Lifecycle 与 OpenAPI 文档。
 
 路由树采用默认保护原则。例如 DICOMweb 读取子树统一要求 `ViewImages`，STOW 子树要求个人上传权限或服务账号 `upload` Scope；Router 接受管理员 JWT 或 `route` Scope；Lifecycle 接受管理员 JWT 或 `admin` Scope。权限中间件先识别身份并写入 Request Extension，处理器再使用身份中的 Institution ID 约束 SQL。
 
@@ -336,13 +343,29 @@ C-FIND 支持 Patient Root 和 Study Root 信息模型，在 Patient、Study、S
 
 QIDO-RS 提供 Study、Series 和 Instance 查询，支持 `limit` 与 `offset`，返回 DICOM JSON Model。路径中的 UID 优先于同名查询参数，无结果返回 HTTP 204，不支持的参数通过 Warning Header 报告。WADO-RS 支持完整实例、元数据和指定帧；帧号按 DICOMweb 标准使用 1 基，服务端内部仅在一个位置转换为解码器的 0 基索引。
 
-### 6.3 工作列表与远程下载
+### 6.3 Viewer 工作列表与远程下载
 
 Viewer 工作列表使用面向界面的聚合 JSON，而不是要求前端拼装原始 DICOM JSON。用户可按患者姓名或 Patient ID 搜索，分页加载患者，展开 Study 和 Series，并查看模态、描述、日期和实例数量。点击 Series 后，Viewer 查询全部 SOP UID，逐个通过 WADO-RS 下载当前有效版本到受 Tauri 句柄管理的临时目录，并显示进度与取消状态。
 
 远程客户端只接受 HTTPS URL，通过用户选择的 CA 证书建立信任；Access Token 到期时使用 Refresh Token 自动轮换。退出或关闭 Series 后，相关临时目录、帧缓存与 MPR 体数据随句柄释放。
 
-### 6.4 用户、角色与服务账号
+### 6.4 管理员账号、设备与可见范围
+
+管理员业务采用独立窗口调用 `/api/v1`，不要求把用户管理表单、设备审批和授权配置继续塞入阅片画布。管理员可读取固定角色，创建、修改、停用账号，重置临时密码，撤销全部会话，并以 `PUT` 全量替换指定用户的设备授权。创建账号时可一次提交初始 `device_ids`，减少“账号已建立但权限尚未配置”的中间状态。
+
+来源设备由 DIMSE Association 的 Calling AE Title 与远端 IP 共同识别。首次观察到的组合进入 `pending`，管理员核对设备身份后批准并填写显示名称、模态提示；设备还可设为 `disabled`。历史上无法追溯来源的影像归入 `legacy_unattributed`，默认只允许管理员查看；管理员可通过 Series 来源解决接口将其人工归属到已确认设备。
+
+设备授权不是界面层过滤，而是服务端数据边界。非管理员用户访问工作列表、Viewer Patient/Study/Series、QIDO/WADO、标注和分割时，SQL 与处理器均校验来源设备是否在授权集合内。对无权资源通常返回 404，避免泄露患者或检查是否存在。管理员应把 `PUT /users/{id}/device-grants` 理解为“替换完整集合”，空数组表示清空，而不是增量追加。
+
+### 6.5 医生待诊与诊断报告
+
+医生业务窗口通过 `/api/v1/worklist` 按日期与状态获取待诊序列，返回内容已按医生设备授权过滤。工作项具有 `revision` 和负责人状态；医生使用当前 Revision 排他领取，完成或退出时释放，管理员也可将任务指派给特定医生。两个客户端同时使用同一旧 Revision 操作时只有一个成功，另一个收到 409 并重新加载，从而避免多人不知情地重复诊断。
+
+点击病人后，业务窗口请求 Study 的 `clinical-context`，将允许访问的 Study/Series 身份交给 Viewer。Viewer 只负责取图与图像操作，报告表单、待诊状态和签发动作继续留在独立业务窗口。该接口边界既可复用现有 Viewer，也允许将来替换为第三方阅片器。
+
+诊断报告以 Study 为主对象，可声明覆盖的 Series UID。放射科医生能够创建报告、以 Revision 保存 findings、impression 和 recommendation 草稿，并正式签发。签发后的正文不能直接覆盖；医生必须给出原因发起 amendment，再形成新版本。`GET /reports/{id}/versions` 保留不可变历史，使外部 HIS/RIS 能够区分初始签发与后续修订。出于临床职责约束，报告写入和签发 handler 明确要求 `radiologist` 身份，不能仅凭管理员的通用权限代替医生签名。
+
+### 6.6 用户认证、角色与服务账号
 
 系统内置 `admin`、`radiologist`、`technician` 和 `viewer` 四种角色，并将查看、上传、报告、用户管理、审计、删除、Tag 修改和修订历史映射为集中权限。管理员和技师可修改 Tag，管理员、技师和放射科医生可查看修订历史，具备影像查看权限的用户可使用共享标注和分割。
 
@@ -350,7 +373,7 @@ Viewer 工作列表使用面向界面的聚合 JSON，而不是要求前端拼�
 
 外部平台不应长期复用个人 Viewer Token。管理员可以创建带 `search/read/upload/export/route/admin` Scope 的服务账号，再创建只显示一次的 `pacs_sk_...` API Key。数据库仅保存查询前缀和摘要，支持到期、吊销、停用、最后使用时间和速率限制。
 
-### 6.5 DICOM Tag 版本化修订
+### 6.7 DICOM Tag 版本化修订
 
 Tag 修订支持 Patient、Study 和 Series 范围，并以服务端 Schema 返回可修改白名单、VR 和输入规则。当前白名单覆盖患者姓名与标识、出生日期、性别、Accession Number、Study ID/Description、转诊医生、Series Description/Number、检查部位和 Protocol Name。PixelData、UID 主图和受保护结构不能作为任意 Tag 直接修改。
 
@@ -358,13 +381,13 @@ Tag 修订支持 Patient、Study 和 Series 范围，并以服务端 Schema 返�
 
 回滚同样经过预览与确认，但本质是以选定历史版本为来源生成新版本，不会删除中间修订，也不会把 `current_version_id` 静默指回旧行。
 
-### 6.6 共享标注
+### 6.8 共享标注
 
 Viewer 提供长度、角度、箭头、椭圆 ROI、矩形 ROI 和点探针。二维标注保存图像坐标，MPR 标注保存患者空间坐标，因此在缩放、翻转、旋转和不同工作站上仍能稳定复现。客户端维护有界 Undo/Redo；远程序列每 5 秒按 `updated_at` 增量获取其他用户修改。
 
 创建标注使用客户端生成 UUID，更新、删除与恢复必须携带 `expected_revision`。服务端以条件更新保证只有 Revision 相等时成功，否则返回 409。客户端遇到冲突时提示刷新，不执行“最后写入者静默覆盖”。本地打开的 DICOM 没有服务器资源身份，标注仅保留在当前会话并明确显示未同步。
 
-### 6.7 Mask 分割
+### 6.9 Mask 分割
 
 分割首版支持 Project、多个 Segment、Segment 标签/颜色/Tag、三维稀疏 Mask、Brush、Eraser、二维与 MPR 三平面同步叠加、独立 Undo/Redo 和批量同步。画刷在具有可靠 MPR 几何时按毫米构造三维球形区域，而不是在每个屏幕切面简单画圆，因此同一操作可落到多个源切片。
 
@@ -372,7 +395,7 @@ Mask 以来源 SOP UID 和帧号落库，并使用 `rle-v1` 二进制游程编�
 
 当前 Mask 是可编辑工作数据，尚未发布为标准 DICOM SEG，也没有 DICOM SEG 反向导入、阈值区域生长、形态学处理或相邻层插值。
 
-### 6.8 批量导入与 ZIP 导出
+### 6.10 批量导入与 ZIP 导出
 
 导入 API 支持文件、文件夹展开、ZIP 和 RAR。客户端先创建任务和文件会话，再以最多 8 MiB 的顺序分块上传；服务端校验当前偏移，网络中断后客户端按服务端 `received_size` 继续。单上传文件上限为 1 GiB。
 
@@ -380,7 +403,7 @@ Mask 以来源 SOP UID 和帧号落库，并使用 `rle-v1` 二进制游程编�
 
 导出可按 Study 或 Series 打包当前有效版本，ZIP 内路径稳定，并包含 `manifest.json`、SOP UID、文件大小和 SHA-256。制品本身也保存大小与摘要，默认 24 小时后清理。导出不默认包含全部历史修订版本。
 
-### 6.9 DICOM 路由
+### 6.11 DICOM 路由
 
 Router 支持 DIMSE C-STORE 和 DICOMweb STOW-RS 两类接收端。DIMSE 端配置主机、端口、Called/Calling AE 和可选 TLS/CA；STOW 端配置 URL、Bearer Token 和 CA。系统可执行 C-ECHO 或 HTTP 健康检查并记录在线状态、延迟、最后成功时间和错误。
 
@@ -388,7 +411,7 @@ Router 支持 DIMSE C-STORE 和 DICOMweb STOW-RS 两类接收端。DIMSE 端配�
 
 本地入库成功后，路由规则异步创建投递，路由失败不会回滚入库，也不会延迟 C-STORE 成功。投递以目的端和不可变 Version 唯一；Worker 最多按配置次数重试，当前指数退避以 5 秒为基数，失败终态进入死信，可人工重放。
 
-### 6.10 存储生命周期
+### 6.12 存储生命周期
 
 ![DICOM 生命周期状态与保护机制](img/lifecycle-state.svg)
 
@@ -402,7 +425,7 @@ Cold 层仍允许检索和 WADO 读取，成功读取会更新 `last_accessed_at
 
 有效 Legal Hold 阻止隔离与清除。若 Hold 在已批准的清除宽限期内建立，系统将请求与后台任务置为 `paused_hold/paused`，保存剩余秒数并清空原截止时间；解除 Hold 后，以冻结的剩余时长恢复同一个任务，而不是把治理暂停当作普通失败重试。
 
-### 6.11 多模态 Viewer
+### 6.13 多模态 Viewer
 
 Viewer 当前支持 8 位和 16 位灰度，支持 MONOCHROME1/2；彩色输入支持 RGB、YBR 系列和 PALETTE COLOR，并统一解码为交错 RGB8。彩色图像不使用灰度窗宽窗位 LUT，也不提供当前灰度 ROI 数值统计。多帧影像支持 Cine 播放，帧率优先读取 Recommended Display Frame Rate/Cine Rate，其次由 `1000 / FrameTime(ms)` 计算；多帧 US 缺失帧率时使用 15 fps 回退，用户可调整播放倍率。
 
@@ -411,6 +434,72 @@ Viewer 当前支持 8 位和 16 位灰度，支持 MONOCHROME1/2；彩色输入�
 应注意，DIMSE 接收清单覆盖的 SOP Class 比 Viewer 专科显示范围更广。系统可以可靠归档 RT、SR、PDF、SEG 等对象，并不表示当前 Viewer 已为这些对象实现完整专用渲染器。
 
 GPU 体渲染复用已经通过 MPR 几何校验的规则灰度体。Rust 将物理值范围归一化为 16 位三维纹理，通过 `pacs-volume://` 二进制通道传给前端；Three.js/WebGL2 使用自定义 Shader 执行光线步进，支持灰度、软组织、骨、肺和 PET 传递函数，支持 128/256/512 级采样质量、窗宽窗位、旋转、缩放和视角重置。进入 VR 前会检测 WebGL2、`MAX_3D_TEXTURE_SIZE` 和 256 MiB 上传上限，不满足条件时禁用并显示原因；退出或切换序列时显式释放 Texture、Material、Geometry、Renderer 和 WebGL Context。
+
+### 6.14 开放 API 与检测中心
+
+系统对外提供版本化 REST API 和 `/api/v1/openapi.json`。用户交互接口采用 JWT，自动化导入、导出、路由和生命周期集成可使用具有最小 Scope 的 `pacs_sk_` 服务密钥。当前接口同时包含 `/api/v1` 管理与临床业务、`/api` Viewer 数据、`/api/dicom` 修订和 `/dicomweb` 标准影像服务四类前缀，完整契约见同目录的《Remote PACS API 接口文档》。
+
+`/api-checker` 是内置的浏览器检测中心。它加载 OpenAPI 并补充内部路由，可登录、自动附加 JWT、构造 Path/Query/JSON 请求、单接口执行、生成 cURL、扫描认证防护、对 GET 接口做冒烟测试，并导出 JSON 结果。检测操作会真实访问后端，写接口应使用测试环境和测试账号。
+
+### 6.15 系统界面截图清单与拍摄说明
+
+本节为最终项目交付文档预留界面截图。当前 Word 版以“截图占位”框展示；完成截图后，可按建议文件名保存至 `doc/img/screenshots/`，再替换相应占位段落。建议统一使用 1920×1080 或更高分辨率、相同系统缩放比例和同一套演示数据；截图前对患者姓名、Patient ID、出生日期、Accession Number、报告正文和 Token 做脱敏。不要拍摄真实密码、API Key、数据库连接串或服务器私钥。
+
+#### 6.15.1 登录与系统入口
+
+> 【截图占位 S01：系统登录界面】建议文件名：`s01-login.png`。截取服务器地址、CA 选择、用户名和登录按钮；密码框保持空白。用于说明远程 HTTPS 与账号认证入口。
+
+> 【截图占位 S02：登录后的系统首页或功能导航】建议文件名：`s02-home-navigation.png`。同时展示“影像查看”“管理员”“医生工作台”等模块入口，突出业务窗口与 Viewer 分离。
+
+#### 6.15.2 管理员界面
+
+> 【截图占位 S03：用户账号列表】建议文件名：`s03-admin-users.png`。展示用户名、显示名、角色、启用状态、强制改密状态和操作区；使用测试账号。
+
+> 【截图占位 S04：创建角色账号】建议文件名：`s04-admin-create-user.png`。展示角色下拉框、临时密码和初始设备选择，密码内容必须遮挡。
+
+> 【截图占位 S05：来源设备管理】建议文件名：`s05-admin-devices.png`。至少同时包含一台 `pending`、一台 `active` 和一台 `disabled` 设备，展示 Calling AE、来源 IP、模态提示和最近发现时间。
+
+> 【截图占位 S06：医生设备授权】建议文件名：`s06-admin-device-grants.png`。选择医生 A，并勾选 CT1、CT2、MR1；让读者直观看到“账号—设备—影像范围”的对应关系。
+
+> 【截图占位 S07：管理员全局内容视图】建议文件名：`s07-admin-global-view.png`。展示管理员可以检索全部来源的检查，并以设备/模态筛选；避免使用未脱敏真实患者。
+
+#### 6.15.3 医生业务窗口
+
+> 【截图占位 S08：今日待诊列表】建议文件名：`s08-doctor-worklist.png`。展示日期、患者、检查、设备、模态、状态、负责人和领取按钮；最好包含“待领取、本人处理中、已完成”三种状态。
+
+> 【截图占位 S09：排他领取后的工作项】建议文件名：`s09-doctor-claimed-item.png`。展示当前医生、任务状态和 Revision；如界面有冲突提示，可另截第二张说明多人领取保护。
+
+> 【截图占位 S10：医生报告编辑窗口】建议文件名：`s10-report-editor.png`。展示影像入口、所覆盖 Series、所见、印象、建议、保存草稿和签发按钮。报告文本使用虚构内容。
+
+> 【截图占位 S11：报告签发与修订历史】建议文件名：`s11-report-versions.png`。展示已签发状态、修订原因、版本号、作者和时间，突出签发后不可直接覆盖。
+
+#### 6.15.4 影像 Viewer
+
+> 【截图占位 S12：二维阅片主界面】建议文件名：`s12-viewer-2d.png`。选择匿名 CT 序列，展示序列缩略图、窗宽窗位、缩放/平移工具、方向标记和基础信息叠加。
+
+> 【截图占位 S13：测量与共享标注】建议文件名：`s13-viewer-annotations.png`。同时展示长度、角度和 ROI 中两到三种工具，并显示标注同步或作者信息。
+
+> 【截图占位 S14：MPR 三平面重建】建议文件名：`s14-viewer-mpr.png`。展示轴位、冠状位、矢状位和十字定位线，选择层厚合适且空间几何规则的 CT/MR 序列。
+
+> 【截图占位 S15：MIP/MinIP 或 Slab】建议文件名：`s15-viewer-slab.png`。展示投影模式与厚度参数，最好与普通 MPR 图像形成明显对比。
+
+> 【截图占位 S16：GPU 三维体渲染】建议文件名：`s16-viewer-volume.png`。建议拍摄骨或肺预设，同时保留质量档位、窗宽窗位和方向控制区域。
+
+> 【截图占位 S17：Mask 分割】建议文件名：`s17-viewer-segmentation.png`。展示 Segment 列表、颜色、Brush/Eraser、二维叠加以及 MPR 中同一 Mask 的跨平面结果。
+
+#### 6.15.5 运维、开放接口与数据治理
+
+> 【截图占位 S18：API 检测中心总览】建议文件名：`s18-api-checker.png`。展示接口分类、登录状态和单接口测试区，不要让 Authorization Header 或 API Key 出现在画面中。
+
+> 【截图占位 S19：API 批量检测结果】建议文件名：`s19-api-check-results.png`。展示认证防护扫描或 GET 冒烟测试的成功/失败统计，并保留一条展开的响应示例。
+
+> 【截图占位 S20：DICOM 路由管理】建议文件名：`s20-router.png`。展示 DIMSE/STOW 目标端、审批状态、连通性、延迟和最近投递结果；目标地址使用测试网段。
+
+> 【截图占位 S21：生命周期仪表板】建议文件名：`s21-lifecycle-dashboard.png`。展示 Hot/Cold/Quarantine 数量和容量、Legal Hold、Purge Request 及最近任务。
+
+> 【截图占位 S22：策略预演或清除审批】建议文件名：`s22-lifecycle-preview.png`。展示命中数量、预计迁移字节、样本和审批宽限期，突出“先预演、再执行”的治理机制。
+
+截图不必全部放入正文。项目汇报版建议优先采用 S02、S05、S06、S08、S10、S12、S14、S16、S18 和 S21 共十张；产品说明书可采用完整 22 张。每张图片下方保留“图 6-x”题注，并在正文中至少引用一次，避免出现没有解释的界面堆叠。
 
 ---
 
@@ -719,7 +808,7 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 
 [9] Open Web Application Security Project. *OWASP Application Security Verification Standard*.
 
-[10] 仓库源码：`crates/pacs-core`、`pacs-store`、`pacs-db`、`pacs-dimse`、`pacs-auth`、`pacs-web`、`pacs-codec`、`pacsd` 与 `apps/viewer`，基线日期 2026-08-07。
+[10] 仓库源码：`crates/pacs-core`、`pacs-store`、`pacs-db`、`pacs-dimse`、`pacs-auth`、`pacs-web`、`pacs-codec`、`pacsd` 与 `apps/viewer`，基线日期 2026-08-09。
 
 ---
 
@@ -734,6 +823,8 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 | 数据库入库与查询 | `crates/pacs-db/src/ingest.rs`、`find.rs`、`retrieve.rs`、`worklist.rs` |
 | DICOMweb | `crates/pacs-web/src/routes.rs`、`qido.rs`、`wado.rs`、`stow.rs` |
 | 身份与审计 | `crates/pacs-auth/src/service.rs`、`token.rs`、`middleware.rs`、`audit.rs` |
+| 管理员/医生业务 | `crates/pacs-web/src/clinical.rs`、`crates/pacs-db/src/clinical.rs`、`crates/pacs-db/src/worklist.rs` |
+| API 检测中心 | `crates/pacs-web/src/api_checker.rs`、`crates/pacs-web/assets/api-checker.html` |
 | 版本化修订 | `crates/pacs-web/src/transformations.rs`、`crates/pacs-db/src/transformations.rs` |
 | 后台任务与传输 | `crates/pacs-db/src/jobs.rs`、`crates/pacs-web/src/transfers.rs` |
 | Router | `crates/pacs-web/src/router.rs`、`crates/pacs-db/src/router.rs` |
@@ -741,7 +832,8 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 | Annotation/Segmentation | `crates/pacs-web/src/annotations.rs`、`segmentations.rs`、`apps/viewer/src/masks.ts` |
 | 显示与 MPR | `crates/pacs-codec/src`、`apps/viewer/src-tauri/src/mpr.rs`、`apps/viewer/src/renderer.ts` |
 | GPU 体渲染 | `apps/viewer/src/volume-renderer.ts`、`apps/viewer/src-tauri/src/protocol.rs` |
-| 数据结构 | `crates/pacs-db/migrations/0001_imaging.sql` 至 `0018_segmentation_tags.sql` |
+| 数据结构 | `crates/pacs-db/migrations/0001_imaging.sql` 至 `0020_report_amendments.sql` |
+| 接口契约 | `doc/api-reference.md`、`/api/v1/openapi.json` |
 
 ## 附录 B 默认运行参数与重要上限
 

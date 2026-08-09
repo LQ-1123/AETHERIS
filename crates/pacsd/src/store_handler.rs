@@ -81,6 +81,17 @@ impl StoreHandler for PacsStoreHandler {
             .map_err(|error| StoreFailure::Processing(error.to_string()))?
         {
             IngestPreflight::Duplicate => {
+                if let Err(error) = pacs_db::record_dimse_origin(
+                    &self.pool,
+                    1,
+                    metadata.instance.uid.as_str(),
+                    instance.calling_ae_title,
+                    &instance.remote_addr.ip().to_string(),
+                )
+                .await
+                {
+                    tracing::error!(%error, sop_instance_uid=%metadata.instance.uid, "重传影像来源记录失败");
+                }
                 tracing::debug!(
                     calling_ae_title = instance.calling_ae_title,
                     sop_instance_uid = %metadata.instance.uid,
@@ -122,6 +133,21 @@ impl StoreHandler for PacsStoreHandler {
             );
             StoreFailure::Processing(error.to_string())
         })?;
+
+        if let Err(error) = pacs_db::record_dimse_origin(
+            &self.pool,
+            1,
+            metadata.instance.uid.as_str(),
+            instance.calling_ae_title,
+            &instance.remote_addr.ip().to_string(),
+        )
+        .await
+        {
+            // Origin classification is access-control metadata. The immutable image is already
+            // durable, so do not lie to the modality with a failed C-STORE response; keep it
+            // administrator-only until the source can be resolved.
+            tracing::error!(%error, sop_instance_uid=%metadata.instance.uid, "影像已入库，但来源设备记录失败");
+        }
 
         if ingested.instance_created
             && let Err(error) = pacs_web::router::enqueue_for_instance(

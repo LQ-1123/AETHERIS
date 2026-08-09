@@ -115,17 +115,38 @@ async fn logout(
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ChangePasswordRequest {
+    username: String,
     old_password: String,
     new_password: String,
 }
 
 async fn change_password(
-    State(_service): State<Arc<AuthService>>,
-    Json(_req): Json<ChangePasswordRequest>,
+    State(service): State<Arc<AuthService>>,
+    Json(req): Json<ChangePasswordRequest>,
 ) -> Result<StatusCode, ApiError> {
-    // TODO: 从 JWT 提取用户 ID（需要 middleware）
-    // 当前占位实现
-    Err(ApiError(AuthError::Internal(anyhow::anyhow!("未实现"))))
+    let username = crate::normalize_username(&req.username)
+        .map_err(|_| ApiError(AuthError::InvalidCredentials))?;
+    let Some((user, stored_hash)) = repository::find_by_username(service.pool(), &username).await?
+    else {
+        crate::password::waste_time_like_a_real_verification();
+        return Err(ApiError(AuthError::InvalidCredentials));
+    };
+    if !user.is_active
+        || !crate::password::verify(&req.old_password, &stored_hash).map_err(AuthError::from)?
+    {
+        return Err(ApiError(AuthError::InvalidCredentials));
+    }
+    crate::password::check_strength(&req.new_password, &username).map_err(AuthError::from)?;
+    let password_hash = crate::password::hash(&req.new_password).map_err(AuthError::from)?;
+    repository::set_password(service.pool(), user.id, &password_hash, false).await?;
+    crate::audit::record(
+        service.pool(),
+        crate::audit::Action::PasswordChange,
+        crate::audit::Outcome::Success,
+        crate::audit::Entry::for_user(user.id, &user.username, user.role),
+    )
+    .await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// API 错误响应。

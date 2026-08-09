@@ -174,6 +174,7 @@ async fn list_projects(
     Path(path): Path<SeriesPath>,
 ) -> Result<Json<Vec<pacs_db::SegmentationProject>>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     Ok(Json(
         pacs_db::list_segmentation_projects(
             &state.pool,
@@ -193,6 +194,7 @@ async fn create_project(
     Json(request): Json<CreateProjectRequest>,
 ) -> Result<(StatusCode, Json<CreatedProject>), SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     let name = request.name.trim();
     let label = request.segment_label.trim();
     let description = request
@@ -276,6 +278,7 @@ async fn delete_project(
     Path(path): Path<ProjectPath>,
 ) -> Result<StatusCode, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     let deleted = pacs_db::delete_segmentation_project(
         &state.pool,
         identity.institution_id,
@@ -310,6 +313,7 @@ async fn list_segments(
     Query(query): Query<SegmentQuery>,
 ) -> Result<Json<Vec<pacs_db::SegmentationSegment>>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     let tag = query
         .tag
         .as_deref()
@@ -342,6 +346,7 @@ async fn update_segment(
     Json(request): Json<UpdateSegmentRequest>,
 ) -> Result<Json<pacs_db::SegmentationSegment>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     let tags = normalize_tags(request.tags)?;
     let segment = pacs_db::update_segmentation_segment_tags(
         &state.pool,
@@ -404,6 +409,7 @@ async fn list_masks(
     Query(query): Query<MaskQuery>,
 ) -> Result<Json<Vec<MaskResponse>>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     validate_mask_target(&query.sop_instance_uid, query.frame_number, 1, 1)?;
     let masks = pacs_db::list_segmentation_masks(
         &state.pool,
@@ -424,6 +430,7 @@ async fn upsert_mask(
     Json(request): Json<UpsertMaskRequest>,
 ) -> Result<Json<MaskResponse>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     validate_mask_target(
         &request.sop_instance_uid,
         request.frame_number,
@@ -483,6 +490,7 @@ async fn list_segment_masks(
     Path(path): Path<SegmentPath>,
 ) -> Result<Json<Vec<MaskResponse>>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     let masks = pacs_db::list_segmentation_segment_masks(
         &state.pool,
         identity.institution_id,
@@ -501,6 +509,7 @@ async fn upsert_masks_batch(
     Json(request): Json<UpsertMasksRequest>,
 ) -> Result<Json<Vec<MaskResponse>>, SegmentationError> {
     validate_series(&path.study_uid, &path.series_uid)?;
+    authorize(&state, &identity, &path.series_uid).await?;
     if request.updates.is_empty() || request.updates.len() > 2048 {
         return Err(SegmentationError::BadRequest(
             "一次 Mask 批量更新必须包含 1–2048 个来源层".to_owned(),
@@ -647,6 +656,27 @@ async fn audit(
     entry.series_instance_uid = Some(path.series_uid.clone());
     entry.sop_instance_uid = sop_uid;
     record_audit(&state.pool, action, Outcome::Success, entry).await;
+}
+
+async fn authorize(
+    state: &WebState,
+    identity: &Identity,
+    series_uid: &str,
+) -> Result<(), SegmentationError> {
+    let allowed = pacs_db::can_access_series(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        identity.role == pacs_auth::Role::Admin,
+        series_uid,
+    )
+    .await
+    .map_err(SegmentationError::db)?;
+    if allowed {
+        Ok(())
+    } else {
+        Err(SegmentationError::NotFound)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

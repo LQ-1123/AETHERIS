@@ -445,7 +445,7 @@ async fn cold_retransmission_is_idempotent_and_quarantine_hides_the_study() {
             .is_empty()
     );
     assert!(
-        pacs_db::list_patient_studies(&pool, 1, patient_id)
+        pacs_db::list_patient_studies(&pool, 1, 0, true, patient_id)
             .await
             .unwrap()
             .iter()
