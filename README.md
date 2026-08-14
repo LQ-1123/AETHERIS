@@ -2,6 +2,22 @@
 
 自建 PACS：Rust 服务端 + Tauri 桌面查看器。可分发、多账号、共享平台数据库。
 
+[![CI](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml)
+[![Windows](https://github.com/LQ-1123/AETHERIS/actions/workflows/build-windows.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/build-windows.yml)
+[![Release](https://img.shields.io/github/v/release/LQ-1123/AETHERIS)](https://github.com/LQ-1123/AETHERIS/releases)
+
+## 下载
+
+开箱即用安装包（内含 Viewer + 服务端 + PostgreSQL，目标机零依赖）：
+
+| 平台 | 安装包 | 说明 |
+|---|---|---|
+| Windows x64 | [AETHERIS-Setup-0.1.0-x64.exe](https://github.com/LQ-1123/AETHERIS/releases/latest) | Inno Setup 安装包，双击安装即可使用 |
+| macOS (Apple Silicon) | [AETHERIS_0.1.0_aarch64.dmg](https://github.com/LQ-1123/AETHERIS/releases/latest) | 双击即用，自动初始化本地服务与账号 |
+
+> macOS 首次打开如提示"无法验证开发者"，右键 → 打开即可（尚未公证）。
+> 仅供研究/演示，未经临床验证。
+
 实施计划见 [`pacs-plan.md`](pacs-plan.md)，Viewer 交接与后续清单见
 [`nextplan.md`](nextplan.md)。
 
