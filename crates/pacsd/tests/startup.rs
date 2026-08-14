@@ -31,9 +31,11 @@ fn starts_up_against_a_real_database() {
             std::env::var_os("CI").is_none(),
             "CI 环境必须设置 PACS_TEST_DATABASE_URL,启动测试不允许跳过"
         );
-        eprintln!("
+        eprintln!(
+            "
 >>> 跳过 pacsd 启动测试:未设置 PACS_TEST_DATABASE_URL。
-");
+"
+        );
         return;
     };
     let storage = tempfile::tempdir().expect("应能建临时目录");
@@ -78,14 +80,18 @@ fn starts_up_against_a_real_database() {
     let mut log = String::new();
     loop {
         if let Some(status) = child.try_wait().expect("应能查询子进程状态") {
-            panic!("pacsd 应常驻运行,却提前退出({status}),输出:
-{log}");
+            panic!(
+                "pacsd 应常驻运行,却提前退出({status}),输出:
+{log}"
+            );
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("pacsd 在 30 秒内未打印就绪日志,已停止。输出:
-{log}");
+            panic!(
+                "pacsd 在 30 秒内未打印就绪日志,已停止。输出:
+{log}"
+            );
         }
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(line) => {
