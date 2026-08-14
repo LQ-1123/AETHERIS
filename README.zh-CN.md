@@ -21,11 +21,11 @@
 
 | MPR 三维重建 | VR 体渲染 | AI 分割 |
 |---|---|---|
-| ![MPR](doc/演示/MPR三维重建.png) | ![VR](doc/演示/VR重建.png) | ![AI mask](doc/演示/AI mask标注.png) |
+| ![MPR](doc/演示/MPR三维重建.png) | ![VR](doc/演示/VR重建.png) | ![AI mask](doc/演示/AI-mask标注.png) |
 
 | 标注 | DICOM TAG 修订 | 生命周期 |
 |---|---|---|
-| ![标注](doc/演示/标注.png) | ![TAG修订](doc/演示/DICOM TAG修订.png) | ![生命周期](doc/演示/生命周期.png) |
+| ![标注](doc/演示/标注.png) | ![TAG修订](doc/演示/DICOM-TAG修订.png) | ![生命周期](doc/演示/生命周期.png) |
 
 | DICOM 路由引擎 |
 |---|

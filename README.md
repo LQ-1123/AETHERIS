@@ -33,11 +33,11 @@ Out-of-the-box installers (Viewer + server + embedded PostgreSQL, zero dependenc
 
 | MPR | Volume rendering | AI segmentation |
 |---|---|---|
-| ![MPR](doc/演示/MPR三维重建.png) | ![VR](doc/演示/VR重建.png) | ![AI mask](doc/演示/AI mask标注.png) |
+| ![MPR](doc/演示/MPR三维重建.png) | ![VR](doc/演示/VR重建.png) | ![AI mask](doc/演示/AI-mask标注.png) |
 
 | Annotations | DICOM tag revision | Lifecycle |
 |---|---|---|
-| ![Annotations](doc/演示/标注.png) | ![Tag revision](doc/演示/DICOM TAG修订.png) | ![Lifecycle](doc/演示/生命周期.png) |
+| ![Annotations](doc/演示/标注.png) | ![Tag revision](doc/演示/DICOM-TAG修订.png) | ![Lifecycle](doc/演示/生命周期.png) |
 
 | DICOM Router |
 |---|
