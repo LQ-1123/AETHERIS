@@ -37,9 +37,16 @@ jobs:
           cache: npm
           cache-dependency-path: apps/viewer/package-lock.json
 
-      - name: Install libarchive via vcpkg
+      # compress-tools 的 vcpkg 查找用 x64-windows-static-md 三元组（静态链接，运行时无需 DLL）
+      - name: Install libarchive via vcpkg (static)
         shell: bash
-        run: vcpkg install libarchive:x64-windows
+        run: vcpkg install libarchive:x64-windows-static-md
+
+      # cargo 缓存：避免每次冷启动全量编译依赖（首轮 ~20min，之后 ~5min）
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
 
       - name: Download PostgreSQL binaries
         shell: bash
