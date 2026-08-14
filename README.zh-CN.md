@@ -49,19 +49,7 @@
 
 ## 结构
 
-```
-crates/
-  pacs-core/    领域模型、UID 校验、DICOM 元数据提取
-  pacs-store/   文件落盘、fsync 语义、两级哈希分片路径
-  pacs-db/      Postgres 访问层、迁移、入库事务
-  pacs-dimse/   自研 DIMSE 服务类(C-ECHO/STORE/FIND/MOVE/GET SCP)
-  pacs-auth/    账号、argon2 哈希、token、RBAC、审计
-  pacs-web/     axum: QIDO/WADO/STOW-RS + 认证 API
-  pacs-codec/   像素解码、缩略图、帧提取
-  pacs-ai/      本地 AI Worker 协议、任务取消与 Mask 结果校验
-  pacsd/        服务端主程序
-apps/viewer/    Tauri 2 客户端(可脱离服务端打开本地 DICOM)
-```
+<p align="center"><img src="doc/diagrams/repo-structure.svg" alt="仓库结构" width="620"/></p>
 
 进度：阶段 0–4 已完成；阶段 5 的 QIDO-RS/WADO-RS 读取侧已完成，STOW-RS 待做；
 阶段 6 的 Viewer 已支持本地文件和经过认证的远程病人工作列表。
