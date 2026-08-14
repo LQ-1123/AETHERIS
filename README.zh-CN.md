@@ -1,260 +1,492 @@
-# remote_pacs
-
-[English](README.md) | **中文**
-
-自建 PACS：Rust 服务端 + Tauri 桌面查看器。可分发、多账号、共享平台数据库。
+# AETHERIS
 
 <p align="center">
-  <img src="./logo.jpg" alt="AETHERIS" width="200"/>
+  <img src="./logo.jpg" width="128" alt="AETHERIS Logo">
 </p>
 
-[![CI](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml)
-[![Windows](https://github.com/LQ-1123/AETHERIS/actions/workflows/build-windows.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/build-windows.yml)
-[![Release](https://img.shields.io/github/v/release/LQ-1123/AETHERIS)](https://github.com/LQ-1123/AETHERIS/releases)
-[![License](https://img.shields.io/github/license/LQ-1123/AETHERIS)](LICENSE)
+<h3 align="center">现代化自托管医学影像基础设施</h3>
+
+<p align="center">
+  <strong>纯 Rust 从零构建。</strong><br>
+  DICOM · DICOMweb · PACS · 2D/3D 可视化 · 本地 AI · 安全工作流
+</p>
+
+<p align="center">
+  <a href="https://github.com/LQ-1123/AETHERIS">GitHub</a>
+  ·
+  <a href="https://github.com/LQ-1123/AETHERIS/issues">Issues</a>
+  ·
+  <a href="https://github.com/LQ-1123/AETHERIS/releases">Releases</a>
+</p>
+
+<p align="center">
+
+![Rust](https://img.shields.io/badge/Rust-1.97%2B-orange?logo=rust)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql)
+![DICOM](https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-0B6E99)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)
+
+</p>
+
+[English](README.md) · **中文**
+
+---
+
+## 概述
+
+**AETHERIS** 是一个自托管的医学影像基础设施，围绕一个简单的理念设计：
+
+> **医学影像应当可互操作、持久可靠、可观测、本地可控。**
+
+AETHERIS 不把 PACS 当作一堆遗留服务的拼凑，而是把它当作一个现代化软件系统来构建——Rust 核心、显式存储保证、标准化网络、原生桌面阅片器与本地 AI 能力。
+
+平台能力包括：
+
+* **DIMSE** 标准 DICOM 网络
+* **DICOMweb** 现代 HTTP 互操作
+* **持久可靠的医学影像存储**
+* **PostgreSQL 元数据索引**
+* **原生桌面可视化**
+* **MPR / MIP / MinIP / 体渲染**
+* **测量与标注**
+* **本地 AI 分割**
+* **RBAC 鉴权与审计日志**
+* **工作列表与报告生命周期管理**
+* **Docker 部署**
+* **Windows / macOS 可分发安装包**
+
+AETHERIS 既是一个可用的 PACS 平台，也是未来智能医学影像工作流的工程底座。
+
+> **研究 / 工程项目。未经临床验证，不用于诊断或直接临床决策。**
+
+---
 
 ## 界面截图
 
-| 登录 | 病人列表 | 查询 |
+| 登录 | 病人列表 | 2D 阅片 |
 |---|---|---|
-| ![登陆](doc/screenshots/login.png) | ![主界面](doc/screenshots/worklist.png) | ![查询](doc/screenshots/viewer.png) |
+| ![登录](doc/screenshots/login.png) | ![病人列表](doc/screenshots/worklist.png) | ![阅片](doc/screenshots/viewer.png) |
 
-| MPR 三维重建 | VR 体渲染 | AI 分割 |
+| MPR | 体渲染 | AI 分割 |
 |---|---|---|
-| ![MPR](doc/screenshots/mpr.png) | ![VR](doc/screenshots/volume-rendering.png) | ![AI mask](doc/screenshots/ai-segmentation.png) |
+| ![MPR](doc/screenshots/mpr.png) | ![体渲染](doc/screenshots/volume-rendering.png) | ![AI 分割](doc/screenshots/ai-segmentation.png) |
 
 | 标注 | DICOM TAG 修订 | 生命周期 |
 |---|---|---|
-| ![标注](doc/screenshots/annotations.png) | ![TAG修订](doc/screenshots/tag-revision.png) | ![生命周期](doc/screenshots/lifecycle.png) |
+| ![标注](doc/screenshots/annotations.png) | ![TAG 修订](doc/screenshots/tag-revision.png) | ![生命周期](doc/screenshots/lifecycle.png) |
 
 | DICOM 路由引擎 |
 |---|
 | ![路由引擎](doc/screenshots/router.png) |
 
-## 下载
+---
 
+## 为什么是 AETHERIS？
 
-开箱即用安装包（内含 Viewer + 服务端 + PostgreSQL，目标机零依赖）：
+传统 PACS 部署往往是一堆紧耦合系统、厂商专属配置、难以在院外复现的基础设施。
 
-| 平台 | 安装包 | 说明 |
-|---|---|---|
-| Windows x64 | [AETHERIS-Setup-0.1.0-x64.exe](https://github.com/LQ-1123/AETHERIS/releases/latest) | Inno Setup 安装包，双击安装即可使用 |
-| macOS (Apple Silicon) | [AETHERIS_0.1.0_aarch64.dmg](https://github.com/LQ-1123/AETHERIS/releases/latest) | 双击即用，自动初始化本地服务与账号 |
+AETHERIS 换了一条路：
 
-> macOS 首次打开如提示"无法验证开发者"，右键 → 打开即可（尚未公证）。
-> 仅供研究/演示，未经临床验证。
+<p align="center"><img src="doc/diagrams/why-aetheris.svg" alt="AETHERIS 平台架构" width="620"/></p>
 
-实施计划见 [`pacs-plan.md`](pacs-plan.md)，Viewer 交接与后续清单见
-[`nextplan.md`](nextplan.md)。
+目标不是再造一个 DICOM 阅片器，而是构建一套**完整、可组合的医学影像基础设施**。
 
-## 结构
+---
 
-<p align="center"><img src="doc/diagrams/repo-structure.svg" alt="仓库结构" width="620"/></p>
+# 核心能力
 
-进度：阶段 0–4 已完成；阶段 5 的 QIDO-RS/WADO-RS 读取侧已完成，STOW-RS 待做；
-阶段 6 的 Viewer 已支持本地文件和经过认证的远程病人工作列表。
+## DICOM 网络
 
-## 试一试
+AETHERIS 实现了 PACS 互操作所需的核心 DIMSE 服务：
 
-先创建管理员账号并启动服务端，再用 DCMTK 模拟设备发送影像：
+| 服务 | 状态 |
+| ----------- | ------ |
+| C-ECHO SCP  | ✅      |
+| C-STORE SCP | ✅      |
+| C-FIND SCP  | ✅      |
+| C-MOVE SCP  | ✅      |
+| C-GET SCP   | ✅      |
 
-```sh
-cargo run -p pacsd -- admin --username admin --password 'sunyulin'
-cargo run -p pacsd
+DIMSE 层在 Rust workspace 内实现，而非完全依赖第三方 PACS 服务器——协议层显式、可测、可扩展。
 
-echoscu  -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112
-storescu -aet TEST_SCU -aec REMOTE_PACS 127.0.0.1 11112 x.dcm
+---
+
+## DICOMweb
+
+通过 DICOMweb 提供基于 HTTP 的现代互操作：
+
+| 标准 | 状态            |
+| -------- | ----------------- |
+| QIDO-RS  | ✅                 |
+| WADO-RS  | ✅                 |
+| STOW-RS  | 🚧 开发中 |
+
+DICOMweb 在传统设备基础设施与现代 Web 应用之间架起干净的桥梁。
+
+---
+
+## 持久存储
+
+AETHERIS 把影像持久化当作正确性问题而非简单的文件拷贝：
+
+<p align="center"><img src="doc/diagrams/cstore-durability.svg" alt="C-STORE 持久化路径" width="480"/></p>
+
+服务端**不会**在收到的对象到达持久存储之前返回成功。
+
+落盘的 DICOM 数据集保留原始字节内容，不做多余的解码 → 重编码。
+
+---
+
+# 原生医学影像阅片器
+
+AETHERIS 内置基于 **Tauri 2** 的原生桌面阅片器，既可作远程 PACS 客户端，也可作本地 DICOM 阅片器。
+
+### 2D 可视化
+
+* 窗宽窗位
+* 窗预设
+* 缩放 / 平移
+* 序列导航
+* 多帧支持
+* 多文件序列
+* 图像测量
+* 标注
+
+### 几何感知的序列重建
+
+序列排序不依赖文件名或 `InstanceNumber`：
+
+<p align="center"><img src="doc/diagrams/series-reconstruction.svg" alt="几何感知序列重建" width="520"/></p>
+
+无法建立可靠几何时，阅片器拒绝猜测。
+
+这是有意为之。
+
+> **在医学影像里，顺序错误但看似合理的图像，比显式失败更糟。**
+
+---
+
+# 高级可视化
+
+AETHERIS 不止于基础 2D 阅片，当前可视化能力包括：
+
+* MPR — 多平面重建
+* MIP — 最大密度投影
+* MinIP — 最小密度投影
+* GPU 加速体渲染
+* 3D 稀疏 Mask
+* 交互式测量
+* 标注叠加
+
+架构设计支持逐步演进到更高级的体绘制工作流，且阅片器与服务器实现解耦。
+
+---
+
+# 本地 AI
+
+AETHERIS 提供面向医学图像处理的本地 AI Worker 架构，当前支持基于 **lungmask R231** 的本地肺部分割：
+
+<p align="center"><img src="doc/diagrams/local-ai.svg" alt="本地 AI 管线" width="480"/></p>
+
+Worker 完全本地运行，医学图像不离开宿主机即可完成推理。Apple Silicon 上可自动使用 **MPS**。
+
+AI 子系统刻意设计为 Worker 边界而非把具体模型塞进 PACS 核心——未来引入新模型和推理引擎无需重构存储与网络层。
+
+---
+
+# 安全与访问控制
+
+AETHERIS 为分布式部署提供应用层安全机制：
+
+* Argon2 密码哈希
+* JWT 鉴权
+* Refresh Token
+* 基于角色的访问控制（RBAC）
+* 账号管理
+* 审计日志
+* 权限感知的 API 访问
+* 版本化报告修订
+* 生命周期控制
+
+服务端独占数据库连接，客户端绝不直连 PostgreSQL：
+
+<p align="center"><img src="doc/diagrams/security-boundary.svg" alt="安全边界" width="560"/></p>
+
+这避免了把数据库凭据分发给每个客户端，在应用层与持久层之间建立清晰的安全边界。
+
+---
+
+# 架构
+
+AETHERIS 按显式子系统边界组织为 Rust workspace：
+
+<p align="center"><img src="doc/diagrams/repo-structure.svg" alt="仓库结构" width="560"/></p>
+
+架构刻意分层：
+
+<p align="center"><img src="doc/diagrams/architecture-layers.svg" alt="架构分层" width="420"/></p>
+
+各子系统独立可测、可替换。
+
+---
+
+# 技术栈
+
+| 层 | 技术                |
+| ---------------- | ------------------------- |
+| 核心语言    | Rust                      |
+| 桌面          | Tauri 2                   |
+| 后端 HTTP     | Axum                      |
+| 数据库         | PostgreSQL                |
+| DICOM            | DIMSE + DICOMweb          |
+| 鉴权   | Argon2 + JWT              |
+| AI               | 本地 Worker 架构 |
+| 容器化 | Docker / Compose          |
+| macOS            | Apple Silicon             |
+| Windows          | x64                       |
+| License          | MIT                       |
+
+---
+
+# 部署
+
+AETHERIS 无需复杂基础设施即可部署。
+
+## Docker
+
+```bash
+docker compose up -d --build
 ```
 
-`echoscu` 成功表示关联和 C-ECHO 正常；`storescu` 返回 Success 后，影像已经持久化到
-`PACS_STORAGE_ROOT` 并完成 Postgres 分层索引。重复发送相同 SOP Instance UID 不会产生
-重复实例。
+<p align="center"><img src="doc/diagrams/deployment-stack.svg" alt="Docker 部署拓扑" width="560"/></p>
 
-### DCMTK 多设备模拟器
+Tauri Viewer 保持为宿主机原生应用。
 
-本地测试可运行 `python3 tools/dcmtk-simulator.py`，然后打开 `http://127.0.0.1:8787`。页面支持拖拽 DICOM 文件夹、配置多台 Calling/Called AE 设备，并发调用 DCMTK `storescu` 上传到 PACS。需先安装 DCMTK（macOS：`brew install dcmtk`）；端口可用 `SIMULATOR_PORT` 修改。
+---
 
-管理员可在服务器上为用户创建固定角色账号：
+# DICOM 设备模拟
 
-```sh
-cargo run -p pacsd -- user create --username doctor01 --password 'replace-with-a-strong-password' --role radiologist
-cargo run -p pacsd -- user create --username technician01 --password 'replace-with-a-strong-password' --role technician
-cargo run -p pacsd -- user create --username viewer01 --password 'replace-with-a-strong-password' --role viewer
+AETHERIS 内置基于 DCMTK 的设备模拟器，用于开发与互操作测试：
+
+```bash
+python3 tools/dcmtk-simulator.py
 ```
 
-可选角色为 `admin`、`radiologist`、`technician` 和 `viewer`。命令必须在能读取
-服务端 `.env` 并连接 PACS 数据库的环境中执行；系统不提供公开注册入口。
+模拟器支持：上传 DICOM 文件夹、配置 Calling/Called AE、模拟多台设备、并发传输。
 
-## Docker 快速开始
+没有物理 CT/MR/CR/DR 设备也能开发和测试 PACS 网络。
 
-一条命令起服务端全套：Postgres + pacsd + DCMTK 设备模拟器（需要 Docker 与
-Compose v2；Tauri Viewer 是桌面应用，仍在宿主机运行）。
+---
 
-```sh
-docker compose up -d --build   # 首次构建 pacsd 镜像（release 编译约 10-20 分钟）
-docker compose logs -f pacsd   # 看初始化日志：建库 → 迁移 → 创建管理员
-```
+# 零依赖桌面分发
 
-启动后：
+AETHERIS 可打包为独立的桌面应用：
 
-- **HTTPS/DICOMweb**：`https://127.0.0.1:8443`（自签证书，首次启动自动生成，
-  存在 `data/docker-storage/tls/ca.crt`）
-- **DIMSE**：`127.0.0.1:11112`，可直接用 `echoscu`/`storescu` 对接
-- **设备模拟器**：`http://127.0.0.1:8787`，拖入 DICOM 文件夹即可并发上传
-  —— 设备配置里"主机"填 `pacsd`、端口 `11112`
-- **默认管理员**：`admin / pacs-demo-2026`（默认密码需 ≥12 位且不能包含
-  用户名 "admin"；务必用 `.env` 里的 `PACS_ADMIN_PASSWORD` 覆盖，正式使用
-  还需覆盖 `PACS_JWT_SECRET`）
+<p align="center"><img src="doc/diagrams/packaging.svg" alt="双平台打包结构" width="620"/></p>
 
-示例影像：
+macOS dmg 开箱即用；Windows 安装包目标机无需单独安装 PACS。
 
-```sh
-./tools/fetch-sample-dicom.sh    # 下载公开示例 DICOM 到 data/samples
-```
+---
 
-Viewer 在宿主机连接容器：
+# 开发
 
-```sh
-cd apps/viewer && npm install && npm run tauri dev
-```
+## 环境要求
 
-登录页填 `https://127.0.0.1:8443`，CA 证书选 `data/docker-storage/tls/ca.crt`，
-用管理员或 `pacsd user create` 建的账号登录。本地 AI 分割（lungmask）在 Viewer
-内运行，不经过容器。
+* Rust 1.97.1+
+* PostgreSQL
+* DCMTK
+* Node.js / npm
+* Docker（可选）
 
-容器内默认以 root 运行（演示用途；正式部署建议换非 root 用户并加固 TLS 证书）。
+## 构建 / 测试 / 检查
 
-## 打包发行
-
-**macOS（零依赖 dmg）**：`npm run tauri build` 自动组装本地栈（pacsd + 内嵌
-PostgreSQL 14 + 依赖库，脚本 `scripts/stage-local-stack.sh`），产物
-`apps/viewer/src-tauri/target/release/bundle/dmg/*.dmg`。双击即用：自动 initdb、
-起服务、建管理员、自动登录。
-
-**Windows（开箱即用 exe）**：GitHub Actions 的 `.github/workflows/build-windows.yml`
-（手动触发或打 `v*` 标签）在 windows-latest 上编译 pacsd + aetheris-launcher +
-Viewer，下载 EDB PostgreSQL 二进制与 vcpkg libarchive，用 Inno Setup 组装
-`AETHERIS-Setup-0.1.0-x64.exe` 并上传为 artifact。安装时 `initialize.ps1`
-完成 initdb/建库/建管理员，启动器一键拉起全部服务。
-
-## 开发环境
-
-需要 Rust 1.97.1(由 `rust-toolchain.toml` 自动选择)、PostgreSQL、DCMTK。
-
-```sh
+```bash
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-### API 检测中心
+## 运行阅片器
 
-启动 `pacsd` 后打开 `https://127.0.0.1:8443/api-checker`。页面会自动读取
-`/api/v1/openapi.json` 并合并 DICOMweb、Viewer、标注、分割和传输路由，支持登录、
-单接口请求、认证防护批量扫描、GET 冒烟测试及检测结果 JSON 导出。批量检测不会自动
-执行写接口；`POST`、`PUT`、`PATCH` 和 `DELETE` 必须填写参数后手动发送，避免误改
-临床数据。
-
-### Viewer
-
-Viewer 支持单文件多帧和同一 Study/Series 的多文件灰度序列。多文件序列严格按
-`ImagePositionPatient`/`ImageOrientationPatient` 排序；缺少可靠几何时拒绝打开，
-不会退回文件名或 `InstanceNumber` 猜测顺序。同一 Series 混有定位像或不同尺寸时，
-Viewer 会按几何朝向和尺寸拆成独立图像组，默认打开帧数最多的主堆栈，并可在阅片区
-右上角切换其他图像组。
-
-```sh
+```bash
 cd apps/viewer
 npm install
-npm run build
-npm test
 npm run tauri dev
 ```
 
-启用轻量本地肺部分割：
+---
 
-```sh
-./ai-worker/setup.sh
-npm run tauri dev
+# 互操作测试
+
+AETHERIS 不只依赖自产流量，还用 DCMTK 对服务器打真实 DICOM 关联：
+
+```bash
+echoscu \
+  -aet TEST_SCU \
+  -aec REMOTE_PACS \
+  127.0.0.1 11112
 ```
 
-默认模型为 `lungmask R231`，权重约 119 MB，首次推理时下载。Apple Silicon 会自动
-使用 MPS；DICOM 仅由本地 Worker 读取，不上传到推理服务。可通过
-`PACS_AI_PYTHON` 和 `PACS_AI_WORKER` 替换 Python 环境或兼容 Worker。
-
-登录时使用默认地址 `https://127.0.0.1:8443`，CA 证书选择
-`<PACS_STORAGE_ROOT>/tls/ca.crt`。登录成功后可以按姓名或 Patient ID 搜索，依次展开
-病人、检查和序列；点击序列会下载完整 DICOM 后进入阅片。列表在登录时自动加载，
-DCMTK 新发送影像后点击刷新即可看到。
-
-当前工具包括窗宽窗位、光标锚定缩放、平移、序列导航、窗预设和两点测距。
-普通滚轮切换帧，`Ctrl + 滚轮`缩放，中键拖动平移。
-测距会区分已标定毫米、探测器平面毫米和仅像素三种结果。
-
-### 数据库
-
-服务端独占数据库连接，客户端不直连。连接串通过 `.env` 提供：
-
-```sh
-cp .env.example .env   # 然后填入真实密码
+```bash
+storescu \
+  -aet TEST_SCU \
+  -aec REMOTE_PACS \
+  127.0.0.1 11112 \
+  x.dcm
 ```
 
-本机开发环境：`postgresql@14`（brew）跑在 **5433** 端口——5432 被系统级
-PostgreSQL 18（`/Library/PostgreSQL/18`，另一套独立安装）占用，两者互不影响。
-`pacs`（开发）和 `pacs_test`（集成测试）两个库、`pacs` 角色已建，密码在 `~/.pgpass`：
+这让 DIMSE 实现接受独立 DICOM 实现的验证。
 
-```sh
-/opt/homebrew/opt/postgresql@14/bin/psql -h 127.0.0.1 -p 5433 -U pacs -d pacs
+---
+
+# API 检测中心
+
+启动 `pacsd` 后打开 `https://127.0.0.1:8443/api-checker`：
+
+可检查 OpenAPI 路由、DICOMweb 端点、阅片/标注/分割/传输 API、鉴权保护、GET 冒烟测试、JSON 导出。批量检测不会自动执行写接口。
+
+---
+
+# 工程原则
+
+AETHERIS 围绕几条不可妥协的原则构建。
+
+### 1. 先持久，后应答
+
+C-STORE 返回成功时，数据必须已经真正落盘。
+
+### 2. 绝不猜测医学影像几何
+
+CT/MR 排序必须基于空间元数据，而非文件名。
+
+### 3. 保留原始 DICOM 字节
+
+存储不应引入不必要的有损变换。
+
+### 4. 客户端绝不持有数据库凭据
+
+应用服务器是安全与鉴权边界。
+
+### 5. 标准优先于厂商锁定
+
+DICOM 与 DICOMweb 是首要互操作层。
+
+### 6. 本地优先 AI
+
+推理应能不经第三方云服务处理医学图像。
+
+### 7. 显式失败优于静默损坏
+
+系统无法安全确定时，应显式失败，而非静默产生看似合理实则错误的结果。
+
+---
+
+# 项目状态
+
+AETHERIS 处于活跃开发中。
+
+```text
+阶段 0 ──────────────────────────────── ✅
+核心架构
+
+阶段 1 ──────────────────────────────── ✅
+存储 / 数据库
+
+阶段 2 ──────────────────────────────── ✅
+DIMSE 基础设施
+
+阶段 3 ──────────────────────────────── ✅
+鉴权 / RBAC / 审计
+
+阶段 4 ──────────────────────────────── ✅
+PACS 工作流
+
+阶段 5 ──────────────────────────────── 🟡
+DICOMweb
+QIDO-RS / WADO-RS      ✅
+STOW-RS                🚧
+
+阶段 6 ──────────────────────────────── 🟡
+原生阅片器
+本地 DICOM            ✅
+远程工作列表          ✅
+2D 可视化             ✅
+3D 可视化             ✅
+本地 AI               ✅
 ```
 
-数据库迁移在 `pacsd` 启动时自动应用，也随二进制编译进去，部署时不用带 SQL 文件。
+---
 
-### 测试
+# 路线图
 
-`pacs-db` 的集成测试跑在真实 Postgres 上（那些 SQL 只有真库能验证），
-`pacsd` 的互操作测试会启动服务端并用 DCMTK 的 `echoscu`/`storescu` 打真实流量
-（自己写的客户端测自己写的服务端，只能证明两边的误解一致）。
+长期方向包括：
 
-两者都需要 `PACS_TEST_DATABASE_URL`，互操作测试还需要 DCMTK。缺少时会打印提示
-并跳过；`CI` 环境变量存在时跳过会直接判失败，避免"绿了但其实没测"。
+* [ ] 完成 STOW-RS
+* [ ] 扩展 DICOMweb 覆盖
+* [ ] 提升 DICOM 设备互操作
+* [ ] 高级 MPR / VR 工作流
+* [ ] 更多 AI 分割模型
+* [ ] AI 辅助影像分析
+* [ ] 结构化报告
+* [ ] DICOM SR 集成
+* [ ] 高级工作列表管理
+* [ ] 分布式存储
+* [ ] 对象存储后端
+* [ ] 多站点部署改进
+* [ ] 生产级证书管理
+* [ ] 更完善的观测性
+* [ ] 扩展自动化互操作测试
 
-测试库不存在会自动创建，不用先手动 `createdb`。
+目标是让 AETHERIS 从自托管 PACS 演进为更广泛的**医学影像基础设施平台**。
 
-### 基准
+---
 
-```sh
-cargo run --release -p pacsd --example bench_ingest -- 200 8 512
-#                                                      份数 并发 边长
-```
+# 安全须知
 
-测的是 C-STORE 回成功之前必须完成的链路：解析 → 落盘 fsync → 事务提交。
-必须 `--release`，debug 构建下 DICOM 解析慢一个数量级。
+DIMSE 本身不提供强鉴权（AE Title 可伪造）。开发时服务默认绑定回环地址。
 
-## 设计要点
+真实设备或真实病人数据部署前，必须提供：
 
-几个关键约束，改动前请先读计划里的对应章节：
+* TLS 证书与 SAN 配置
+* 网络分段
+* 防火墙规则
+* 设备白名单
+* 凭据管理
+* 备份策略
+* 访问审计
+* 数据保留策略
+* 隐私与合规控制
 
-- **客户端绝不直连数据库。** 软件要分发到不同机器和账号，内嵌连接串等于把库
-  凭据发给每个用户 —— 无法做权限控制、无法吊销、无法轮换。
-- **UID 在入库前必须校验。** UID 直接作为文件路径分量使用，而它来自外部设备。
-  `pacs_core::Uid` 保证构造成功的值都是安全的单级路径名。
-- **C-STORE 回成功之前数据必须真的持久化。** 顺序是：写临时文件 → fsync →
-  rename → fsync 父目录 → 数据库事务提交 → 才回 `0x0000`。设备收到成功响应
-  后真的会删本地副本。
-- **命令集永远是 Implicit VR Little Endian**，与数据集协商出的传输语法无关
-  （PS3.7 §6.3.1）。按协商结果去解命令集，遇到显式 VR 的连接就会解出乱码。
-- **落盘的数据集字节与发送方原样一致。** 只在前面拼文件元信息，不解码再重编码
-- **CT 序列排序不能用 `InstanceNumber`。** 要按 `ImagePositionPatient` 在切片
-  法向量上的投影排。
+真实病人数据可能受《个人信息保护法》、GDPR、HIPAA 等适用法规约束。
 
-## 安全须知
+**不要把开发配置直接暴露到公网。**
 
-- DIMSE 协议本身无认证（AE Title 可伪造）；HTTP 读取接口使用 TLS、账号和权限控制。
-  服务端默认只绑 `127.0.0.1`，绑定其他地址会在启动日志里告警。
-- 当前自签证书只包含回环地址，本阶段不要直接改为局域网或公网监听。真实设备接入前
-  还需要配置正式证书 SAN、网络访问控制和设备白名单。
-- 真实病人数据涉及 HIPAA / GDPR /《个人信息保护法》合规要求。
+---
 
-## License
+# 临床免责声明
 
-[MIT](LICENSE)
+AETHERIS 是研究与工程项目，**未经临床验证**，不是医疗设备。
+
+仓库中的任何内容都不应被理解为：医学诊断、临床建议、经认证的放射工作流、合格医疗专业人员的替代品。
+
+AI 输出为实验性质，不得作为临床决策的唯一依据。
+
+---
+
+# License
+
+AETHERIS 以 [MIT License](./LICENSE) 发布。
+
+---
+
+<p align="center">
+
+**AETHERIS**
+
+*医学影像基础设施，重新构想。*
+
+Rust · DICOM · Tauri · PostgreSQL
+
+</p>
