@@ -545,12 +545,13 @@ async fn extract_archive(path: PathBuf) -> Result<ExtractedArchive, TransferErro
             match content {
                 ArchiveContents::StartOfEntry(name, stat) => {
                     validate_relative_name(&name)?;
-                    let file_type = stat.st_mode & libc::S_IFMT;
-                    if file_type == libc::S_IFDIR {
+                    // 显式统一为 u32:ArchiveStat 字段类型与 libc 常量在 macOS/Windows 上不一致
+                    let file_type = stat.st_mode as u32 & (libc::S_IFMT as u32);
+                    if file_type == libc::S_IFDIR as u32 {
                         current = None;
                         continue;
                     }
-                    if file_type != libc::S_IFREG {
+                    if file_type != libc::S_IFREG as u32 {
                         return Err(TransferError::Archive(
                             "归档包含符号链接、硬链接或设备条目".to_owned(),
                         ));
@@ -558,7 +559,7 @@ async fn extract_archive(path: PathBuf) -> Result<ExtractedArchive, TransferErro
                     if stat.st_nlink > 1 {
                         return Err(TransferError::Archive("归档包含硬链接条目".to_owned()));
                     }
-                    if stat.st_size < 0 || stat.st_size > FILE_LIMIT {
+                    if (stat.st_size as i64) < 0 || (stat.st_size as i64) > FILE_LIMIT {
                         return Err(TransferError::Archive("归档条目过大".to_owned()));
                     }
                     if result.len() >= ARCHIVE_ENTRY_LIMIT {
