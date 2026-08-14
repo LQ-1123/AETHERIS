@@ -1,9 +1,10 @@
 // 打包前把 ai-plugins 暂存到 src-tauri/staging/，剔除 .venv（开发机产物，含绝对路径不可分发）
 import { cpSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const src = new URL('../ai-plugins', import.meta.url).pathname;
-const dst = new URL('../src-tauri/ai-plugins', import.meta.url).pathname;
+// 用 fileURLToPath 而非 .pathname:后者在 Windows 上带前导斜杠(/D:/...),会拼出 D:\D:\... 双前缀
+const src = fileURLToPath(new URL('../ai-plugins', import.meta.url));
+const dst = fileURLToPath(new URL('../src-tauri/ai-plugins', import.meta.url));
 rmSync(dst, { recursive: true, force: true });
 cpSync(src, dst, {
   recursive: true,
