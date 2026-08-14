@@ -4,6 +4,10 @@
 
 A self-hosted PACS (Picture Archiving and Communication System): Rust server + Tauri desktop viewer. Distributable, multi-account, shared platform database.
 
+<p align="center">
+  <img src="doc/演示/LOGO.png" alt="AETHERIS" width="200"/>
+</p>
+
 [![CI](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml)
 [![Windows](https://github.com/LQ-1123/AETHERIS/actions/workflows/build-windows.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/build-windows.yml)
 [![Release](https://img.shields.io/github/v/release/LQ-1123/AETHERIS)](https://github.com/LQ-1123/AETHERIS/releases)
@@ -21,7 +25,26 @@ Out-of-the-box installers (Viewer + server + embedded PostgreSQL, zero dependenc
 > On macOS, if Gatekeeper shows "cannot verify the developer", right-click → Open (not notarized yet).
 > Research/demo only — not clinically validated.
 
+## Screenshots
+
+| Login | Worklist | Patient search |
+|---|---|---|
+| ![Login](doc/演示/登陆.png) | ![Worklist](doc/演示/主界面1.png) | ![Search](doc/演示/查询.png) |
+
+| MPR | Volume rendering | AI segmentation |
+|---|---|---|
+| ![MPR](doc/演示/MPR三维重建.png) | ![VR](doc/演示/VR重建.png) | ![AI mask](doc/演示/AI mask标注.png) |
+
+| Annotations | DICOM tag revision | Lifecycle |
+|---|---|---|
+| ![Annotations](doc/演示/标注.png) | ![Tag revision](doc/演示/DICOM TAG修订.png) | ![Lifecycle](doc/演示/生命周期.png) |
+
+| DICOM Router |
+|---|
+| ![Router](doc/演示/路由引擎.png) |
+
 ## What is it
+
 
 A complete medical imaging archive and viewing stack written in Rust:
 
