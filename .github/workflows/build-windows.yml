@@ -37,6 +37,17 @@ jobs:
           cache: npm
           cache-dependency-path: apps/viewer/package-lock.json
 
+      # vcpkg 编译产物缓存：libarchive 从源码编译约 10 分钟,缓存后秒级恢复
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/installed
+            C:/vcpkg/packages
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('**/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
       # compress-tools 的 vcpkg 查找用 x64-windows-static-md 三元组（静态链接，运行时无需 DLL）
       - name: Install libarchive via vcpkg (static)
         shell: bash
