@@ -33,9 +33,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      # compress-tools(pacs-web 的 ZIP/RAR 导入导出)需要 libarchive
+      # compress-tools(pacs-web 的 ZIP/RAR 导入导出)需要 libarchive；
+      # DIMSE 互操作测试用 DCMTK 的 echoscu/storescu 打真实流量（缺了会判失败，见 pacsd 测试注释）
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libarchive-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libarchive-dev pkg-config dcmtk
       # 工具链版本由 rust-toolchain.toml 决定,rustup 自动读取
       - name: Install toolchain
         run: rustup toolchain install
