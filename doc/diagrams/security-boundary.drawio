@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Security">
+    <mxGraphModel dx="900" dy="500" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="540">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="v1" value="Viewer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="220" width="140" height="80" as="geometry" /></mxCell>
+        <mxCell id="srv" value="pacsd" style="swimlane;startSize=32;html=1;fillColor=#1f4e79;strokeColor=#0d2b45;fontColor=#ffffff;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="330" y="100" width="260" height="300" as="geometry" /></mxCell>
+        <mxCell id="s1" value="Auth / RBAC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="srv"><mxGeometry x="40" y="50" width="180" height="50" as="geometry" /></mxCell>
+        <mxCell id="s2" value="DICOMweb" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="srv"><mxGeometry x="40" y="120" width="180" height="50" as="geometry" /></mxCell>
+        <mxCell id="s3" value="Workflows" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="srv"><mxGeometry x="40" y="190" width="180" height="50" as="geometry" /></mxCell>
+        <mxCell id="db1" value="PostgreSQL" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="660" y="200" width="140" height="110" as="geometry" /></mxCell>
+        <mxCell id="l1" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontStyle=2;" edge="1" parent="1" source="v1" target="srv"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l2" value="Internal DB access&#xa;(server only)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontStyle=2;" edge="1" parent="1" source="srv" target="db1"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Repo">
+    <mxGraphModel dx="700" dy="700" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="700">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="root" value="AETHERIS /" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1f4e79;strokeColor=#0d2b45;fontColor=#ffffff;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="330" y="20" width="160" height="50" as="geometry" /></mxCell>
+        <mxCell id="crates" value="crates/" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="60" y="120" width="150" height="40" as="geometry" /></mxCell>
+        <mxCell id="apps" value="apps/&#xa;viewer (Tauri 2)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="290" y="120" width="150" height="40" as="geometry" /></mxCell>
+        <mxCell id="docker" value="docker/&#xa;compose resources" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="520" y="120" width="150" height="40" as="geometry" /></mxCell>
+        <mxCell id="tools" value="tools/&#xa;simulators" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="60" y="300" width="150" height="40" as="geometry" /></mxCell>
+        <mxCell id="gh" value=".github/&#xa;workflows (CI)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="290" y="300" width="150" height="40" as="geometry" /></mxCell>
+        <mxCell id="c1" value="pacs-core" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="180" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c2" value="pacs-store" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="202" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c3" value="pacs-db" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="224" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c4" value="pacs-dimse" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="246" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c5" value="pacs-auth" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="200" y="180" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c6" value="pacs-web" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="200" y="202" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c7" value="pacs-codec" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="200" y="224" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c8" value="pacs-ai" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="200" y="246" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="c9" value="pacsd" style="text;html=1;align=left;fontSize=11;" vertex="1" parent="1"><mxGeometry x="200" y="268" width="120" height="20" as="geometry" /></mxCell>
+        <mxCell id="x1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="root" target="crates"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="root" target="apps"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="root" target="docker"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="crates" target="tools"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="apps" target="gh"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

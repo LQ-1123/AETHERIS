@@ -89,36 +89,7 @@ Traditional PACS deployments often involve a collection of tightly coupled syste
 
 AETHERIS takes a different approach:
 
-```text
-                    ┌─────────────────────────────┐
-                    │          AETHERIS           │
-                    │  Medical Imaging Platform   │
-                    └──────────────┬──────────────┘
-                                   │
-            ┌──────────────────────┼──────────────────────┐
-            │                      │                      │
-            ▼                      ▼                      ▼
-     DICOM / DIMSE            DICOMweb              Native Viewer
-     C-ECHO / C-STORE         QIDO / WADO            Tauri 2
-     C-FIND / C-MOVE          STOW*                  2D / 3D
-     C-GET                                              MPR / VR
-            │                      │                      │
-            └──────────────────────┼──────────────────────┘
-                                   │
-                                   ▼
-                         ┌──────────────────┐
-                         │   Rust Core      │
-                         │                  │
-                         │ Storage / DB     │
-                         │ Auth / Codec     │
-                         │ AI / Workflows   │
-                         └────────┬─────────┘
-                                  │
-                   ┌──────────────┴──────────────┐
-                   ▼                             ▼
-             PostgreSQL                  Byte-Fidelity Archive
-             Metadata                    Durable DICOM Storage
-```
+<p align="center"><img src="doc/diagrams/why-aetheris.svg" alt="AETHERIS platform architecture" width="620"/></p>
 
 The goal is not simply to make another DICOM viewer.
 
@@ -166,30 +137,7 @@ AETHERIS treats image persistence as a correctness problem rather than simply a 
 
 The C-STORE path follows:
 
-```text
-DICOM Receive
-     │
-     ▼
-Parse & Validate
-     │
-     ▼
-Temporary File
-     │
-     ▼
-fsync
-     │
-     ▼
-Atomic Rename
-     │
-     ▼
-fsync Parent Directory
-     │
-     ▼
-PostgreSQL Transaction
-     │
-     ▼
-C-STORE Success
-```
+<p align="center"><img src="doc/diagrams/cstore-durability.svg" alt="C-STORE durability path" width="620"/></p>
 
 The server does **not** report success before the received object has reached durable storage.
 
@@ -221,17 +169,7 @@ Series ordering does not rely on filenames or `InstanceNumber`.
 
 AETHERIS uses:
 
-```text
-ImagePositionPatient
-          +
-ImageOrientationPatient
-          ↓
-Slice Geometry
-          ↓
-Slice Normal
-          ↓
-Spatial Ordering
-```
+<p align="center"><img src="doc/diagrams/series-reconstruction.svg" alt="Geometry-aware series reconstruction" width="620"/></p>
 
 When reliable geometry cannot be established, the viewer refuses to guess.
 
@@ -265,27 +203,7 @@ AETHERIS includes a local AI worker architecture for medical image processing.
 
 The current implementation supports local lung segmentation through **lungmask R231**.
 
-```text
-                  DICOM
-                    │
-                    ▼
-              AETHERIS Viewer
-                    │
-                    ▼
-              Local AI Worker
-                    │
-              ┌─────┴─────┐
-              │           │
-              ▼           ▼
-           Inference    Validation
-              │           │
-              └─────┬─────┘
-                    ▼
-                3D Mask
-                    │
-                    ▼
-            Viewer Visualization
-```
+<p align="center"><img src="doc/diagrams/local-ai.svg" alt="Local AI pipeline" width="620"/></p>
 
 The worker runs locally.
 
@@ -315,23 +233,7 @@ The server owns database connections.
 
 Clients never connect directly to PostgreSQL.
 
-```text
-             Viewer
-                │
-                │ HTTPS
-                ▼
-        ┌───────────────┐
-        │    pacsd      │
-        │               │
-        │ Auth / RBAC   │
-        │ DICOMweb      │
-        │ Workflows     │
-        └───────┬───────┘
-                │
-                │ Internal DB access
-                ▼
-           PostgreSQL
-```
+<p align="center"><img src="doc/diagrams/security-boundary.svg" alt="Security boundary" width="620"/></p>
 
 This prevents database credentials from being distributed to every client and creates a clean security boundary between the application and persistence layers.
 
@@ -341,48 +243,11 @@ This prevents database credentials from being distributed to every client and cr
 
 AETHERIS is organized as a Rust workspace with explicit subsystem boundaries.
 
-```text
-AETHERIS/
-│
-├── crates/
-│   ├── pacs-core/       Domain model, UID validation, DICOM metadata
-│   ├── pacs-store/      Durable file storage and sharding
-│   ├── pacs-db/         PostgreSQL access and migrations
-│   ├── pacs-dimse/      DIMSE networking
-│   ├── pacs-auth/       Authentication, RBAC and audit
-│   ├── pacs-web/        Axum + DICOMweb + REST APIs
-│   ├── pacs-codec/      Pixel decoding and frame extraction
-│   ├── pacs-ai/         Local AI worker protocol
-│   └── pacsd/           Server entrypoint
-│
-├── apps/
-│   └── viewer/          Tauri 2 desktop application
-│
-├── docker/
-│   └── ...              Container deployment resources
-│
-├── tools/
-│   └── ...              DICOM tooling and simulators
-│
-└── .github/
-    └── workflows/       CI / release automation
-```
+<p align="center"><img src="doc/diagrams/repo-structure.svg" alt="Repository structure" width="620"/></p>
 
 The architecture intentionally separates:
 
-```text
-Protocol
-   ↓
-Domain
-   ↓
-Persistence
-   ↓
-Application Services
-   ↓
-API
-   ↓
-Desktop Client
-```
+<p align="center"><img src="doc/diagrams/architecture-layers.svg" alt="Architecture layers" width="620"/></p>
 
 This makes individual subsystems independently testable and replaceable.
 
@@ -418,13 +283,7 @@ docker compose up -d --build
 
 The default development stack provides:
 
-```text
-PostgreSQL
-     +
-pacsd
-     +
-DICOM Device Simulator
-```
+<p align="center"><img src="doc/diagrams/deployment-stack.svg" alt="Docker deployment stack" width="620"/></p>
 
 The Tauri Viewer remains a native host application.
 
@@ -456,14 +315,7 @@ AETHERIS can also be packaged as a standalone desktop application.
 
 ### macOS
 
-```text
-AETHERIS.app
-    │
-    ├── Tauri Viewer
-    ├── pacsd
-    ├── PostgreSQL
-    └── bundled dependencies
-```
+<p align="center"><img src="doc/diagrams/packaging.svg" alt="macOS app bundle" width="620"/></p>
 
 The resulting DMG is designed for an out-of-the-box local installation.
 
@@ -471,14 +323,7 @@ The resulting DMG is designed for an out-of-the-box local installation.
 
 GitHub Actions builds a Windows installer containing:
 
-```text
-AETHERIS
-├── Viewer
-├── pacsd
-├── PostgreSQL
-├── Launcher
-└── Runtime dependencies
-```
+<p align="center"><img src="doc/diagrams/packaging.svg" alt="Windows installer contents" width="620"/></p>
 
 The target machine does not need a separate PACS installation.
 
