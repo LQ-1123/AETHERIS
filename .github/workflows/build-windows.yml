@@ -19,8 +19,9 @@ jobs:
   build-windows:
     runs-on: windows-latest
     env:
-      # windows-latest 预装 vcpkg（compress-tools 通过 vcpkg 定位 libarchive）
+      # windows-latest 预装 vcpkg（compress-tools 的 vcpkg crate 认 VCPKG_ROOT）
       VCPKG_INSTALLATION_ROOT: C:\vcpkg
+      VCPKG_ROOT: C:\vcpkg
       # 可在此升级 PostgreSQL 版本（EDB 官方 Windows x64 二进制包）
       PG_VERSION: 16.4
     steps:
