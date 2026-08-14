@@ -5,7 +5,7 @@
 自建 PACS：Rust 服务端 + Tauri 桌面查看器。可分发、多账号、共享平台数据库。
 
 <p align="center">
-  <img src="doc/演示/LOGO.png" alt="AETHERIS" width="200"/>
+  <img src="./logo.jpg" alt="AETHERIS" width="200"/>
 </p>
 
 [![CI](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml/badge.svg)](https://github.com/LQ-1123/AETHERIS/actions/workflows/ci.yml)
@@ -17,19 +17,19 @@
 
 | 登录 | 病人列表 | 查询 |
 |---|---|---|
-| ![登陆](doc/演示/登陆.png) | ![主界面](doc/演示/主界面1.png) | ![查询](doc/演示/查询.png) |
+| ![登陆](doc/screenshots/login.png) | ![主界面](doc/screenshots/worklist.png) | ![查询](doc/screenshots/viewer.png) |
 
 | MPR 三维重建 | VR 体渲染 | AI 分割 |
 |---|---|---|
-| ![MPR](doc/演示/MPR三维重建.png) | ![VR](doc/演示/VR重建.png) | ![AI mask](doc/演示/AI-mask标注.png) |
+| ![MPR](doc/screenshots/mpr.png) | ![VR](doc/screenshots/volume-rendering.png) | ![AI mask](doc/screenshots/ai-segmentation.png) |
 
 | 标注 | DICOM TAG 修订 | 生命周期 |
 |---|---|---|
-| ![标注](doc/演示/标注.png) | ![TAG修订](doc/演示/DICOM-TAG修订.png) | ![生命周期](doc/演示/生命周期.png) |
+| ![标注](doc/screenshots/annotations.png) | ![TAG修订](doc/screenshots/tag-revision.png) | ![生命周期](doc/screenshots/lifecycle.png) |
 
 | DICOM 路由引擎 |
 |---|
-| ![路由引擎](doc/演示/路由引擎.png) |
+| ![路由引擎](doc/screenshots/router.png) |
 
 ## 下载
 
