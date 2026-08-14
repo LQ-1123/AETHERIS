@@ -279,6 +279,19 @@ export async function remoteLogout(): Promise<void> {
   await invoke('remote_logout');
 }
 
+export interface LocalModeInfo {
+  server_url: string;
+  ca_cert_path: string;
+  username: string;
+  password: string;
+}
+
+/** 获取本地完整栈（内嵌 PostgreSQL + pacsd）信息；非打包版返回 null。 */
+export async function localStackInfo(): Promise<LocalModeInfo | null> {
+  const invoke = await getInvoke();
+  return invoke<LocalModeInfo | null>('local_stack_info');
+}
+
 export async function listPatients(
   query: string,
   limit: number,

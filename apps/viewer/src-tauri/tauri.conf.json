@@ -5,7 +5,7 @@
   "identifier": "cn.local.remote-pacs.viewer",
   "build": {
     "frontendDist": "../dist",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build && node scripts/stage-ai-plugins.mjs && bash scripts/stage-local-stack.sh"
   },
   "app": {
     "withGlobalTauri": true,
@@ -42,7 +42,8 @@
     "active": true,
     "targets": ["dmg", "app"],
     "resources": {
-      "../ai-plugins": "ai-plugins"
+      "./ai-plugins": ".",
+      "./local-stack": "."
     },
     "icon": [
       "icons/32x32.png",

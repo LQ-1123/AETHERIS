@@ -55,6 +55,58 @@ cargo run -p pacsd -- user create --username viewer01 --password 'replace-with-a
 可选角色为 `admin`、`radiologist`、`technician` 和 `viewer`。命令必须在能读取
 服务端 `.env` 并连接 PACS 数据库的环境中执行；系统不提供公开注册入口。
 
+## Docker 快速开始
+
+一条命令起服务端全套：Postgres + pacsd + DCMTK 设备模拟器（需要 Docker 与
+Compose v2；Tauri Viewer 是桌面应用，仍在宿主机运行）。
+
+```sh
+docker compose up -d --build   # 首次构建 pacsd 镜像（release 编译约 10-20 分钟）
+docker compose logs -f pacsd   # 看初始化日志：建库 → 迁移 → 创建管理员
+```
+
+启动后：
+
+- **HTTPS/DICOMweb**：`https://127.0.0.1:8443`（自签证书，首次启动自动生成，
+  存在 `data/docker-storage/tls/ca.crt`）
+- **DIMSE**：`127.0.0.1:11112`，可直接用 `echoscu`/`storescu` 对接
+- **设备模拟器**：`http://127.0.0.1:8787`，拖入 DICOM 文件夹即可并发上传
+  —— 设备配置里“主机”填 `pacsd`、端口 `11112`
+- **默认管理员**：`admin / pacs-demo-2026`（默认密码需 ≥12 位且不能包含
+  用户名 "admin"；务必用 `.env` 里的 `PACS_ADMIN_PASSWORD` 覆盖，正式使用
+  还需覆盖 `PACS_JWT_SECRET`）
+
+示例影像：
+
+```sh
+./tools/fetch-sample-dicom.sh    # 下载公开示例 DICOM 到 data/samples
+```
+
+Viewer 在宿主机连接容器：
+
+```sh
+cd apps/viewer && npm install && npm run tauri dev
+```
+
+登录页填 `https://127.0.0.1:8443`，CA 证书选 `data/docker-storage/tls/ca.crt`，
+用管理员或 `pacsd user create` 建的账号登录。本地 AI 分割（lungmask）在 Viewer
+内运行，不经过容器。
+
+容器内默认以 root 运行（演示用途；正式部署建议换非 root 用户并加固 TLS 证书）。
+
+## 打包发行
+
+**macOS（零依赖 dmg）**：`npm run tauri build` 自动组装本地栈（pacsd + 内嵌
+PostgreSQL 14 + 依赖库，脚本 `scripts/stage-local-stack.sh`），产物
+`apps/viewer/src-tauri/target/release/bundle/dmg/*.dmg`。双击即用：自动 initdb、
+起服务、建管理员、自动登录。
+
+**Windows（开箱即用 exe）**：GitHub Actions 的 `.github/workflows/build-windows.yml`
+（手动触发或打 `v*` 标签）在 windows-latest 上编译 pacsd + aetheris-launcher +
+Viewer，下载 EDB PostgreSQL 二进制与 vcpkg libarchive，用 Inno Setup 组装
+`AETHERIS-Setup-0.1.0-x64.exe` 并上传为 artifact。安装时 `initialize.ps1`
+完成 initdb/建库/建管理员，启动器一键拉起全部服务。
+
 ## 开发环境
 
 需要 Rust 1.97.1(由 `rust-toolchain.toml` 自动选择)、PostgreSQL、DCMTK。

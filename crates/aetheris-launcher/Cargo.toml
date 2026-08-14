@@ -1,0 +1,13 @@
+[package]
+name = "aetheris-launcher"
+description = "AETHERIS Windows one-click launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies]
+

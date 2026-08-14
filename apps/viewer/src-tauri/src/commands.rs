@@ -1011,3 +1011,14 @@ fn collect_directory(
     }
     Ok(())
 }
+
+#[tauri::command]
+pub async fn local_stack_info(
+    state: State<'_, std::sync::Arc<crate::local::LocalStack>>,
+) -> Result<Option<crate::local::LocalModeInfo>, String> {
+    let stack = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || stack.ensure())
+        .await
+        .map_err(|e| format!("本地服务任务失败: {e}"))?
+}
+

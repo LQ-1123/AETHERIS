@@ -1,0 +1,84 @@
+# remote_pacs 一键启动：Postgres + pacsd 服务端 + DCMTK 设备模拟器。
+#
+#    docker compose up -d --build     # 首次构建 pacsd 镜像（release 编译约 10-20 分钟）
+#    docker compose logs -f pacsd      # 看初始化日志（建库/迁移/创建管理员）
+#    docker compose down               # 停止（数据保留在 ./data/docker-storage 与 pgdata 卷）
+#
+# 覆盖配置：复制 .env.example 为根目录 .env（已被 gitignore）后修改，
+# 或在命令行传环境变量，例如：
+#    PACS_ADMIN_PASSWORD='strong-pass' docker compose up -d
+#
+# 注意：POSTGRES_PASSWORD / PACS_ADMIN_PASSWORD 避免使用 @ : 等特殊字符
+# （会破坏 DATABASE_URL 连接串）。
+name: remote-pacs
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pacs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pacs}
+      POSTGRES_DB: ${POSTGRES_DB:-pacs}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pacs} -d ${POSTGRES_DB:-pacs}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  pacsd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # 容器内通过 compose 网络访问 postgres 服务名
+      DATABASE_URL: postgres://${POSTGRES_USER:-pacs}:${POSTGRES_PASSWORD:-pacs}@postgres:5432/${POSTGRES_DB:-pacs}
+      PACS_STORAGE_ROOT: /data
+      PACS_HTTP_BIND: 0.0.0.0:8443
+      PACS_DIMSE_BIND: 0.0.0.0:11112
+      PACS_AE_TITLE: ${PACS_AE_TITLE:-REMOTE_PACS}
+      # release 构建缺 PACS_JWT_SECRET 会直接 panic；演示用默认值，正式使用务必覆盖
+      PACS_JWT_SECRET: ${PACS_JWT_SECRET:-dev-secret-change-me-0123456789abcdef}
+      # 首次启动自动创建管理员（已存在则跳过）
+      PACS_ADMIN_USERNAME: ${PACS_ADMIN_USERNAME:-admin}
+      # 默认密码需 ≥12 位且不能包含用户名 "admin"
+      PACS_ADMIN_PASSWORD: ${PACS_ADMIN_PASSWORD:-pacs-demo-2026}
+      RUST_LOG: ${RUST_LOG:-info,pacsd=debug}
+    ports:
+      - "${PACS_HTTP_PORT:-8443}:8443"
+      - "${PACS_DIMSE_PORT:-11112}:11112"
+    volumes:
+      # 影像文件与 TLS 证书（ca.crt 在这里，Viewer 登录要用）
+      - ./data/docker-storage:/data
+    healthcheck:
+      # /api-checker 是未鉴权页面，能 200 即服务就绪
+      test: ["CMD", "curl", "-kfsS", "https://127.0.0.1:8443/api-checker"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # DCMTK 设备模拟器：浏览器 UI，并发 storescu 上传。
+  # 打开 http://127.0.0.1:8787，把设备配置里的“主机”改成 pacsd、端口 11112。
+  simulator:
+    build:
+      context: .
+      dockerfile: docker/simulator.Dockerfile
+    depends_on:
+      pacsd:
+        condition: service_healthy
+    environment:
+      SIMULATOR_BIND: 0.0.0.0
+      SIMULATOR_PORT: 8787
+    ports:
+      - "${SIMULATOR_PORT:-8787}:8787"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

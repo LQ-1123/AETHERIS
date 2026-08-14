@@ -10,6 +10,7 @@ members = [
     "crates/pacs-codec",
     "crates/pacs-ai",
     "crates/pacsd",
+    "crates/aetheris-launcher",
 ]
 
 [workspace.package]

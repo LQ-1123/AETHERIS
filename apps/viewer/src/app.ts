@@ -54,6 +54,7 @@ import {
   updateSharedAnnotation,
   updateSegmentationSegmentTags,
   upsertSegmentationMasks,
+  localStackInfo,
 } from './api';
 import { Download, Edit3, Share2, createIcons } from 'lucide';
 import {
@@ -429,6 +430,7 @@ export class App {
     this.setupResizeObserver();
     this.restoreConnectionFields();
     this.updateUi();
+    void this.autoLoginLocal();
   }
 
   async openFiles(): Promise<void> {
@@ -2675,6 +2677,23 @@ export class App {
     const savedCa = localStorage.getItem('remote-pacs.ca-cert-path');
     if (savedUrl) requiredElement<HTMLInputElement>('server-url').value = savedUrl;
     if (savedCa) requiredElement<HTMLInputElement>('ca-cert-path').value = savedCa;
+  }
+
+  /** 打包版（内嵌本地服务）自动登录；非打包版静默跳过。 */
+  private async autoLoginLocal(): Promise<void> {
+    try {
+      const info = await localStackInfo();
+      if (!info) return;
+      requiredElement<HTMLInputElement>('server-url').value = info.server_url;
+      requiredElement<HTMLInputElement>('ca-cert-path').value = info.ca_cert_path;
+      requiredElement<HTMLInputElement>('login-username').value = info.username;
+      requiredElement<HTMLInputElement>('login-password').value = info.password;
+      await this.login();
+    } catch (error) {
+      const loginError = requiredElement<HTMLElement>('login-error');
+      loginError.textContent = `本地服务启动失败: ${errorMessage(error)}`;
+      loginError.hidden = false;
+    }
   }
 
   private async chooseCertificate(): Promise<void> {

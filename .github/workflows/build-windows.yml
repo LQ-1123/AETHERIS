@@ -1,0 +1,66 @@
+# 用 GitHub Actions 在 Windows 上构建"开箱即用"的 AETHERIS 安装包。
+# 产出: AETHERIS-Setup-0.1.0-x64.exe（内含 Viewer + pacsd + PostgreSQL + 启动器，目标机零依赖）。
+# 触发: 手动（workflow_dispatch）或推送 v* 标签。
+#
+# 打包流程对应 packaging/windows/build.ps1：
+#   编译 pacsd + aetheris-launcher → tauri 构建 AETHERIS.exe → 组装 postgres/bin|lib|share
+#   + ai-plugins + libarchive DLL → Inno Setup 出安装包。
+# 目标机安装时由 initialize.ps1 完成 initdb / 建库 / 建管理员，launcher 一键拉起全部服务。
+
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    env:
+      # windows-latest 预装 vcpkg（compress-tools 通过 vcpkg 定位 libarchive）
+      VCPKG_INSTALLATION_ROOT: C:\vcpkg
+      # 可在此升级 PostgreSQL 版本（EDB 官方 Windows x64 二进制包）
+      PG_VERSION: 16.4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.97.1
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/viewer/package-lock.json
+
+      - name: Install libarchive via vcpkg
+        shell: bash
+        run: vcpkg install libarchive:x64-windows
+
+      - name: Download PostgreSQL binaries
+        shell: bash
+        run: |
+          PG_DIR="$RUNNER_TEMP/pg"
+          mkdir -p "$PG_DIR"
+          curl -fL --retry 3 -o "$PG_DIR/pg.zip" "https://get.enterprisedb.com/postgresql/postgresql-${{ env.PG_VERSION }}-1-windows-x64-binaries.zip"
+          unzip -q "$PG_DIR/pg.zip" -d "$PG_DIR"
+          ls "$PG_DIR/pgsql/bin/initdb.exe"
+          echo "PG_DIR=$PG_DIR" >> "$GITHUB_ENV"
+
+      - name: Install Inno Setup
+        shell: bash
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer (pacsd + launcher + viewer + postgres + Inno Setup)
+        shell: pwsh
+        run: ./packaging/windows/build.ps1 -PostgresDir "$env:PG_DIR\pgsql"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AETHERIS-Setup-x64
+          path: packaging/windows/output/*.exe
+          if-no-files-found: error

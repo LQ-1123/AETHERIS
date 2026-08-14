@@ -9,6 +9,7 @@
 
 mod ai;
 mod commands;
+mod local;
 mod mpr;
 mod protocol;
 mod remote;
@@ -35,6 +36,8 @@ fn main() {
         .setup(|app| {
             use tauri::Manager as _;
             app.manage(AiState::new(app.handle()));
+            // 本地完整栈（内嵌 PostgreSQL + pacsd），双击即用模式
+            app.manage(std::sync::Arc::new(local::LocalStack::new(app.handle())));
             Ok(())
         })
         .manage(state)
@@ -95,12 +98,22 @@ fn main() {
             commands::lifecycle_get,
             commands::lifecycle_write,
             commands::lifecycle_delete,
+            commands::local_stack_info,
         ]);
 
     // 注册自定义协议
     let builder = protocol::register_protocol(builder);
 
     builder
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // 退出时停止本地 pacsd 与 PostgreSQL（数据保留）
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager as _;
+                app_handle
+                    .state::<std::sync::Arc<local::LocalStack>>()
+                    .shutdown();
+            }
+        });
 }

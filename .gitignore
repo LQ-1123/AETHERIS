@@ -15,6 +15,8 @@ target/
 # 前端
 node_modules/
 dist/
+apps/viewer/src-tauri/ai-plugins/
+apps/viewer/src-tauri/local-stack/
 
 # 医学影像(补充格式)
 *.nii
@@ -32,3 +34,13 @@ datasets/
 
 # 工具的本机配置(权限白名单因人而异,不进仓库;.claude/plans/ 要提交)
 .claude/settings.local.json
+
+# 打包产物与归档
+*.dmg
+*.zip
+*.tar.gz
+*.tgz
+
+# 本机工具缓存与临时产物
+.dsh-*
+artifacts/

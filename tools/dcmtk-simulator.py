@@ -6,6 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv('SIMULATOR_PORT', '8787'))
+# 容器化时需绑 0.0.0.0 才能被宿主机端口映射访问；本机运行保持默认回环。
+BIND = os.getenv('SIMULATOR_BIND', '127.0.0.1')
 jobs = {}
 
 class Handler(BaseHTTPRequestHandler):
@@ -41,4 +43,4 @@ def run_job(job_id, payload):
 
 if __name__ == '__main__':
     print(f'DICOM device simulator: http://127.0.0.1:{PORT}')
-    ThreadingHTTPServer(('127.0.0.1',PORT),Handler).serve_forever()
+    ThreadingHTTPServer((BIND,PORT),Handler).serve_forever()

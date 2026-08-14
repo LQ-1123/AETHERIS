@@ -1,0 +1,32 @@
+# VCS
+.git
+.gitignore
+
+# Rust
+target/
+**/target/
+
+# 前端（Docker 只构建 Rust 服务端）
+apps/viewer/node_modules/
+apps/viewer/dist/
+
+# 本机环境、数据与密钥（含自签证书、影像文件）
+.env
+.env.*
+!.env.example
+data/
+*.dcm
+
+# 打包物与临时文件
+*.zip
+*.tar.gz
+*.tgz
+artifacts/
+packaging/
+
+# 工具链缓存与本机配置
+.dsh-*
+.claude/
+.DS_Store
+__pycache__/
+**/__pycache__/
