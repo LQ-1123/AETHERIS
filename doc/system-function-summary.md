@@ -104,7 +104,7 @@ Viewer 按“Stored Value → Rescale Slope/Intercept → VOI 窗宽窗位 → M
 
 ### 24. 窗宽窗位和窗预设
 
-用户可以用鼠标拖动实时调整 Window Center 与 Window Width，也可以从 DICOM 自带 WindowCenter/WindowWidth 多值中选择预设，并使用内置 CT 预设一键切换常见窗。前端只更新 ViewState 并请求或复用 LUT，Canvas 重新映射当前帧，不会修改原始像素；当前 WL、WW 会实时显示在工具栏，重置视图时恢复初始显示参数。
+用户可以用鼠标拖动实时调整 Window Center 与 Window Width，也可以从 DICOM 自带 WindowCenter/WindowWidth 多值中选择只读预设。当前登录用户能够按影像模态将当前 WL、WW 和 VOI Function 保存为具名个人预设，并在不同 Viewer 设备间同步、重命名或删除；系统不再内置固定 CT 窗值。前端只更新 ViewState 并请求或复用 LUT，Canvas 重新映射当前帧，不会修改原始像素；当前 WL、WW 会实时显示在工具栏，重置视图时恢复初始显示参数。
 
 ### 25. 反色、翻转、旋转和标注显隐
 
@@ -159,4 +159,3 @@ Viewer 对创建、移动、缩放、删除以及清除标注提供有界 Undo/R
 | 桌面客户端 | Tauri 2、Rust、TypeScript、Vite、HTML Canvas、Lucide Icons |
 | 测量与 MPR | 患者空间几何、向量计算、三线性插值、Rayon、Canvas 覆盖层 |
 | 自动化验证 | Rust 单元/集成测试、真实 PostgreSQL、DCMTK 互操作、Vitest、Clippy |
-

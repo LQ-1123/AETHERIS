@@ -24,6 +24,7 @@ pub mod stow;
 pub mod transfers;
 pub mod transformations;
 pub mod wado;
+pub mod window_presets;
 pub mod worklist;
 
 pub use annotations::annotation_routes;
@@ -36,4 +37,5 @@ pub use segmentations::segmentation_routes;
 pub use transfers::{start_transfer_worker, transfer_routes};
 pub use transformations::{dicom_transformation_routes, start_transform_worker};
 pub use wado::WadoError;
+pub use window_presets::routes as window_preset_routes;
 pub use worklist::worklist_routes;

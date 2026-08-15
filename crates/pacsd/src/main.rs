@@ -168,6 +168,10 @@ async fn main() -> Result<()> {
     let _router_worker = pacs_web::start_router_worker(transform_state.clone());
     let _lifecycle_worker = pacs_web::start_lifecycle_worker(transform_state.clone());
     let api_routes = pacs_web::worklist_routes(api_state.clone(), auth_service.clone())
+        .merge(pacs_web::window_preset_routes(
+            api_state.clone(),
+            auth_service.clone(),
+        ))
         .merge(pacs_web::annotation_routes(
             api_state.clone(),
             auth_service.clone(),

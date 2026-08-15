@@ -1,6 +1,7 @@
 import {
   ArchiveRestore,
   Blend,
+  BookmarkPlus,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -29,6 +30,7 @@ import {
   Network,
   PanelRightClose,
   Paintbrush,
+  Pencil,
   Pause,
   Play,
   RotateCcw,
@@ -59,6 +61,7 @@ window.addEventListener('DOMContentLoaded', () => {
     icons: {
       ArchiveRestore,
       Blend,
+      BookmarkPlus,
       ChevronDown,
       ChevronLeft,
       ChevronRight,
@@ -87,6 +90,7 @@ window.addEventListener('DOMContentLoaded', () => {
       Network,
       PanelRightClose,
       Paintbrush,
+      Pencil,
       Pause,
       Play,
       RotateCcw,

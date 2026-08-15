@@ -258,6 +258,25 @@ Base URL 为 `/api`，要求具有 `ViewImages` 的用户 JWT，并执行设备�
 
 典型流程：搜索病人 → 获取 Study → 获取 Series → 使用 DICOMweb 获取 metadata/instance/frame。`limit`、`offset` 只适用于明确提供它们的端点。
 
+### 7.1 个人窗宽窗位预设
+
+个人预设绑定当前 JWT 用户并按 DICOM 模态分类，不会修改影像自身的 Window Center/Width 标签。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /api/window-presets` | 列出当前用户的全部个人预设 |
+| `POST /api/window-presets` | 保存新的个人预设 |
+| `PATCH /api/window-presets/{preset_id}` | 重命名当前用户的预设 |
+| `DELETE /api/window-presets/{preset_id}` | 删除当前用户的预设 |
+
+创建请求示例：
+
+```json
+{"modality":"CT","name":"我的肺窗","center":-600,"width":1500,"function":"LINEAR"}
+```
+
+`function` 仅接受 `LINEAR`、`LINEAR_EXACT` 或 `SIGMOID`。同一用户、同一模态下的名称不区分大小写且不能重复；重名返回 `409`。重命名请求只提交 `{"name":"新名称"}`，其他用户的预设按不存在返回 `404`。
+
 ## 8. 共享标注 API
 
 Base 路径：`/api/studies/{study_uid}/series/{series_uid}/annotations`。要求可查看目标设备影像。

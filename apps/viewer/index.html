@@ -139,10 +139,19 @@
           <i data-lucide="contrast"></i>
           <i class="menu-chevron" data-lucide="chevron-down"></i>
         </button>
-        <label class="preset-control">
-          <span>窗预设</span>
+        <div class="preset-control">
+          <label for="preset-select">窗预设</label>
           <select id="preset-select" data-requires-series aria-label="窗预设"></select>
-        </label>
+          <button id="window-preset-save" class="icon-button" data-requires-series type="button" title="保存当前窗预设" aria-label="保存当前窗预设">
+            <i data-lucide="bookmark-plus"></i>
+          </button>
+          <button id="window-preset-rename" class="icon-button" data-requires-series type="button" title="重命名个人窗预设" aria-label="重命名个人窗预设">
+            <i data-lucide="pencil"></i>
+          </button>
+          <button id="window-preset-delete" class="icon-button" data-requires-series type="button" title="删除个人窗预设" aria-label="删除个人窗预设">
+            <i data-lucide="trash-2"></i>
+          </button>
+        </div>
         <div class="readouts" aria-live="polite">
           <span id="window-readout">WL -- WW --</span>
           <span id="zoom-readout">100%</span>
@@ -472,6 +481,29 @@
         <output id="cine-fps">15.0 fps</output>
       </footer>
     </main>
+
+    <dialog id="window-preset-dialog" class="operational-dialog window-preset-dialog" aria-labelledby="window-preset-dialog-title">
+      <form id="window-preset-form">
+        <header class="dialog-heading">
+          <div>
+            <h2 id="window-preset-dialog-title">保存窗预设</h2>
+            <span id="window-preset-dialog-summary"></span>
+          </div>
+          <button id="window-preset-close" class="icon-button" type="button" title="关闭" aria-label="关闭">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+        <label class="window-preset-name-field">
+          <span>预设名称</span>
+          <input id="window-preset-name" maxlength="64" required autocomplete="off" placeholder="例如：我的肺窗" />
+        </label>
+        <p id="window-preset-error" class="dialog-error" role="alert" hidden></p>
+        <footer class="dialog-actions">
+          <button id="window-preset-cancel" type="button">取消</button>
+          <button id="window-preset-submit" class="primary-button" type="submit">保存</button>
+        </footer>
+      </form>
+    </dialog>
 
     <dialog id="ai-plugin-dialog" class="operational-dialog ai-plugin-dialog" aria-labelledby="ai-plugin-dialog-title">
       <form id="ai-plugin-form">

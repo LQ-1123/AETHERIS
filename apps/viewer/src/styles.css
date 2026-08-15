@@ -727,6 +727,10 @@ button svg {
   font-size: 11px;
 }
 
+.preset-control label {
+  white-space: nowrap;
+}
+
 .preset-control select {
   width: 112px;
   height: 31px;
@@ -735,6 +739,42 @@ button svg {
   padding: 0 25px 0 8px;
   color: #e5e8ea;
   background: #292d30;
+}
+
+.preset-control .icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 31px;
+}
+
+.preset-control .icon-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.window-preset-dialog {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.window-preset-dialog form,
+.window-preset-name-field {
+  display: grid;
+  gap: 10px;
+}
+
+.window-preset-name-field {
+  padding: 16px;
+  color: #b7bdc1;
+  font-size: 11px;
+}
+
+.window-preset-name-field input {
+  height: 34px;
+  border: 1px solid #454d51;
+  border-radius: 4px;
+  padding: 0 10px;
+  color: #e3e7e8;
+  background: #121517;
 }
 
 .readouts {
@@ -2594,7 +2634,7 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 
 @media (max-width: 1040px) {
   .brand-name,
-  .preset-control > span,
+  .preset-control > label,
   #zoom-readout {
     display: none;
   }

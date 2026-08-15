@@ -35,6 +35,18 @@ pub struct RemoteUser {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserWindowPreset {
+    pub id: i64,
+    pub modality: String,
+    pub name: String,
+    pub center: f64,
+    pub width: f64,
+    pub function: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatientSummary {
     pub id: i64,
     pub patient_id: String,
@@ -193,6 +205,58 @@ impl RemoteState {
             .await
             .map_err(request_error)?;
         ensure_success(response).await?;
+        Ok(())
+    }
+
+    pub async fn list_window_presets(&self) -> Result<Vec<UserWindowPreset>, RemoteError> {
+        let url = self.session_url("api/window-presets").await?;
+        self.get_json(url).await
+    }
+
+    pub async fn create_window_preset(
+        &self,
+        modality: &str,
+        name: &str,
+        center: f64,
+        width: f64,
+        function: &str,
+    ) -> Result<UserWindowPreset, RemoteError> {
+        let url = self.session_url("api/window-presets").await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "modality": modality,
+                "name": name,
+                "center": center,
+                "width": width,
+                "function": function,
+            })),
+        )
+        .await
+    }
+
+    pub async fn rename_window_preset(
+        &self,
+        preset_id: i64,
+        name: &str,
+    ) -> Result<UserWindowPreset, RemoteError> {
+        let url = self
+            .session_url(&format!("api/window-presets/{preset_id}"))
+            .await?;
+        self.authorized_json(
+            Method::PATCH,
+            url,
+            Some(serde_json::json!({ "name": name })),
+        )
+        .await
+    }
+
+    pub async fn delete_window_preset(&self, preset_id: i64) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/window-presets/{preset_id}"))
+            .await?;
+        self.authorized_request(Method::DELETE, url, None).await?;
         Ok(())
     }
 

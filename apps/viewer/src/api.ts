@@ -41,6 +41,7 @@ import type {
   TransformSchema,
   TransformTargetType,
   VoiFunction,
+  UserWindowPreset,
 } from './types';
 
 type InvokeFn = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -277,6 +278,38 @@ export async function remoteLogin(
 export async function remoteLogout(): Promise<void> {
   const invoke = await getInvoke();
   await invoke('remote_logout');
+}
+
+export async function listWindowPresets(): Promise<UserWindowPreset[]> {
+  const invoke = await getInvoke();
+  return invoke<UserWindowPreset[]>('list_window_presets');
+}
+
+export async function createWindowPreset(
+  modality: string,
+  name: string,
+  center: number,
+  width: number,
+  functionName: VoiFunction,
+): Promise<UserWindowPreset> {
+  const invoke = await getInvoke();
+  return invoke<UserWindowPreset>('create_window_preset', {
+    modality,
+    name,
+    center,
+    width,
+    function: functionName,
+  });
+}
+
+export async function renameWindowPreset(presetId: number, name: string): Promise<UserWindowPreset> {
+  const invoke = await getInvoke();
+  return invoke<UserWindowPreset>('rename_window_preset', { presetId, name });
+}
+
+export async function deleteWindowPreset(presetId: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('delete_window_preset', { presetId });
 }
 
 export interface LocalModeInfo {

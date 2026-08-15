@@ -71,8 +71,16 @@ export interface QuantitativeInfo {
 export interface WindowPreset {
   center: number;
   width: number;
-  explanation: string | null;
+  explanation?: string | null;
   function: VoiFunction;
+}
+
+export interface UserWindowPreset extends WindowPreset {
+  id: number;
+  modality: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface SpacingInfo {

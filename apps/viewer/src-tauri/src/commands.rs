@@ -4,6 +4,7 @@ use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
     DownloadProgress, PatientSummary, RemoteState, RemoteUser, SeriesSummary, StudySummary,
+    UserWindowPreset,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
@@ -346,6 +347,54 @@ pub async fn remote_login(
 #[tauri::command]
 pub async fn remote_logout(state: State<'_, RemoteState>) -> Result<(), String> {
     state.logout().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_window_presets(
+    state: State<'_, RemoteState>,
+) -> Result<Vec<UserWindowPreset>, String> {
+    state
+        .list_window_presets()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn create_window_preset(
+    modality: String,
+    name: String,
+    center: f64,
+    width: f64,
+    function: String,
+    state: State<'_, RemoteState>,
+) -> Result<UserWindowPreset, String> {
+    state
+        .create_window_preset(&modality, &name, center, width, &function)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn rename_window_preset(
+    preset_id: i64,
+    name: String,
+    state: State<'_, RemoteState>,
+) -> Result<UserWindowPreset, String> {
+    state
+        .rename_window_preset(preset_id, &name)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_window_preset(
+    preset_id: i64,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .delete_window_preset(preset_id)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1021,4 +1070,3 @@ pub async fn local_stack_info(
         .await
         .map_err(|e| format!("本地服务任务失败: {e}"))?
 }
-

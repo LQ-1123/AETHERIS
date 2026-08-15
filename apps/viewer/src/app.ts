@@ -16,7 +16,9 @@ import {
   closeMpr,
   checkAiPlugin,
   confirmTransform,
+  createWindowPreset,
   createSegmentationProject,
+  deleteWindowPreset,
   deleteSegmentationProject,
   exportFromPacs,
   createSharedAnnotation,
@@ -33,6 +35,7 @@ import {
   listStudySeries,
   listSharedAnnotations,
   listTransformJobs,
+  listWindowPresets,
   loadFrame,
   loadVolume,
   measureFrameRoi,
@@ -46,6 +49,7 @@ import {
   previewRollback,
   remoteLogin,
   remoteLogout,
+  renameWindowPreset,
   renderMprSlice,
   runAiSegmentation,
   refreshAiPlugins,
@@ -91,6 +95,12 @@ import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
 import { volumeCapabilityReason } from './volume-capability';
+import {
+  normalizedModality,
+  parseWindowPresetSelection,
+  userPresetsForModality,
+  windowPresetMatchesState,
+} from './window-presets';
 import type { VolumeRenderer, VolumePreset, VolumeQuality } from './volume-renderer';
 import { importConflictMessage, importSummary } from './transfer-report';
 import type {
@@ -130,6 +140,7 @@ import type {
   TransformSchema,
   TransformScope,
   TransformTargetType,
+  UserWindowPreset,
   ViewerMode,
   ViewState,
   WindowPreset,
@@ -240,14 +251,6 @@ const FRAME_PREFETCH_CONCURRENCY = 3;
 const PATIENT_PAGE_SIZE = 30;
 const MPR_PLANES: readonly MprPlane[] = ['axial', 'coronal', 'sagittal'];
 const MPR_WHEEL_THRESHOLD = 30;
-const CT_WINDOW_PRESETS: readonly WindowPreset[] = [
-  { center: 40, width: 80, explanation: '脑窗', function: 'LINEAR' },
-  { center: 50, width: 130, explanation: '硬膜下', function: 'LINEAR' },
-  { center: -600, width: 1500, explanation: '肺窗', function: 'LINEAR' },
-  { center: 40, width: 350, explanation: '纵隔', function: 'LINEAR' },
-  { center: 50, width: 400, explanation: '腹部', function: 'LINEAR' },
-  { center: 400, width: 2000, explanation: '骨窗', function: 'LINEAR' },
-];
 const TAG_LABELS: Record<string, string> = {
   PatientName: '患者姓名',
   PatientID: '患者 ID',
@@ -367,6 +370,10 @@ export class App {
   private remoteDownloadActive = false;
   private remoteSeriesOpen = false;
   private remoteUser: RemoteUser | null = null;
+  private userWindowPresets: UserWindowPreset[] = [];
+  private windowPresetDialogMode: 'create' | 'rename' = 'create';
+  private windowPresetEditingId: number | null = null;
+  private windowPresetBusy = false;
   private patients: PatientSummary[] = [];
   private patientPage = 0;
   private hasNextPatientPage = false;
@@ -395,6 +402,7 @@ export class App {
   private frameSlider = requiredElement<HTMLInputElement>('frame-slider');
   private cineSpeedSelect = requiredElement<HTMLSelectElement>('cine-speed');
   private presetSelect = requiredElement<HTMLSelectElement>('preset-select');
+  private windowPresetDialog = requiredElement<HTMLDialogElement>('window-preset-dialog');
   private imageStackSelect = requiredElement<HTMLSelectElement>('image-stack-select');
   private mprSourceSelect = requiredElement<HTMLSelectElement>('mpr-source-select');
   private mprSlabThickness = requiredElement<HTMLInputElement>('mpr-slab-thickness');
@@ -2253,11 +2261,7 @@ export class App {
 
   private applyPreset(value: string): void {
     if (!this.state) return;
-    const [source, rawIndex] = value.split(':');
-    const index = Number(rawIndex);
-    const preset = source === 'ct'
-      ? CT_WINDOW_PRESETS[index]
-      : this.currentFrame()?.window_presets[index];
+    const preset = this.resolveWindowPreset(value);
     if (!preset) return;
     this.state.windowCenter = preset.center;
     this.state.windowWidth = preset.width;
@@ -2268,6 +2272,154 @@ export class App {
       void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
     } else {
       void this.refreshLut();
+    }
+  }
+
+  private resolveWindowPreset(value: string): WindowPreset | undefined {
+    const selection = parseWindowPresetSelection(value);
+    if (!selection) return undefined;
+    if (selection.source === 'dicom') return this.currentFrame()?.window_presets[selection.id];
+    if (selection.source === 'user') {
+      return this.userWindowPresets.find((preset) => preset.id === selection.id);
+    }
+    return undefined;
+  }
+
+  private currentModality(): string | null {
+    return normalizedModality(this.state?.metadata.patient.modality);
+  }
+
+  private selectedUserWindowPreset(): UserWindowPreset | null {
+    const selection = parseWindowPresetSelection(this.presetSelect.value);
+    if (selection?.source !== 'user') return null;
+    return this.userWindowPresets.find((preset) => preset.id === selection.id) ?? null;
+  }
+
+  private openCreateWindowPreset(): void {
+    if (!this.state || !this.currentModality() || this.viewerMode === 'vr') return;
+    const frame = this.currentFrame();
+    if (frame.pixel_format === 'rgb8' && this.viewerMode === '2d') return;
+    this.windowPresetDialogMode = 'create';
+    this.windowPresetEditingId = null;
+    setText('window-preset-dialog-title', '保存窗预设');
+    setText(
+      'window-preset-dialog-summary',
+      `${this.currentModality()} · WL ${this.state.windowCenter.toFixed(0)} · WW ${this.state.windowWidth.toFixed(0)}`,
+    );
+    requiredElement<HTMLInputElement>('window-preset-name').value = '';
+    requiredElement<HTMLButtonElement>('window-preset-submit').textContent = '保存';
+    requiredElement<HTMLElement>('window-preset-error').hidden = true;
+    if (!this.windowPresetDialog.open) this.windowPresetDialog.showModal();
+    requiredElement<HTMLInputElement>('window-preset-name').focus();
+  }
+
+  private openRenameWindowPreset(): void {
+    const preset = this.selectedUserWindowPreset();
+    if (!preset) return;
+    this.windowPresetDialogMode = 'rename';
+    this.windowPresetEditingId = preset.id;
+    setText('window-preset-dialog-title', '重命名窗预设');
+    setText(
+      'window-preset-dialog-summary',
+      `${preset.modality} · WL ${preset.center.toFixed(0)} · WW ${preset.width.toFixed(0)}`,
+    );
+    requiredElement<HTMLInputElement>('window-preset-name').value = preset.name;
+    requiredElement<HTMLButtonElement>('window-preset-submit').textContent = '重命名';
+    requiredElement<HTMLElement>('window-preset-error').hidden = true;
+    if (!this.windowPresetDialog.open) this.windowPresetDialog.showModal();
+    const input = requiredElement<HTMLInputElement>('window-preset-name');
+    input.focus();
+    input.select();
+  }
+
+  private closeWindowPresetDialog(): void {
+    if (this.windowPresetBusy) return;
+    if (this.windowPresetDialog.open) this.windowPresetDialog.close();
+    this.windowPresetEditingId = null;
+  }
+
+  private async submitWindowPreset(): Promise<void> {
+    if (this.windowPresetBusy) return;
+    const input = requiredElement<HTMLInputElement>('window-preset-name');
+    const errorElement = requiredElement<HTMLElement>('window-preset-error');
+    const submit = requiredElement<HTMLButtonElement>('window-preset-submit');
+    const name = input.value.trim();
+    if (!name || [...name].length > 64) {
+      errorElement.textContent = '窗预设名称必须为 1 到 64 个字符';
+      errorElement.hidden = false;
+      return;
+    }
+    this.windowPresetBusy = true;
+    submit.disabled = true;
+    errorElement.hidden = true;
+    try {
+      let saved: UserWindowPreset;
+      if (this.windowPresetDialogMode === 'create') {
+        const modality = this.currentModality();
+        if (!this.state || !modality) throw new Error('当前影像没有可用的模态信息');
+        saved = await createWindowPreset(
+          modality,
+          name,
+          this.state.windowCenter,
+          this.state.windowWidth,
+          this.state.voiFunction,
+        );
+        this.userWindowPresets.push(saved);
+      } else {
+        if (this.windowPresetEditingId === null) throw new Error('没有选中的个人窗预设');
+        saved = await renameWindowPreset(this.windowPresetEditingId, name);
+        const index = this.userWindowPresets.findIndex((preset) => preset.id === saved.id);
+        if (index >= 0) this.userWindowPresets[index] = saved;
+      }
+      this.sortUserWindowPresets();
+      this.windowPresetDialog.close();
+      this.windowPresetEditingId = null;
+      this.updateUi();
+      this.presetSelect.value = `user:${saved.id}`;
+      this.updateWindowPresetControls();
+    } catch (error) {
+      errorElement.textContent = errorMessage(error);
+      errorElement.hidden = false;
+    } finally {
+      this.windowPresetBusy = false;
+      submit.disabled = false;
+    }
+  }
+
+  private async deleteSelectedWindowPreset(): Promise<void> {
+    const preset = this.selectedUserWindowPreset();
+    if (!preset || this.windowPresetBusy) return;
+    if (!window.confirm(`确定删除个人窗预设“${preset.name}”吗？`)) return;
+    this.windowPresetBusy = true;
+    this.updateWindowPresetControls();
+    try {
+      await deleteWindowPreset(preset.id);
+      this.userWindowPresets = this.userWindowPresets.filter((entry) => entry.id !== preset.id);
+      this.updateUi();
+    } catch (error) {
+      this.showError(errorMessage(error));
+    } finally {
+      this.windowPresetBusy = false;
+      this.updateWindowPresetControls();
+    }
+  }
+
+  private sortUserWindowPresets(): void {
+    this.userWindowPresets.sort((left, right) =>
+      left.modality.localeCompare(right.modality)
+      || left.name.localeCompare(right.name, 'zh-CN')
+      || left.id - right.id,
+    );
+  }
+
+  private async loadUserWindowPresets(): Promise<void> {
+    try {
+      this.userWindowPresets = await listWindowPresets();
+      this.sortUserWindowPresets();
+      if (this.state) this.updateUi();
+    } catch (error) {
+      this.userWindowPresets = [];
+      this.showError(`个人窗预设加载失败：${errorMessage(error)}`);
     }
   }
 
@@ -2317,6 +2469,24 @@ export class App {
     requiredElement<HTMLButtonElement>('logout-btn').addEventListener('click', () => {
       void this.logout();
     });
+    requiredElement<HTMLButtonElement>('window-preset-save').addEventListener('click', () => {
+      this.openCreateWindowPreset();
+    });
+    requiredElement<HTMLButtonElement>('window-preset-rename').addEventListener('click', () => {
+      this.openRenameWindowPreset();
+    });
+    requiredElement<HTMLButtonElement>('window-preset-delete').addEventListener('click', () => {
+      void this.deleteSelectedWindowPreset();
+    });
+    requiredElement<HTMLFormElement>('window-preset-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.submitWindowPreset();
+    });
+    for (const id of ['window-preset-close', 'window-preset-cancel']) {
+      requiredElement<HTMLButtonElement>(id).addEventListener('click', () => {
+        this.closeWindowPresetDialog();
+      });
+    }
     requiredElement<HTMLFormElement>('study-share-form').addEventListener('submit', (event) => {
       event.preventDefault();
       void this.submitStudyShare();
@@ -2637,7 +2807,10 @@ export class App {
     }
 
     this.frameSlider.addEventListener('input', () => void this.setFrame(Number(this.frameSlider.value)));
-    this.presetSelect.addEventListener('change', () => this.applyPreset(this.presetSelect.value));
+    this.presetSelect.addEventListener('change', () => {
+      this.applyPreset(this.presetSelect.value);
+      this.updateWindowPresetControls();
+    });
     this.imageStackSelect.addEventListener('change', () => {
       void this.switchImageStack(Number(this.imageStackSelect.value));
     });
@@ -2721,6 +2894,7 @@ export class App {
       this.lifecyclePanel.setAvailable(user.role === 'admin');
       requiredElement<HTMLElement>('login-screen').hidden = true;
       requiredElement<HTMLElement>('app-shell').removeAttribute('aria-hidden');
+      await this.loadUserWindowPresets();
       await this.initializeTransformTools();
       this.resizeViewport();
       await this.loadPatients();
@@ -2739,6 +2913,8 @@ export class App {
       this.showError(errorMessage(error));
     } finally {
       this.remoteUser = null;
+      this.userWindowPresets = [];
+      this.closeWindowPresetDialog();
       this.remoteSeriesOpen = false;
       this.stopAnnotationSync();
       this.patients = [];
@@ -5235,35 +5411,72 @@ export class App {
   }
 
   private updatePresetOptions(frame: FrameMetadata): void {
-    const isCt = this.state?.metadata.patient.modality?.trim().toUpperCase() === 'CT';
-    const presets = isCt ? [...frame.window_presets, ...CT_WINDOW_PRESETS] : frame.window_presets;
+    const modality = this.currentModality();
+    const userPresets = userPresetsForModality(this.userWindowPresets, modality);
+    const previousValue = this.presetSelect.value;
+    const previousPreset = this.resolveWindowPreset(previousValue);
     const previousCount = this.presetSelect.options.length;
-    const signature = `${isCt}:${presets.map(presetSignature).join('|')}`;
+    const signature = `${modality ?? ''}:${frame.window_presets.map(presetSignature).join('|')}:user:${userPresets.map(userPresetSignature).join('|')}`;
     if (this.presetSelect.dataset.signature !== signature || previousCount === 0) {
       this.presetSelect.replaceChildren();
+      const dicomGroup = document.createElement('optgroup');
+      dicomGroup.label = 'DICOM 自带';
       frame.window_presets.forEach((preset, index) => {
         const option = document.createElement('option');
         option.value = `dicom:${index}`;
         option.textContent = `DICOM · ${preset.explanation?.trim() || `窗 ${index + 1}`}`;
-        this.presetSelect.append(option);
+        dicomGroup.append(option);
       });
-      if (isCt) {
-        CT_WINDOW_PRESETS.forEach((preset, index) => {
+      this.presetSelect.append(dicomGroup);
+      if (userPresets.length > 0) {
+        const userGroup = document.createElement('optgroup');
+        userGroup.label = '我的预设';
+        for (const preset of userPresets) {
           const option = document.createElement('option');
-          option.value = `ct:${index}`;
-          option.textContent = `CT · ${preset.explanation}`;
-          this.presetSelect.append(option);
-        });
+          option.value = `user:${preset.id}`;
+          option.textContent = `我的 · ${preset.name}`;
+          userGroup.append(option);
+        }
+        this.presetSelect.append(userGroup);
       }
       this.presetSelect.dataset.signature = signature;
     }
-    const match = presets.findIndex(
-      (preset) =>
-        Math.abs(preset.center - this.state!.windowCenter) < 0.001 &&
-        Math.abs(preset.width - this.state!.windowWidth) < 0.001 &&
-        preset.function === this.state!.voiFunction,
-    );
-    this.presetSelect.selectedIndex = match;
+    let selectedValue = '';
+    if (previousPreset && this.windowPresetMatchesState(previousPreset)) {
+      selectedValue = previousValue;
+    } else {
+      for (const option of Array.from(this.presetSelect.options)) {
+        const preset = this.resolveWindowPreset(option.value);
+        if (preset && this.windowPresetMatchesState(preset)) {
+          selectedValue = option.value;
+          break;
+        }
+      }
+    }
+    if (selectedValue && Array.from(this.presetSelect.options).some((option) => option.value === selectedValue)) {
+      this.presetSelect.value = selectedValue;
+    } else {
+      this.presetSelect.selectedIndex = -1;
+    }
+    this.updateWindowPresetControls();
+  }
+
+  private windowPresetMatchesState(preset: WindowPreset): boolean {
+    return !!this.state && windowPresetMatchesState(preset, this.state);
+  }
+
+  private updateWindowPresetControls(): void {
+    const frame = this.state ? this.currentFrame() : null;
+    const isColor = frame?.pixel_format === 'rgb8' && this.viewerMode === '2d';
+    const canSave = !!this.state
+      && !!this.currentModality()
+      && !isColor
+      && this.viewerMode !== 'vr'
+      && !this.windowPresetBusy;
+    const selected = this.selectedUserWindowPreset();
+    requiredElement<HTMLButtonElement>('window-preset-save').disabled = !canSave;
+    requiredElement<HTMLButtonElement>('window-preset-rename').disabled = !canSave || !selected;
+    requiredElement<HTMLButtonElement>('window-preset-delete').disabled = !canSave || !selected;
   }
 
   private currentFrame(): FrameMetadata {
@@ -5445,6 +5658,10 @@ function makeId(): string {
 
 function presetSignature(preset: WindowPreset): string {
   return `${preset.center}:${preset.width}:${preset.function}:${preset.explanation ?? ''}`;
+}
+
+function userPresetSignature(preset: UserWindowPreset): string {
+  return `${preset.id}:${preset.modality}:${preset.name}:${presetSignature(preset)}`;
 }
 
 function formatPersonName(value: string | null): string {

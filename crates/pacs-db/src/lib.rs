@@ -23,6 +23,7 @@ mod router;
 mod segmentations;
 mod transfers;
 mod transformations;
+mod window_presets;
 pub mod worklist;
 
 use std::time::Duration;
@@ -93,6 +94,10 @@ pub use transformations::{
     list_jobs, list_revisions, list_runnable_jobs, list_uid_aliases,
     logical_instance_id_for_current_sop, mark_job_failed, queue_preview_job,
     recover_interrupted_jobs, select_transform_sources, update_job_progress,
+};
+pub use window_presets::{
+    NewUserWindowPreset, UserWindowPreset, create_user_window_preset, delete_user_window_preset,
+    list_user_window_presets, rename_user_window_preset,
 };
 pub use worklist::{
     PatientSummary, SeriesSummary, StudySummary, list_patient_studies, list_patients,
