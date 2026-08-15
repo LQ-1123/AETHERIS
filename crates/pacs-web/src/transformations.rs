@@ -663,7 +663,7 @@ async fn read_verified(
         .await
         .map_err(|error| TransformApiError::Internal(error.to_string()))?;
     let digest = Sha256::digest(&bytes);
-    if digest.as_slice() != source.file_sha256.as_slice() {
+    if &digest[..] != source.file_sha256.as_slice() {
         tracing::error!(
             logical_instance_id = %source.logical_instance_id,
             "转换前文件 SHA-256 与数据库不一致"
