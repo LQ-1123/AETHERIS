@@ -14,7 +14,7 @@
 
 4. 环境脚本结束后关闭终端，以便刷新 PATH。
 5. 双击 `packaging\windows\build-installer.cmd`（同时保留了中文名称的入口）。
-6. 成品位于 `packaging\windows\output\AETHERIS-Setup-0.1.0-x64.exe`。
+6. 成品位于 `packaging\windows\output\AETHERIS-Setup-0.2.0-x64.exe`。
 
 环境准备阶段需要连接互联网并下载 Rust、Node.js、Visual Studio Build Tools、Inno Setup 和 PostgreSQL，总下载量可能达到数 GB。Windows 用户最终只需要第 6 步生成的安装包，不需要这些开发工具。
 

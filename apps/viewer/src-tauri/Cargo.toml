@@ -11,7 +11,7 @@
 [package]
 name = "pacs-viewer"
 description = "AETHERIS Medical Imaging Cloud:Tauri 2 桌面客户端"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
 publish = false

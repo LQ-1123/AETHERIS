@@ -1,6 +1,6 @@
 # Windows 一体化安装包
 
-生成的 `AETHERIS-Setup-0.1.0-x64.exe` 内含 Viewer、PACS 服务端和 PostgreSQL，目标电脑无需安装开发环境。安装时会初始化数据库、TLS 证书和管理员账号，并创建桌面/开始菜单快捷方式。
+生成的 `AETHERIS-Setup-0.2.0-x64.exe` 内含 Viewer、PACS 服务端和 PostgreSQL，目标电脑无需安装开发环境。安装时会初始化数据库、TLS 证书和管理员账号，并创建桌面/开始菜单快捷方式。
 
 ## 构建条件
 

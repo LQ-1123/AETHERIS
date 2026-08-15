@@ -10,6 +10,6 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo Done: packaging\windows\output\AETHERIS-Setup-0.1.0-x64.exe
+echo Done: packaging\windows\output\AETHERIS-Setup-0.2.0-x64.exe
 pause
 

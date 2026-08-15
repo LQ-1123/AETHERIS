@@ -1,3 +1,4 @@
+
 # AETHERIS
 
 <p align="center">
@@ -24,9 +25,9 @@
 ![Rust](https://img.shields.io/badge/Rust-1.97%2B-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql)
-![DICOM](https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-0B6E99)
+![DICOM](<https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-0B6E99>)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)
+![Platform](<https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey>)
 
 </p>
 
@@ -65,20 +66,20 @@ AETHERIS is intended to be both a usable PACS platform and an engineering founda
 
 ## Screenshots
 
-| Login | Worklist | 2D Viewer |
-|---|---|---|
+| Login                               | Worklist                                  | 2D Viewer                             |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------- |
 | ![Login](doc/screenshots/login.png) | ![Worklist](doc/screenshots/worklist.png) | ![Viewer](doc/screenshots/viewer.png) |
 
-| MPR | Volume Rendering | AI Segmentation |
-|---|---|---|
+| MPR                             | Volume Rendering                                          | AI Segmentation                                         |
+| ------------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
 | ![MPR](doc/screenshots/mpr.png) | ![Volume Rendering](doc/screenshots/volume-rendering.png) | ![AI Segmentation](doc/screenshots/ai-segmentation.png) |
 
-| Annotations | DICOM Tag Revision | Lifecycle |
-|---|---|---|
+| Annotations                                     | DICOM Tag Revision                                | Lifecycle                                   |
+| ----------------------------------------------- | ------------------------------------------------- | ------------------------------------------- |
 | ![Annotations](doc/screenshots/annotations.png) | ![Tag Revision](doc/screenshots/tag-revision.png) | ![Lifecycle](doc/screenshots/lifecycle.png) |
 
-| DICOM Router |
-|---|
+| DICOM Router                          |
+| ------------------------------------- |
 | ![Router](doc/screenshots/router.png) |
 
 ---
@@ -105,11 +106,11 @@ AETHERIS implements the core DIMSE services required for PACS interoperability:
 
 | Service     | Status |
 | ----------- | ------ |
-| C-ECHO SCP  | ✅      |
-| C-STORE SCP | ✅      |
-| C-FIND SCP  | ✅      |
-| C-MOVE SCP  | ✅      |
-| C-GET SCP   | ✅      |
+| C-ECHO SCP  | ✅     |
+| C-STORE SCP | ✅     |
+| C-FIND SCP  | ✅     |
+| C-MOVE SCP  | ✅     |
+| C-GET SCP   | ✅     |
 
 The DIMSE layer is implemented in the Rust workspace rather than relying entirely on a third-party PACS server.
 
@@ -123,9 +124,9 @@ Modern HTTP-based interoperability is provided through DICOMweb:
 
 | Standard | Status            |
 | -------- | ----------------- |
-| QIDO-RS  | ✅                 |
-| WADO-RS  | ✅                 |
-| STOW-RS  | 🚧 In development |
+| QIDO-RS  | ✅                |
+| WADO-RS  | ✅                |
+| STOW-RS  | ✅ Part10 · 🚧 DICOM JSON variant |
 
 DICOMweb provides a clean bridge between traditional modality infrastructure and modern web-based applications.
 
@@ -483,7 +484,7 @@ PACS workflows
 Phase 5 ──────────────────────────────── 🟡
 DICOMweb
 QIDO-RS / WADO-RS      ✅
-STOW-RS                🚧
+STOW-RS                ✅
 
 Phase 6 ──────────────────────────────── 🟡
 Native Viewer
@@ -500,7 +501,7 @@ Local AI               ✅
 
 The long-term direction of AETHERIS includes:
 
-* [ ] Complete STOW-RS
+* [ ] STOW-RS: application/dicom+json and bulk-data variants
 * [ ] Expand DICOMweb coverage
 * [ ] Improve DICOM modality interoperability
 * [ ] Advanced MPR / VR workflows

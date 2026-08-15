@@ -1,4 +1,4 @@
-# AETHERIS
+iAiTHERIS
 
 <p align="center">
   <img src="./logo.jpg" width="128" alt="AETHERIS Logo">
@@ -24,9 +24,9 @@
 ![Rust](https://img.shields.io/badge/Rust-1.97%2B-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql)
-![DICOM](https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-0B6E99)
+![DICOM](<https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-0B6E99>)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey)
+![Platform](<https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey>)
 
 </p>
 
@@ -65,20 +65,20 @@ AETHERIS 既是一个可用的 PACS 平台，也是未来智能医学影像工�
 
 ## 界面截图
 
-| 登录 | 病人列表 | 2D 阅片 |
-|---|---|---|
+| 登录                               | 病人列表                                  | 2D 阅片                             |
+| ---------------------------------- | ----------------------------------------- | ----------------------------------- |
 | ![登录](doc/screenshots/login.png) | ![病人列表](doc/screenshots/worklist.png) | ![阅片](doc/screenshots/viewer.png) |
 
-| MPR | 体渲染 | AI 分割 |
-|---|---|---|
+| MPR                             | 体渲染                                          | AI 分割                                         |
+| ------------------------------- | ----------------------------------------------- | ----------------------------------------------- |
 | ![MPR](doc/screenshots/mpr.png) | ![体渲染](doc/screenshots/volume-rendering.png) | ![AI 分割](doc/screenshots/ai-segmentation.png) |
 
-| 标注 | DICOM TAG 修订 | 生命周期 |
-|---|---|---|
+| 标注                                     | DICOM TAG 修订                                | 生命周期                                   |
+| ---------------------------------------- | --------------------------------------------- | ------------------------------------------ |
 | ![标注](doc/screenshots/annotations.png) | ![TAG 修订](doc/screenshots/tag-revision.png) | ![生命周期](doc/screenshots/lifecycle.png) |
 
-| DICOM 路由引擎 |
-|---|
+| DICOM 路由引擎                          |
+| --------------------------------------- |
 | ![路由引擎](doc/screenshots/router.png) |
 
 ---
@@ -101,13 +101,13 @@ AETHERIS 换了一条路：
 
 AETHERIS 实现了 PACS 互操作所需的核心 DIMSE 服务：
 
-| 服务 | 状态 |
-| ----------- | ------ |
-| C-ECHO SCP  | ✅      |
-| C-STORE SCP | ✅      |
-| C-FIND SCP  | ✅      |
-| C-MOVE SCP  | ✅      |
-| C-GET SCP   | ✅      |
+| 服务        | 状态 |
+| ----------- | ---- |
+| C-ECHO SCP  | ✅   |
+| C-STORE SCP | ✅   |
+| C-FIND SCP  | ✅   |
+| C-MOVE SCP  | ✅   |
+| C-GET SCP   | ✅   |
 
 DIMSE 层在 Rust workspace 内实现，而非完全依赖第三方 PACS 服务器——协议层显式、可测、可扩展。
 
@@ -117,11 +117,11 @@ DIMSE 层在 Rust workspace 内实现，而非完全依赖第三方 PACS 服务�
 
 通过 DICOMweb 提供基于 HTTP 的现代互操作：
 
-| 标准 | 状态            |
-| -------- | ----------------- |
-| QIDO-RS  | ✅                 |
-| WADO-RS  | ✅                 |
-| STOW-RS  | 🚧 开发中 |
+| 标准    | 状态      |
+| ------- | --------- |
+| QIDO-RS | ✅        |
+| WADO-RS | ✅        |
+| STOW-RS | ✅（Part10）· 🚧 DICOM JSON 变体 |
 
 DICOMweb 在传统设备基础设施与现代 Web 应用之间架起干净的桥梁。
 
@@ -234,19 +234,19 @@ AETHERIS 按显式子系统边界组织为 Rust workspace：
 
 # 技术栈
 
-| 层 | 技术                |
-| ---------------- | ------------------------- |
-| 核心语言    | Rust                      |
-| 桌面          | Tauri 2                   |
-| 后端 HTTP     | Axum                      |
-| 数据库         | PostgreSQL                |
-| DICOM            | DIMSE + DICOMweb          |
-| 鉴权   | Argon2 + JWT              |
-| AI               | 本地 Worker 架构 |
-| 容器化 | Docker / Compose          |
-| macOS            | Apple Silicon             |
-| Windows          | x64                       |
-| License          | MIT                       |
+| 层        | 技术             |
+| --------- | ---------------- |
+| 核心语言  | Rust             |
+| 桌面      | Tauri 2          |
+| 后端 HTTP | Axum             |
+| 数据库    | PostgreSQL       |
+| DICOM     | DIMSE + DICOMweb |
+| 鉴权      | Argon2 + JWT     |
+| AI        | 本地 Worker 架构 |
+| 容器化    | Docker / Compose |
+| macOS     | Apple Silicon    |
+| Windows   | x64              |
+| License   | MIT              |
 
 ---
 
@@ -406,7 +406,7 @@ PACS 工作流
 阶段 5 ──────────────────────────────── 🟡
 DICOMweb
 QIDO-RS / WADO-RS      ✅
-STOW-RS                🚧
+STOW-RS                ✅
 
 阶段 6 ──────────────────────────────── 🟡
 原生阅片器
@@ -423,7 +423,7 @@ STOW-RS                🚧
 
 长期方向包括：
 
-* [ ] 完成 STOW-RS
+* [ ] STOW-RS：application/dicom+json 与 bulk-data 变体
 * [ ] 扩展 DICOMweb 覆盖
 * [ ] 提升 DICOM 设备互操作
 * [ ] 高级 MPR / VR 工作流

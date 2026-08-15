@@ -5,7 +5,7 @@
 3. Run `powershell -ExecutionPolicy Bypass -File .\packaging\windows\setup-build-environment.ps1`.
 4. Close the terminal after setup so Windows refreshes `PATH`.
 5. Double-click `packaging\windows\build-installer.cmd`.
-6. Find the installer at `packaging\windows\output\AETHERIS-Setup-0.1.0-x64.exe`.
+6. Find the installer at `packaging\windows\output\AETHERIS-Setup-0.2.0-x64.exe`.
 
 The environment setup requires internet access and downloads several GB of Rust, Node.js, Visual Studio Build Tools, Inno Setup and PostgreSQL. End-user computers only need the resulting Setup EXE.
 
