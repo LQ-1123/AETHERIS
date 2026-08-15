@@ -1078,6 +1078,8 @@ export class App {
       laterality: null,
       view_position: null,
       patient_orientation: [],
+      position: null,
+      orientation: null,
       window_presets: this.currentFrame().window_presets,
       spacing: {
         confidence: 'calibrated',

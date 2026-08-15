@@ -58,6 +58,12 @@ export interface FrameMetadata {
   laterality: string | null;
   view_position: string | null;
   patient_orientation: string[];
+  /** ImagePositionPatient（患者坐标系中的首个体素中心位置）。 */
+  position: [number, number, number] | null;
+  /** ImageOrientationPatient（行方向 3 分量 + 列方向 3 分量）。 */
+  orientation:
+    | [number, number, number, number, number, number]
+    | null;
   window_presets: WindowPreset[];
   spacing: SpacingInfo;
 }
