@@ -207,6 +207,10 @@ pub struct FrameMetadata {
     pub laterality: Option<String>,
     pub view_position: Option<String>,
     pub patient_orientation: Vec<String>,
+    /// ImagePositionPatient（患者坐标系中的首个体素中心位置）。
+    pub position: Option<[f64; 3]>,
+    /// ImageOrientationPatient（行方向 3 分量 + 列方向 3 分量）。
+    pub orientation: Option<[f64; 6]>,
     pub window_presets: Vec<WindowPreset>,
     pub spacing: SpacingInfo,
 }
@@ -1197,6 +1201,8 @@ fn build_loaded_image_stack(
                 laterality: file.laterality.clone(),
                 view_position: file.view_position.clone(),
                 patient_orientation: file.patient_orientation.clone(),
+                position: fixed_array::<3>(file.position.as_deref()),
+                orientation: fixed_array::<6>(file.orientation.as_deref()),
                 window_presets: window_presets(&file.pipeline),
                 spacing: spacing_info(file.spacing),
             });
