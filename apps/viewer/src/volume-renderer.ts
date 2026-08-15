@@ -152,6 +152,12 @@ export class VolumeRenderer {
     this.material.uniforms.uSteps.value = QUALITY_STEPS[quality];
   }
 
+  /** 启用/停用 OrbitControls，供 VR 拖拽调窗时临时占用指针交互。 */
+  setInteractionsEnabled(enabled: boolean): void {
+    if (this.disposed) return;
+    this.controls.enabled = enabled;
+  }
+
   resetView(): void {
     this.camera.position.set(1.45, 1.1, 1.65);
     this.controls.target.set(0, 0, 0);

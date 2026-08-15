@@ -657,6 +657,18 @@ button svg {
   font-size: 10px;
 }
 
+.vr-window-tool {
+  width: 31px;
+  min-width: 31px;
+  height: 31px;
+}
+
+.vr-window-tool.active {
+  border-color: #58b8c7;
+  color: #58b8c7;
+  background: #173438;
+}
+
 #vr-preset {
   width: 78px;
 }
