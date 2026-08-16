@@ -72,6 +72,7 @@ import {
   type AnnotationHit,
 } from './annotations';
 import { clampToImage, zoomAt } from './geometry';
+import { GpuMprRenderer } from './gpu-mpr-renderer';
 import { framePrefetchGroups } from './frame-prefetch';
 import {
   base64ToBytes,
@@ -201,6 +202,7 @@ type MprDragState =
       panY: number;
     }
   | { kind: 'crosshair' | 'annotation-create'; plane: MprPlane; pointerId: number }
+  | { kind: 'oblique-rotate'; plane: MprPlane; pointerId: number; center: Point; lastAngle: number }
   | {
       kind: 'mask-paint';
       plane: MprPlane;
@@ -223,11 +225,18 @@ type MprDragState =
       before: Annotation[];
     };
 
+interface ObliquePlaneState {
+  normal: [number, number, number];
+  xAxis: [number, number, number];
+  yAxis: [number, number, number];
+}
+
 interface MprSession {
   metadata: MprMetadata;
   crosshair: PatientPoint3D;
   mainPlane: MprPlane;
   activePlane: MprPlane;
+  obliquePlanes: Record<MprPlane, ObliquePlaneState>;
   viewports: Record<MprPlane, MprViewportState>;
 }
 
@@ -249,6 +258,7 @@ const FRONTEND_CACHE_BYTES = 128 * 1024 * 1024;
 const FRAME_CACHE_TTL_MS = 3 * 60 * 1000;
 const FRAME_PREFETCH_CONCURRENCY = 3;
 const PATIENT_PAGE_SIZE = 30;
+const STANDARD_MPR_PLANES: readonly MprPlane[] = ['axial', 'coronal', 'sagittal'];
 const MPR_PLANES: readonly MprPlane[] = ['axial', 'coronal', 'sagittal'];
 const MPR_WHEEL_THRESHOLD = 30;
 const TAG_LABELS: Record<string, string> = {
@@ -285,21 +295,25 @@ export class App {
     axial: new RequestVersion(),
     coronal: new RequestVersion(),
     sagittal: new RequestVersion(),
+    oblique: new RequestVersion(),
   };
   private mprRequestPending: Record<MprPlane, boolean> = {
     axial: false,
     coronal: false,
     sagittal: false,
+    oblique: false,
   };
   private mprReloadQueued: Record<MprPlane, boolean> = {
     axial: false,
     coronal: false,
     sagittal: false,
+    oblique: false,
   };
   private mprWheelDelta: Record<MprPlane, MprWheelAccumulator> = {
     axial: { x: 0, y: 0 },
     coronal: { x: 0, y: 0 },
     sagittal: { x: 0, y: 0 },
+    oblique: { x: 0, y: 0 },
   };
   private mprWindowFrameRequest: number | null = null;
   private mprPrefetchTimer: number | null = null;
@@ -309,6 +323,10 @@ export class App {
   private mprBuildActive = false;
   private mprProjection: MprProjectionMode = 'slice';
   private mprSlabThicknessMm = 10;
+  private mprObliqueMode = false;
+  private mprObliqueVolumePromise: Promise<void> | null = null;
+  private mprObliqueAbort: AbortController | null = null;
+  private gpuMprRenderer: GpuMprRenderer | null = null;
   private volumeRenderer: VolumeRenderer | null = null;
   private volumeAbort: AbortController | null = null;
   private volumePreset: VolumePreset = 'soft_tissue';
@@ -439,6 +457,10 @@ export class App {
         requiredElement<HTMLCanvasElement>('sagittal-image-canvas'),
         requiredElement<HTMLCanvasElement>('sagittal-overlay-canvas'),
       ),
+      oblique: new Renderer(
+        document.createElement('canvas'),
+        document.createElement('canvas'),
+      ),
     };
     this.setupEventListeners();
     this.setupRemoteProgress();
@@ -546,6 +568,7 @@ export class App {
         await this.refreshSharedAnnotations();
         this.startAnnotationSync();
       }
+      this.disposeGpuMprRenderer();
       this.disposeVolumeRenderer();
       if (previous) void closeSeries(previous.metadata.handle).catch(console.error);
       openedHandle = null;
@@ -659,6 +682,7 @@ export class App {
       this.updateUi();
       await this.loadCurrentFrame();
       await this.loadSegmentationVolumes();
+      this.disposeGpuMprRenderer();
       this.disposeVolumeRenderer();
       await closeMpr(previous.metadata.handle).catch(() => undefined);
       this.showSeriesWarning();
@@ -762,9 +786,12 @@ export class App {
     const previousMode = this.viewerMode;
     if (mode === '2d') {
       this.stopMprPrefetch();
+      this.disposeGpuMprRenderer();
       this.disposeVolumeRenderer();
       this.viewerMode = '2d';
-      if (this.state.tool === 'crosshair') this.state.tool = 'window';
+      if (this.state.tool === 'crosshair') {
+        this.state.tool = 'window';
+      }
       this.updateUi();
       this.resizeViewport();
       this.render();
@@ -780,6 +807,7 @@ export class App {
       if (!this.mpr) throw new Error('MPR 体数据尚未准备完成');
       if (mode === 'vr') {
         this.stopMprPrefetch();
+        this.disposeGpuMprRenderer();
         const reason = volumeCapabilityReason(this.volumeCanvas, this.mpr.metadata.volume_rendering);
         if (reason) throw new Error(`VR 已禁用：${reason}`);
         this.setBusy(true, '正在加载 GPU 体纹理...');
@@ -823,6 +851,7 @@ export class App {
         this.resizeViewport();
         await this.refreshMprSlices();
         this.scheduleMprPrefetch(0);
+        void this.enableGpuMprIfAvailable();
       }
     } catch (error) {
       this.disposeVolumeRenderer();
@@ -843,6 +872,21 @@ export class App {
     this.volumeRenderer = null;
     this.volumeWindowDrag = null;
     this.vrWindowToolActive = false;
+  }
+
+  private disposeGpuMprRenderer(): void {
+    if (this.mprObliqueAbort) this.mprObliqueAbort.abort();
+    if (!this.mprObliqueVolumePromise) this.mprObliqueAbort = null;
+    this.gpuMprRenderer?.dispose();
+    this.gpuMprRenderer = null;
+    this.mprObliqueMode = false;
+    this.mprObliqueVolumePromise = null;
+    this.clearMprRotateCursors();
+    this.updateObliqueReadouts();
+    if (this.mpr) {
+      this.mpr.activePlane = 'axial';
+      this.mpr.mainPlane = 'axial';
+    }
   }
 
   private async ensureMaskGeometry(): Promise<void> {
@@ -900,7 +944,7 @@ export class App {
 
   private createMprSession(metadata: MprMetadata): MprSession {
     const crosshair = point3(metadata.initial_crosshair);
-    const viewport = (plane: MprPlane): MprViewportState => ({
+    const standardViewport = (plane: MprPlane): MprViewportState => ({
       plane,
       sliceIndex: sliceForPatientPoint(crosshair, requirePlane(metadata, plane)),
       zoom: 1,
@@ -911,15 +955,40 @@ export class App {
       flipVertical: false,
       inverted: false,
     });
+    const stateFor = (plane: MprPlane): ObliquePlaneState => {
+      const standard = requirePlane(metadata, plane === 'oblique' ? 'axial' : plane);
+      return {
+        normal: standard.normal,
+        xAxis: standard.x_axis,
+        yAxis: standard.y_axis,
+      };
+    };
     return {
       metadata,
       crosshair,
       mainPlane: 'axial',
       activePlane: 'axial',
+      obliquePlanes: {
+        axial: stateFor('axial'),
+        coronal: stateFor('coronal'),
+        sagittal: stateFor('sagittal'),
+        oblique: stateFor('oblique'),
+      },
       viewports: {
-        axial: viewport('axial'),
-        coronal: viewport('coronal'),
-        sagittal: viewport('sagittal'),
+        axial: standardViewport('axial'),
+        coronal: standardViewport('coronal'),
+        sagittal: standardViewport('sagittal'),
+        oblique: {
+          plane: 'oblique',
+          sliceIndex: 0,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
+          rotation: 0,
+          flipHorizontal: false,
+          flipVertical: false,
+          inverted: false,
+        },
       },
     };
   }
@@ -933,7 +1002,7 @@ export class App {
     return !/(locali[sz]er|scout|定位|冠状|矢状|coronal|sagittal|\bmpr\b)/i.test(description);
   }
 
-  private async refreshMprSlices(planes: readonly MprPlane[] = MPR_PLANES): Promise<void> {
+  private async refreshMprSlices(planes: readonly MprPlane[] = STANDARD_MPR_PLANES): Promise<void> {
     await Promise.all(planes.map((plane) => this.loadMprPlane(plane)));
   }
 
@@ -943,6 +1012,8 @@ export class App {
     this.mprProjection = mode;
     this.selectedMeasurementId = null;
     this.mprDraft = null;
+    this.gpuMprRenderer?.setProjection(mode, this.mprSlabThicknessMm);
+    if (this.mprObliqueMode) this.renderAllMprPlanes();
     this.updateUi();
     void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
   }
@@ -952,14 +1023,216 @@ export class App {
     if (!Number.isFinite(next) || next === this.mprSlabThicknessMm) return;
     this.mprSlabThicknessMm = next;
     setText('mpr-slab-value', `${next.toFixed(next < 10 ? 1 : 0)} mm`);
+    this.gpuMprRenderer?.setProjection(this.mprProjection, next);
+    if (this.mprObliqueMode) this.renderAllMprPlanes();
     if (this.mprProjection !== 'slice') {
       this.stopMprPrefetch();
       void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
     }
   }
 
+  /** 进入 MPR 后自动尝试启用 GPU 三视图基准线 MPR；失败则回退到标准 CPU MPR。 */
+  private async enableGpuMprIfAvailable(): Promise<void> {
+    if (!this.state || !this.mpr || this.viewerMode !== 'mpr') return;
+    if (this.gpuMprRenderer) {
+      this.mprObliqueMode = true;
+      this.updateUi();
+      this.renderAllMprPlanes();
+      return;
+    }
+    try {
+      await this.ensureMprObliqueRenderer();
+      if (!this.state || !this.mpr || this.viewerMode !== 'mpr') return;
+      if (!this.gpuMprRenderer) return;
+      this.mprObliqueMode = true;
+      this.updateUi();
+      this.renderAllMprPlanes();
+    } catch (error) {
+      console.warn('GPU Oblique MPR 不可用，使用标准 MPR', error);
+    }
+  }
+
+  private async ensureMprObliqueRenderer(): Promise<void> {
+    if (!this.state || !this.mpr) return;
+    if (this.gpuMprRenderer) return;
+    if (this.mprObliqueVolumePromise && !this.mprObliqueAbort?.signal.aborted) {
+      return this.mprObliqueVolumePromise;
+    }
+    const state = this.state;
+    const session = this.mpr;
+    const abort = new AbortController();
+    this.mprObliqueAbort?.abort();
+    this.mprObliqueAbort = abort;
+    const loading = (async () => {
+      const reason = volumeCapabilityReason(this.volumeCanvas, session.metadata.volume_rendering);
+      if (reason) throw new Error(`Oblique MPR 需要 GPU 体纹理：${reason}`);
+      const data = await loadVolume(state.metadata.handle, abort.signal);
+      if (abort.signal.aborted || this.state !== state || this.mpr !== session) return;
+      this.gpuMprRenderer = new GpuMprRenderer(
+        data,
+        session.metadata,
+        {
+          windowCenter: state.windowCenter,
+          windowWidth: state.windowWidth,
+          inverted: false,
+          projection: this.mprProjection,
+          slabThicknessMm: this.mprSlabThicknessMm,
+          voiFunction: state.voiFunction,
+        },
+      );
+    })();
+    this.mprObliqueVolumePromise = loading
+      .catch((error: unknown) => {
+        if (abort.signal.aborted) return;
+        throw error;
+      })
+      .finally(() => {
+        if (this.mprObliqueAbort === abort) {
+          this.mprObliqueAbort = null;
+          this.mprObliqueVolumePromise = null;
+        }
+      });
+    return this.mprObliqueVolumePromise;
+  }
+
+  private resetObliqueToStandard(): void {
+    if (!this.mpr) return;
+    for (const plane of MPR_PLANES) {
+      const standard = requirePlane(this.mpr.metadata, plane);
+      this.mpr.obliquePlanes[plane] = {
+        normal: standard.normal,
+        xAxis: standard.x_axis,
+        yAxis: standard.y_axis,
+      };
+    }
+    for (const plane of MPR_PLANES) {
+      this.mpr.viewports[plane].sliceIndex = sliceForPatientPoint(
+        this.mpr.crosshair,
+        this.mprPlaneMetadata(plane),
+      );
+    }
+    this.updateUi();
+    this.updateMprPositionUi();
+    this.renderAllMprPlanes();
+  }
+
+  /** 旋转当前视图的基准线：当前视图保持不变，另外两个视图绕当前视图法线旋转。 */
+  private rotateOblique(angleRadians: number): void {
+    if (!this.mpr || !this.mprObliqueMode || Math.abs(angleRadians) < 1e-4) return;
+    const plane = this.mpr.activePlane;
+    if (plane === 'oblique') return;
+    const axis = this.mpr.obliquePlanes[plane].normal;
+    for (const other of MPR_PLANES) {
+      if (other === plane) continue;
+      const state = this.mpr.obliquePlanes[other];
+      state.normal = normalizedArray(rotateVectorAroundAxis(state.normal, axis, angleRadians));
+      state.xAxis = rotateVectorAroundAxis(state.xAxis, axis, angleRadians);
+      state.yAxis = rotateVectorAroundAxis(state.yAxis, axis, angleRadians);
+      state.yAxis = orthogonalizeArray(state.yAxis, state.normal);
+      state.xAxis = normalizedArray(crossArray(state.normal, state.yAxis));
+    }
+    for (const item of MPR_PLANES) {
+      this.mpr.viewports[item].sliceIndex = sliceForPatientPoint(
+        this.mpr.crosshair,
+        this.mprPlaneMetadata(item),
+      );
+    }
+    this.renderAllMprPlanes();
+    this.updateUi();
+  }
+
+  private renderAllMprPlanes(): void {
+    for (const plane of MPR_PLANES) this.renderMprPlane(plane);
+    this.updateObliqueReadouts();
+  }
+
+  private updateObliqueReadouts(): void {
+    if (!this.mpr || !this.mprObliqueMode) {
+      for (const plane of MPR_PLANES) {
+        const element = document.getElementById(`${plane}-oblique-readout`);
+        if (element) element.hidden = true;
+      }
+      return;
+    }
+    for (const plane of MPR_PLANES) {
+      const element = requiredElement<HTMLElement>(`${plane}-oblique-readout`);
+      const state = this.mpr.obliquePlanes[plane];
+      const standard = requirePlane(this.mpr.metadata, plane);
+      const cosine = Math.max(-1, Math.min(1, Math.abs(dotArray(state.normal, standard.normal))));
+      const tiltDegrees = Math.acos(cosine) * 180 / Math.PI;
+      const [x, y, z] = state.normal;
+      const iop = [
+        ...state.xAxis,
+        ...state.yAxis,
+      ].map((value) => value.toFixed(3)).join(', ');
+      element.hidden = false;
+      element.textContent = `偏转 ${tiltDegrees.toFixed(1)}° · n(${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`;
+      element.title = `DICOM Image Orientation (Patient): ${iop}`;
+    }
+  }
+
+  private obliquePlaneMetadata(plane: MprPlane): MprPlaneMetadata {
+    if (!this.mpr) throw new Error('MPR 尚未初始化');
+    if (plane === 'oblique') throw new Error('Oblique 独立视口已移除');
+    const standard = requirePlane(this.mpr.metadata, plane);
+    const state = this.mpr.obliquePlanes[plane];
+    const cols = standard.cols;
+    const rows = standard.rows;
+    const pixelSpacing = standard.pixel_spacing_mm;
+    const sliceSpacing = Math.min(...this.mpr.metadata.source_spacing_mm);
+    const boundsMin = this.mpr.metadata.patient_bounds_min;
+    const boundsMax = this.mpr.metadata.patient_bounds_max;
+    const center: PatientPoint3D = {
+      x: (boundsMin[0] + boundsMax[0]) / 2,
+      y: (boundsMin[1] + boundsMax[1]) / 2,
+      z: (boundsMin[2] + boundsMax[2]) / 2,
+    };
+    const projections: number[] = [];
+    for (const x of [boundsMin[0], boundsMax[0]]) {
+      for (const y of [boundsMin[1], boundsMax[1]]) {
+        for (const z of [boundsMin[2], boundsMax[2]]) {
+          projections.push(
+            (x - center.x) * state.normal[0]
+            + (y - center.y) * state.normal[1]
+            + (z - center.z) * state.normal[2],
+          );
+        }
+      }
+    }
+    const projectionMin = Math.min(...projections);
+    const projectionMax = Math.max(...projections);
+    const projectedLength = Math.max(0, projectionMax - projectionMin);
+    const sliceCount = Math.max(1, Math.floor(projectedLength / sliceSpacing) + 1);
+    const sliceZeroCenter: [number, number, number] = [
+      center.x + state.normal[0] * projectionMin,
+      center.y + state.normal[1] * projectionMin,
+      center.z + state.normal[2] * projectionMin,
+    ];
+    const origin = originFromCenterAndAxes(
+      point3(sliceZeroCenter),
+      state.xAxis,
+      state.yAxis,
+      cols,
+      rows,
+      pixelSpacing,
+    );
+    return {
+      plane,
+      rows,
+      cols,
+      slice_count: sliceCount,
+      pixel_spacing_mm: pixelSpacing,
+      slice_spacing_mm: sliceSpacing,
+      origin,
+      x_axis: state.xAxis,
+      y_axis: state.yAxis,
+      normal: state.normal,
+    };
+  }
+
   private async loadMprPlane(plane: MprPlane): Promise<void> {
     if (!this.state || !this.mpr) return;
+    if (plane === 'oblique' || this.mprObliqueMode) return;
     if (this.mprRequestPending[plane]) {
       this.mprReloadQueued[plane] = true;
       return;
@@ -1017,6 +1290,7 @@ export class App {
   private scheduleMprRefresh(): void {
     this.cancelRunningMprPrefetch();
     this.scheduleMprPrefetch(400);
+    if (this.mprObliqueMode) this.renderAllMprPlanes();
     if (this.mprWindowFrameRequest != null) return;
     this.mprWindowFrameRequest = requestAnimationFrame(() => {
       this.mprWindowFrameRequest = null;
@@ -1026,7 +1300,17 @@ export class App {
 
   private changeMprSlice(plane: MprPlane, requested: number): void {
     if (!this.mpr) return;
+    if (plane === 'oblique') return;
     const viewport = this.mpr.viewports[plane];
+    if (this.mprObliqueMode) {
+      const metadata = this.mprPlaneMetadata(plane);
+      const next = Math.max(0, Math.min(requested, metadata.slice_count - 1));
+      if (next === viewport.sliceIndex) return;
+      const delta = (next - viewport.sliceIndex) * metadata.slice_spacing_mm;
+      const crosshair = addPatientVector(this.mpr.crosshair, metadata.normal, delta);
+      this.setMprCrosshair(crosshair);
+      return;
+    }
     const metadata = requirePlane(this.mpr.metadata, plane);
     const next = Math.max(0, Math.min(requested, metadata.slice_count - 1));
     if (next === viewport.sliceIndex) return;
@@ -1046,21 +1330,46 @@ export class App {
     };
     const changed: MprPlane[] = [];
     for (const plane of MPR_PLANES) {
-      const index = sliceForPatientPoint(next, requirePlane(this.mpr.metadata, plane));
+      const index = sliceForPatientPoint(next, this.mprPlaneMetadata(plane));
       if (index !== this.mpr.viewports[plane].sliceIndex) changed.push(plane);
       this.mpr.viewports[plane].sliceIndex = index;
     }
     this.mpr.crosshair = next;
     this.selectedMeasurementId = null;
     this.mprDraft = null;
+    if (this.mprObliqueMode) {
+      this.updateMprPositionUi();
+      this.renderAllMprPlanes();
+      return;
+    }
     this.updateMprPositionUi();
     for (const plane of MPR_PLANES) this.renderMprOverlay(plane);
     if (changed.length) void this.refreshMprSlices(changed);
   }
 
+  private mprPlaneMetadata(plane: MprPlane): MprPlaneMetadata {
+    if (!this.mpr) throw new Error('MPR 尚未初始化');
+    if (plane === 'oblique') throw new Error('Oblique 独立视口已移除');
+    if (this.mprObliqueMode) return this.obliquePlaneMetadata(plane);
+    return requirePlane(this.mpr.metadata, plane);
+  }
+
+  private mprSlicePlaneMetadata(plane: MprPlane): MprPlaneMetadata {
+    if (!this.mpr) throw new Error('MPR 尚未初始化');
+    const metadata = this.mprPlaneMetadata(plane);
+    const sliceIndex = this.mpr.viewports[plane].sliceIndex;
+    return {
+      ...metadata,
+      origin: addArray(
+        metadata.origin,
+        scaleArray(metadata.normal, sliceIndex * metadata.slice_spacing_mm),
+      ),
+    };
+  }
+
   private mprFrame(plane: MprPlane): FrameMetadata {
     if (!this.state || !this.mpr) throw new Error('MPR 尚未初始化');
-    const metadata = requirePlane(this.mpr.metadata, plane);
+    const metadata = this.mprPlaneMetadata(plane);
     const sliceIndex = this.mpr.viewports[plane].sliceIndex;
     return {
       logical_index: sliceIndex,
@@ -1094,21 +1403,21 @@ export class App {
 
   private mprCrosshairImagePoint(plane: MprPlane): Point {
     if (!this.mpr) return { x: 0, y: 0 };
-    const metadata = requirePlane(this.mpr.metadata, plane);
+    const metadata = this.mprPlaneMetadata(plane);
     const viewport = this.mpr.viewports[plane];
     return mprImageForPatient(this.mpr.crosshair, viewport.sliceIndex, metadata);
   }
 
   private mprImagePointToPatient(plane: MprPlane, imagePoint: Point): PatientPoint3D {
     if (!this.mpr) throw new Error('MPR 尚未初始化');
-    const metadata = requirePlane(this.mpr.metadata, plane);
+    const metadata = this.mprPlaneMetadata(plane);
     const viewport = this.mpr.viewports[plane];
     return patientPointForMprImage(imagePoint, viewport.sliceIndex, metadata);
   }
 
   private invalidateMprRequests(): void {
     this.stopMprPrefetch();
-    for (const plane of MPR_PLANES) {
+    for (const plane of STANDARD_MPR_PLANES) {
       this.mprRequests[plane].invalidate();
       this.mprReloadQueued[plane] = false;
     }
@@ -1141,7 +1450,7 @@ export class App {
         this.mprPrefetchCancellation = cancelMprPrefetch().catch(console.error);
         return;
       }
-      const startSlices = MPR_PLANES.map(
+      const startSlices = STANDARD_MPR_PLANES.map(
         (plane) => session.viewports[plane].sliceIndex,
       ) as [number, number, number];
       void prefetchMprSlices(
@@ -2125,6 +2434,7 @@ export class App {
 
   private currentMprMaskLayers(plane: MprPlane): MaskLayer[] {
     if (!this.mpr || this.viewerMode !== 'mpr') return [];
+    if (plane === 'oblique' || this.mprObliqueMode) return [];
     const metadata = requirePlane(this.mpr.metadata, plane);
     const sliceIndex = this.mpr.viewports[plane].sliceIndex;
     const layers: MaskLayer[] = [];
@@ -2259,6 +2569,7 @@ export class App {
         this.mpr.viewports[plane].inverted = false;
       }
       this.setMprCrosshair(point3(this.mpr.metadata.initial_crosshair));
+      this.resetObliqueToStandard();
       return;
     }
     this.state.zoom = 1;
@@ -2282,6 +2593,7 @@ export class App {
     this.updateUi();
     if (this.viewerMode === 'mpr') {
       this.stopMprPrefetch();
+      if (this.mprObliqueMode) this.renderAllMprPlanes();
       void this.refreshMprSlices().then(() => this.scheduleMprPrefetch(0));
     } else {
       void this.refreshLut();
@@ -2907,7 +3219,7 @@ export class App {
       canvas.addEventListener('wheel', (event) => this.mprWheel(plane, canvas, event), {
         passive: false,
       });
-      pane.addEventListener('dblclick', () => this.promoteMprPlane(plane));
+      pane.addEventListener('dblclick', () => this.resetObliqueToStandard());
     }
 
     window.addEventListener('keydown', (event) => this.keyDown(event));
@@ -3862,7 +4174,19 @@ export class App {
     const point = eventPointFor(canvas, event);
     const viewport = this.mpr.viewports[plane];
     canvas.setPointerCapture(event.pointerId);
-    if (event.button === 1 || this.state.tool === 'pan') {
+    if (event.button === 0 && this.mprObliqueMode && plane !== 'oblique' && this.crosshairLineHit(plane, point)) {
+      event.preventDefault();
+      const cross = this.rotatedCrosshairScreen(plane)!;
+      this.mprDrag = {
+        kind: 'oblique-rotate',
+        plane,
+        pointerId: event.pointerId,
+        center: cross.center,
+        lastAngle: Math.atan2(point.y - cross.center.y, point.x - cross.center.x),
+      };
+      requiredPlaneElement(plane).classList.remove('oblique-cursor-rotate');
+      requiredPlaneElement(plane).classList.add('oblique-cursor-rotating');
+    } else if (event.button === 1 || this.state.tool === 'pan') {
       event.preventDefault();
       this.mprDrag = {
         kind: 'pan',
@@ -3882,6 +4206,10 @@ export class App {
         width: this.state.windowWidth,
       };
     } else if (isMaskTool(this.state.tool)) {
+      if (plane === 'oblique' || this.mprObliqueMode) {
+        this.updateUi();
+        return;
+      }
       const segment = this.segmentationSegment;
       const volume = this.selectedMaskVolume();
       if (!segment || !volume) return;
@@ -3966,16 +4294,16 @@ export class App {
     canvas: HTMLCanvasElement,
     event: PointerEvent,
   ): void {
+    if (!this.state || !this.mpr || this.viewerMode !== 'mpr') return;
+    const point = eventPointFor(canvas, event);
+    this.updateMprRotateCursor(plane, point);
     if (
-      !this.state ||
-      !this.mpr ||
       !this.mprDrag ||
       this.mprDrag.plane !== plane ||
       this.mprDrag.pointerId !== event.pointerId
     ) {
       return;
     }
-    const point = eventPointFor(canvas, event);
     const viewport = this.mpr.viewports[plane];
     if (this.mprDrag.kind === 'pan') {
       viewport.panX = this.mprDrag.panX + point.x - this.mprDrag.start.x;
@@ -3994,6 +4322,16 @@ export class App {
         `WL ${this.state.windowCenter.toFixed(0)}  WW ${this.state.windowWidth.toFixed(0)}`,
       );
       this.scheduleMprRefresh();
+    } else if (this.mprDrag.kind === 'oblique-rotate') {
+      const drag = this.mprDrag;
+      const angle = Math.atan2(point.y - drag.center.y, point.x - drag.center.x);
+      const deltaAngle = angle - drag.lastAngle;
+      drag.lastAngle = angle;
+      if (Math.abs(deltaAngle) > 0.002) {
+        // 屏幕坐标 y 轴向下，atan2 的正方向是视觉顺时针；
+        // 患者空间的右手旋转需要取反，十字线才能跟着光标走。
+        this.rotateOblique(-deltaAngle);
+      }
     } else if (this.mprDrag.kind === 'crosshair') {
       this.moveMprCrosshairFromScreen(plane, point);
     } else if (this.mprDrag.kind === 'mask-paint') {
@@ -4083,8 +4421,27 @@ export class App {
     }
     this.mprDrag = null;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    this.updateMprRotateCursor(plane, eventPointFor(canvas, event));
     this.render();
     this.updateUi();
+  }
+
+  private updateMprRotateCursor(plane: MprPlane, point: Point): void {
+    const pane = requiredPlaneElement(plane);
+    const hovering = this.mprObliqueMode && this.crosshairLineHit(plane, point);
+    const rotating = this.mprDrag?.kind === 'oblique-rotate' && this.mprDrag.plane === plane;
+    pane.classList.toggle('oblique-cursor-rotate', hovering && !rotating);
+    pane.classList.toggle('oblique-cursor-rotating', rotating);
+  }
+
+  private clearMprRotateCursor(plane: MprPlane): void {
+    const pane = requiredPlaneElement(plane);
+    pane.classList.remove('oblique-cursor-rotate');
+    pane.classList.remove('oblique-cursor-rotating');
+  }
+
+  private clearMprRotateCursors(): void {
+    for (const plane of MPR_PLANES) this.clearMprRotateCursor(plane);
   }
 
   private mprWheel(plane: MprPlane, canvas: HTMLCanvasElement, event: WheelEvent): void {
@@ -4098,6 +4455,26 @@ export class App {
       const deltaY = normalizeWheelDelta(event.deltaY, event.deltaMode, pageSize);
       const movement = consumeMprWheel(this.mprWheelDelta[plane], deltaX, deltaY, event.shiftKey);
       if (movement.x === 0 && movement.y === 0) return;
+      if (this.mprObliqueMode) {
+        const metadata = this.mprPlaneMetadata(plane);
+        let crosshair = this.mpr.crosshair;
+        if (movement.y !== 0) {
+          crosshair = addPatientVector(
+            crosshair,
+            metadata.normal,
+            movement.y * metadata.slice_spacing_mm,
+          );
+        }
+        if (movement.x !== 0) {
+          crosshair = addPatientVector(
+            crosshair,
+            metadata.x_axis,
+            movement.x * metadata.pixel_spacing_mm,
+          );
+        }
+        this.setMprCrosshair(crosshair);
+        return;
+      }
       const metadata = requirePlane(this.mpr.metadata, plane);
       let crosshair = this.mpr.crosshair;
       crosshair = addPatientVector(
@@ -4141,14 +4518,6 @@ export class App {
       imageGeometry(frame),
     );
     this.setMprCrosshair(this.mprImagePointToPatient(plane, imagePoint));
-  }
-
-  private promoteMprPlane(plane: MprPlane): void {
-    if (!this.mpr || this.mpr.mainPlane === plane) return;
-    this.mpr.mainPlane = plane;
-    this.mpr.activePlane = plane;
-    this.updateMprLayout();
-    setTimeout(() => this.resizeViewport(), 0);
   }
 
   private mprHitTest(plane: MprPlane, screenPoint: Point): AnnotationHit | null {
@@ -4514,7 +4883,9 @@ export class App {
   private recordAnnotationChange(key: string, before: Annotation[], after: Annotation[]): void {
     if (JSON.stringify(before) === JSON.stringify(after)) return;
     this.annotationHistory.push({ key, before, after: cloneAnnotations(after) });
-    if (this.remoteSeriesOpen) this.syncAnnotationDelta(key, before, after);
+    if (this.remoteSeriesOpen && !key.startsWith('mpr:oblique:')) {
+      this.syncAnnotationDelta(key, before, after);
+    }
   }
 
   private undoAnnotation(): void {
@@ -4765,7 +5136,7 @@ export class App {
     } else {
       const plane = record.mpr_plane;
       if (!this.mpr || !plane) return null;
-      const metadata = requirePlane(this.mpr.metadata, plane);
+      const metadata = this.mprPlaneMetadata(plane);
       const first = firstGeometryPoint(record.geometry);
       const patient = patientPointFromUnknown(first);
       if (!patient) return null;
@@ -4901,7 +5272,7 @@ export class App {
       const [, rawPlane, rawSlice] = key.split(':');
       const plane = rawPlane as MprPlane;
       const sliceIndex = Number(rawSlice);
-      const metadata = requirePlane(this.mpr.metadata, plane);
+      const metadata = this.mprPlaneMetadata(plane);
       return {
         id: annotation.id,
         schema_version: 1,
@@ -5012,6 +5383,9 @@ export class App {
     const start: [number, number] = [startPoint.x, startPoint.y];
     const end: [number, number] = [endPoint.x, endPoint.y];
     if (plane && this.mpr) {
+      if (plane === 'oblique' || this.mprObliqueMode) {
+        throw new Error('Oblique MPR 的 ROI 统计暂不支持后端采样');
+      }
       return measureMprRoi(
         this.state.metadata.handle,
         plane,
@@ -5071,6 +5445,34 @@ export class App {
 
   private renderMprPlane(plane: MprPlane): void {
     if (!this.mpr || this.viewerMode !== 'mpr') return;
+    if (plane === 'oblique') return;
+    if (this.mprObliqueMode && this.gpuMprRenderer) {
+      const viewport = this.mpr.viewports[plane];
+      const pane = requiredPlaneElement(plane);
+      const rect = pane.getBoundingClientRect();
+      this.gpuMprRenderer.resize(rect.width, rect.height);
+      this.gpuMprRenderer.setPlane(this.mprSlicePlaneMetadata(plane));
+      this.gpuMprRenderer.setView(viewport, rect.width, rect.height);
+      this.gpuMprRenderer.setWindow(this.state?.windowCenter ?? 0, this.state?.windowWidth ?? 1);
+      this.gpuMprRenderer.setInverted(viewport.inverted);
+      this.gpuMprRenderer.setProjection(this.mprProjection, this.mprSlabThicknessMm);
+      this.gpuMprRenderer.setVoiFunction(this.state?.voiFunction ?? 'LINEAR');
+      this.gpuMprRenderer.render();
+      this.mprRenderers[plane].drawExternalImage(this.gpuMprRenderer.getCanvas());
+      this.mprRenderers[plane].renderMprOverlay(
+        this.mpr.viewports[plane],
+        this.mprFrame(plane),
+        this.currentMprMeasurements(plane),
+        this.mprDraft?.plane === plane ? this.mprDraft.measurement : null,
+        this.selectedMeasurementId,
+        this.mprObliqueMode ? null : this.mprCrosshairImagePoint(plane),
+        this.annotationsVisible,
+        this.currentMprMaskLayers(plane),
+      );
+      this.drawRotatedCrosshair(plane);
+      this.drawOrientationHint(plane);
+      return;
+    }
     this.mprRenderers[plane].renderMpr(
       this.mpr.viewports[plane],
       this.mprFrame(plane),
@@ -5091,10 +5493,201 @@ export class App {
       this.currentMprMeasurements(plane),
       this.mprDraft?.plane === plane ? this.mprDraft.measurement : null,
       this.selectedMeasurementId,
-      this.mprCrosshairImagePoint(plane),
+      this.mprObliqueMode ? null : this.mprCrosshairImagePoint(plane),
       this.annotationsVisible,
       this.currentMprMaskLayers(plane),
     );
+    this.drawRotatedCrosshair(plane);
+    this.drawOrientationHint(plane);
+  }
+
+  private rotatedCrosshairScreen(plane: MprPlane): { center: Point; xDir: Point; yDir: Point } | null {
+    if (!this.mpr || this.viewerMode !== 'mpr' || !this.mprObliqueMode || plane === 'oblique') return null;
+    const state = this.mpr.obliquePlanes[plane];
+    const frame = this.mprFrame(plane);
+    const viewport = this.mpr.viewports[plane];
+    const renderer = this.mprRenderers[plane];
+    const imagePoint = this.mprCrosshairImagePoint(plane);
+    const center = renderer.toScreenFor(imagePoint, frame, viewport);
+    const others = STANDARD_MPR_PLANES.filter((candidate) => candidate !== plane);
+    const screenDirections = others.map((otherPlane) => {
+      let direction = crossArray(state.normal, this.mpr!.obliquePlanes[otherPlane].normal);
+      if (Math.hypot(direction[0], direction[1], direction[2]) < 1e-9) {
+        direction = otherPlane === 'axial' ? state.yAxis : state.xAxis;
+      }
+      direction = normalizedArray(direction);
+      const imageDirection = {
+        x: dotArray(direction, state.xAxis),
+        y: dotArray(direction, state.yAxis),
+      };
+      const imageLength = Math.hypot(imageDirection.x, imageDirection.y) || 1;
+      const unit = { x: imageDirection.x / imageLength, y: imageDirection.y / imageLength };
+      const end = renderer.toScreenFor(
+        { x: imagePoint.x + unit.x, y: imagePoint.y + unit.y },
+        frame,
+        viewport,
+      );
+      return { x: end.x - center.x, y: end.y - center.y };
+    });
+    return { center, xDir: screenDirections[0], yDir: screenDirections[1] };
+  }
+
+  private crosshairLineHit(plane: MprPlane, point: Point): boolean {
+    const cross = this.rotatedCrosshairScreen(plane);
+    if (!cross) return false;
+    for (const direction of [cross.xDir, cross.yDir]) {
+      const length = Math.hypot(direction.x, direction.y);
+      if (length < 1e-9) continue;
+      const unitX = direction.x / length;
+      const unitY = direction.y / length;
+      const dx = point.x - cross.center.x;
+      const dy = point.y - cross.center.y;
+      const along = dx * unitX + dy * unitY;
+      const distance = Math.abs(dx * unitY - dy * unitX);
+      if (distance <= 8 && Math.abs(along) >= 18) return true;
+    }
+    return false;
+  }
+
+  private drawRotatedCrosshair(plane: MprPlane): void {
+    const cross = this.rotatedCrosshairScreen(plane);
+    if (!cross) return;
+    const overlay = requiredElement<HTMLCanvasElement>(`${plane}-overlay-canvas`);
+    const context = overlay.getContext('2d');
+    if (!context) return;
+    const renderer = this.mprRenderers[plane];
+    const radius = Math.hypot(renderer.getViewport().width, renderer.getViewport().height) + 40;
+    context.save();
+    context.strokeStyle = '#45d4e3';
+    context.lineWidth = 1;
+    context.setLineDash([5, 4]);
+    for (const direction of [cross.xDir, cross.yDir]) {
+      const length = Math.hypot(direction.x, direction.y);
+      if (length < 1e-9) continue;
+      const unitX = direction.x / length;
+      const unitY = direction.y / length;
+      context.beginPath();
+      context.moveTo(cross.center.x - unitX * radius, cross.center.y - unitY * radius);
+      context.lineTo(cross.center.x + unitX * radius, cross.center.y + unitY * radius);
+      context.stroke();
+    }
+    context.setLineDash([]);
+    context.beginPath();
+    context.arc(cross.center.x, cross.center.y, 4, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  }
+
+  private drawOrientationHint(plane: MprPlane): void {
+    if (!this.mpr || this.viewerMode !== 'mpr' || !this.mprObliqueMode || plane === 'oblique') return;
+    const state = this.mpr.obliquePlanes[plane];
+    const right = patientAxisLabel(state.xAxis);
+    const left = patientAxisLabel(scaleArray(state.xAxis, -1));
+    const bottom = patientAxisLabel(state.yAxis);
+    const top = patientAxisLabel(scaleArray(state.yAxis, -1));
+    const pane = requiredPlaneElement(plane);
+    setOrientationLabel(pane, 'top', top);
+    setOrientationLabel(pane, 'right', right);
+    setOrientationLabel(pane, 'bottom', bottom);
+    setOrientationLabel(pane, 'left', left);
+    this.drawOrientationCube(plane, state);
+  }
+
+  private drawOrientationCube(plane: MprPlane, state: ObliquePlaneState): void {
+    const overlay = requiredElement<HTMLCanvasElement>(`${plane}-overlay-canvas`);
+    const context = overlay.getContext('2d');
+    if (!context) return;
+    const renderer = this.mprRenderers[plane];
+    const viewport = renderer.getViewport();
+    const size = Math.max(16, Math.min(22, viewport.width * 0.045));
+    const centerX = viewport.width - size * 2.4;
+    const centerY = size * 1.9;
+
+    // 以当前视图的切片平面作为图标基准平面；患者正方体相对于该平面旋转。
+    const projectPatient = (patient: [number, number, number]): Point => {
+      const u = dotArray(patient, state.xAxis);
+      const v = dotArray(patient, state.yAxis);
+      const n = dotArray(patient, state.normal);
+      // 标准正交角度：正前方平面保持横平竖直，深度沿 45° 斜向缩短。
+      const screenX = u - n * 0.38;
+      const screenY = v - n * 0.38;
+      return { x: centerX + screenX * size, y: centerY + screenY * size };
+    };
+
+    const vertices: Array<[number, number, number]> = [];
+    for (const x of [-1, 1]) {
+      for (const y of [-1, 1]) {
+        for (const z of [-1, 1]) {
+          vertices.push([x, y, z]);
+        }
+      }
+    }
+    const edges = [
+      [0, 1], [2, 3], [4, 5], [6, 7],
+      [0, 2], [1, 3], [4, 6], [5, 7],
+      [0, 4], [1, 5], [2, 6], [3, 7],
+    ];
+
+    context.save();
+    context.strokeStyle = 'rgba(69, 212, 227, 0.9)';
+    context.lineWidth = 1;
+    context.beginPath();
+    for (const [start, end] of edges) {
+      const from = projectPatient(vertices[start]);
+      const to = projectPatient(vertices[end]);
+      context.moveTo(from.x, from.y);
+      context.lineTo(to.x, to.y);
+    }
+    context.stroke();
+
+    // 计算当前视图平面与正方体的交面多边形。
+    const normal = state.normal;
+    const intersections: Array<[number, number, number]> = [];
+    for (const [start, end] of edges) {
+      const from = vertices[start];
+      const to = vertices[end];
+      const distanceFrom = dotArray(from, normal);
+      const distanceTo = dotArray(to, normal);
+      const denominator = distanceFrom - distanceTo;
+      if (Math.abs(denominator) < 1e-12) continue;
+      const t = distanceFrom / denominator;
+      if (t < -1e-9 || t > 1 + 1e-9) continue;
+      const point = [
+        from[0] + (to[0] - from[0]) * t,
+        from[1] + (to[1] - from[1]) * t,
+        from[2] + (to[2] - from[2]) * t,
+      ] as [number, number, number];
+      if (!intersections.some((existing) => Math.hypot(
+        existing[0] - point[0],
+        existing[1] - point[1],
+        existing[2] - point[2],
+      ) < 1e-6)) {
+        intersections.push(point);
+      }
+    }
+    const ordered = intersections
+      .map((point) => ({
+        point,
+        angle: Math.atan2(
+          dotArray(point, state.yAxis),
+          dotArray(point, state.xAxis),
+        ),
+      }))
+      .sort((left, right) => left.angle - right.angle)
+      .map((entry) => projectPatient(entry.point));
+
+    if (ordered.length >= 3) {
+      context.beginPath();
+      context.moveTo(ordered[0].x, ordered[0].y);
+      for (const point of ordered.slice(1)) context.lineTo(point.x, point.y);
+      context.closePath();
+      context.fillStyle = 'rgba(255, 86, 86, 0.38)';
+      context.fill();
+      context.strokeStyle = '#ff5a5a';
+      context.lineWidth = 2;
+      context.stroke();
+    }
+    context.restore();
   }
 
   private updateMprPositionUi(): void {
@@ -5102,7 +5695,7 @@ export class App {
     this.updateMprLayout();
     for (const plane of MPR_PLANES) {
       const viewport = this.mpr.viewports[plane];
-      const metadata = requirePlane(this.mpr.metadata, plane);
+      const metadata = this.mprPlaneMetadata(plane);
       setText(`${plane}-slice-counter`, `${viewport.sliceIndex + 1} / ${metadata.slice_count}`);
     }
     setText(
@@ -5390,7 +5983,7 @@ export class App {
     if (this.mpr && this.viewerMode === 'mpr') {
       for (const plane of MPR_PLANES) {
         const viewport = this.mpr.viewports[plane];
-        const metadata = requirePlane(this.mpr.metadata, plane);
+        const metadata = this.mprPlaneMetadata(plane);
         setText(`${plane}-slice-counter`, `${viewport.sliceIndex + 1} / ${metadata.slice_count}`);
       }
       setText('annotation-count', `${this.annotationCountText(this.currentMprMeasurements(this.mpr.activePlane))}${this.maskStatusText()}`);
@@ -5927,6 +6520,85 @@ function dotArray(
   right: [number, number, number],
 ): number {
   return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function crossArray(
+  left: [number, number, number],
+  right: [number, number, number],
+): [number, number, number] {
+  return [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0],
+  ];
+}
+
+function normalizedArray(value: [number, number, number]): [number, number, number] {
+  const length = Math.hypot(value[0], value[1], value[2]);
+  if (!Number.isFinite(length) || length < 1e-12) return [1, 0, 0];
+  return [value[0] / length, value[1] / length, value[2] / length];
+}
+
+function rotateVectorAroundAxis(
+  value: [number, number, number],
+  axis: [number, number, number],
+  angleRadians: number,
+): [number, number, number] {
+  const normalized = normalizedArray(axis);
+  const cosine = Math.cos(angleRadians);
+  const sine = Math.sin(angleRadians);
+  const dot = dotArray(value, normalized);
+  const cross = crossArray(normalized, value);
+  return [
+    value[0] * cosine + cross[0] * sine + normalized[0] * dot * (1 - cosine),
+    value[1] * cosine + cross[1] * sine + normalized[1] * dot * (1 - cosine),
+    value[2] * cosine + cross[2] * sine + normalized[2] * dot * (1 - cosine),
+  ];
+}
+
+function originFromCenterAndAxes(
+  center: PatientPoint3D,
+  xAxis: [number, number, number],
+  yAxis: [number, number, number],
+  cols: number,
+  rows: number,
+  pixelSpacing: number,
+): [number, number, number] {
+  const halfX = (cols / 2) * pixelSpacing;
+  const halfY = (rows / 2) * pixelSpacing;
+  const offset = addArray(scaleArray(xAxis, halfX), scaleArray(yAxis, halfY));
+  return [
+    center.x - offset[0],
+    center.y - offset[1],
+    center.z - offset[2],
+  ];
+}
+
+function orthogonalizeArray(
+  value: [number, number, number],
+  normal: [number, number, number],
+): [number, number, number] {
+  const unitNormal = normalizedArray(normal);
+  const dot = dotArray(value, unitNormal);
+  return normalizedArray([
+    value[0] - unitNormal[0] * dot,
+    value[1] - unitNormal[1] * dot,
+    value[2] - unitNormal[2] * dot,
+  ]);
+}
+
+function patientAxisLabel(direction: [number, number, number]): string {
+  const absX = Math.abs(direction[0]);
+  const absY = Math.abs(direction[1]);
+  const absZ = Math.abs(direction[2]);
+  if (absX >= absY && absX >= absZ) return direction[0] >= 0 ? 'L' : 'R';
+  if (absY >= absZ) return direction[1] >= 0 ? 'P' : 'A';
+  return direction[2] >= 0 ? 'S' : 'I';
+}
+
+function setOrientationLabel(pane: HTMLElement, side: 'top' | 'right' | 'bottom' | 'left', text: string): void {
+  const element = pane.querySelector<HTMLElement>(`.orientation.${side}`);
+  if (element) element.textContent = text;
 }
 
 function recommendMprSeries(series: RemoteSeriesSummary[]): RemoteSeriesSummary | null {

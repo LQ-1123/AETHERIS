@@ -1354,6 +1354,11 @@ body[data-tool="crosshair"] #overlay-canvas {
   touch-action: none;
 }
 
+.mpr-viewport.oblique-cursor-rotate canvas[id$="overlay-canvas"],
+.mpr-viewport.oblique-cursor-rotating canvas[id$="overlay-canvas"] {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M20 12a8 8 0 1 1-2.34-5.66' fill='none' stroke='%2345d4e3' stroke-width='2'/%3E%3Cpolyline points='17.5 2.5 17.66 6.34 13.82 6.5' fill='none' stroke='%2345d4e3' stroke-width='2'/%3E%3C/svg%3E") 12 12, crosshair !important;
+}
+
 body[data-tool="window"] .mpr-viewport canvas[id$="overlay-canvas"] {
   cursor: ew-resize;
 }
@@ -1389,6 +1394,22 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   top: 9px;
   left: 10px;
   color: #79d4de;
+}
+
+.mpr-oblique-readout {
+  position: absolute;
+  top: 26px;
+  left: 10px;
+  z-index: 2;
+  pointer-events: none;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(5, 6, 7, 0.62);
+  color: #ffd166;
+  font-size: 9px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .mpr-slice-counter {

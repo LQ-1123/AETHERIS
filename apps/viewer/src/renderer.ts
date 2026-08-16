@@ -109,6 +109,14 @@ export class Renderer {
     this.sourceContext.putImageData(imageData, 0, 0);
   }
 
+  /** 将 GPU MPR 渲染结果直接绘制到图像 Canvas（与 Overlay 使用同一套视口变换）。 */
+  drawExternalImage(source: CanvasImageSource): void {
+    this.imageContext.save();
+    this.imageContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
+    this.imageContext.drawImage(source, 0, 0, this.viewport.width, this.viewport.height);
+    this.imageContext.restore();
+  }
+
   render(
     state: ViewState,
     annotations: Annotation[],
@@ -134,7 +142,7 @@ export class Renderer {
     annotations: Annotation[],
     draft: Annotation | null,
     selectedId: string | null,
-    crosshair: Point,
+    crosshair: Point | null,
     annotationsVisible = true,
     masks: MaskLayer[] = [],
   ): void {
@@ -153,7 +161,7 @@ export class Renderer {
     annotations: Annotation[],
     draft: Annotation | null,
     selectedId: string | null,
-    crosshair: Point,
+    crosshair: Point | null,
     annotationsVisible = true,
     masks: MaskLayer[] = [],
   ): void {

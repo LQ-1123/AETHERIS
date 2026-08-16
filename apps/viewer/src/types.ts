@@ -9,7 +9,7 @@ export type AnnotationKind =
 export type MaskTool = 'mask_brush' | 'mask_eraser';
 export type ToolMode = 'window' | 'pan' | 'crosshair' | AnnotationKind | MaskTool;
 export type ViewerMode = '2d' | 'mpr' | 'vr';
-export type MprPlane = 'axial' | 'coronal' | 'sagittal';
+export type MprPlane = 'axial' | 'coronal' | 'sagittal' | 'oblique';
 export type MprProjectionMode = 'slice' | 'mip' | 'minip';
 export type PixelFormat = 'gray8' | 'gray16' | 'rgb8';
 
