@@ -571,6 +571,34 @@ button svg {
   padding: 0;
 }
 
+.icon-button.active {
+  border-color: #64c3d0;
+  background: #286c76;
+  color: #dff6fa;
+}
+
+/* 窗格同步角标：缺几何 / 手动退出联动时的提示，可点击切换参与状态 */
+.series-pane .pane-sync-badge {
+  position: absolute;
+  top: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(158, 106, 3, 0.92);
+  color: #ffe9c2;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 6;
+}
+
+.series-pane .pane-sync-badge[hidden] {
+  display: none;
+}
+
 .view-mode-control button {
   width: 40px;
   color: #b9c0c3;

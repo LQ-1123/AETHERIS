@@ -95,11 +95,13 @@ computeTargetWindow(source: {center,width}, target: WindowPreset[]): 无
 
 ### 4.4 UI
 
-- 工具栏新增「联动」按钮（主开关，默认开当 ≥2 个 2D 窗格时）；下拉含
-  「窗宽窗位同步」子开关（默认开）。
-- 排除角标：几何缺失的 pane 在窗格角显示「缺几何 · 未同步」，悬浮提示原因。
-- 手动/自动双模式语义：总开关=自动联动；任一 pane 可通过其窗格菜单退出
-  （`excludedIds` 记录原因，含用户手动退出）。
+- 工具栏新增两个独立开关按钮（`icon-button` + lucide 图标，默认开）：
+  「翻层联动」（link 图标，`sync-scroll-button`）与「窗位联动」（sun 图标，
+  `sync-window-button`）。定位线绘制随「翻层联动」总开关。
+- 排除角标：几何缺失的 pane 在窗格顶部显示「缺几何 · 未同步」角标，
+  悬浮提示原因。
+- 手动/自动双模式语义：总开关=自动联动；**点击角标**切换该 pane 的手动退出
+  /重新加入（角标显示「已退出联动」），退出原因记录在 `syncExcludedReason`。
 
 ## 5. 数据流
 
@@ -122,7 +124,7 @@ WW/WL 变更(源窗格)
 | 目标序列缺几何（position/orientation/spacing 任一 null） | pane 从同步组排除，角标「缺几何 · 未同步」 |
 | 序列间平面不平行 | `nearestParallelFrameIndex` 返回 null，不传播该目标 |
 | 层厚/间距不一致 | 最近切片映射仍工作；不额外标注（映射跳变是物理事实，文档说明即可） |
-| 用户手动退出同步 | 记入 `excludedIds`（原因 '手动'），可随时重新加入 |
+| 用户手动退出同步 | 点击 pane 角标切换，原因记入 `syncExcludedReason`（'手动'），可随时重新加入 |
 | 传播期间用户继续翻层 | `syncing` 守卫保证无环；新输入正常排队处理 |
 | 帧请求竞态 | 复用现有 `windowFrameRequest` 版本机制，无需新方案 |
 

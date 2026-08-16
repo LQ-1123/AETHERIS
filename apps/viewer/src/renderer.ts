@@ -10,6 +10,13 @@ import { angleDegrees, annotationLabel, annotationPoints } from './annotations';
 import type { MaskLayer } from './masks';
 import type { Annotation, FrameMetadata, Point, ViewState, ViewTransform } from './types';
 
+/** 一条叠加在 2D 窗格上的扫描定位线（屏幕坐标 + 序列颜色）。 */
+export interface CrossReferenceLine {
+  start: Point;
+  end: Point;
+  color: string;
+}
+
 export class Renderer {
   private imageContext: CanvasRenderingContext2D;
   private overlayContext: CanvasRenderingContext2D;
@@ -124,6 +131,7 @@ export class Renderer {
     selectedId: string | null,
     annotationsVisible = true,
     masks: MaskLayer[] = [],
+    crossLines: CrossReferenceLine[] = [],
   ): void {
     const ratio = window.devicePixelRatio || 1;
     this.imageContext.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -133,7 +141,7 @@ export class Renderer {
     const frame = state.metadata.frames[state.currentFrame];
     if (!frame || !this.frameData) return;
 
-    this.renderView(state, frame, annotations, draft, selectedId, null, annotationsVisible, masks);
+    this.renderView(state, frame, annotations, draft, selectedId, null, annotationsVisible, masks, crossLines);
   }
 
   renderMpr(
@@ -152,7 +160,7 @@ export class Renderer {
     this.overlayContext.setTransform(ratio, 0, 0, ratio, 0, 0);
     this.overlayContext.clearRect(0, 0, this.viewport.width, this.viewport.height);
     if (!this.frameData) return;
-    this.renderView(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks);
+    this.renderView(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks, []);
   }
 
   renderMprOverlay(
@@ -180,6 +188,7 @@ export class Renderer {
     crosshair: Point | null,
     annotationsVisible: boolean,
     masks: MaskLayer[],
+    crossLines: CrossReferenceLine[] = [],
   ): void {
 
     const image = imageGeometry(frame);
@@ -201,7 +210,7 @@ export class Renderer {
     );
     this.imageContext.restore();
 
-    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks);
+    this.renderOverlay(view, frame, annotations, draft, selectedId, crosshair, annotationsVisible, masks, crossLines);
   }
 
   private renderOverlay(
@@ -213,6 +222,7 @@ export class Renderer {
     crosshair: Point | null,
     annotationsVisible: boolean,
     masks: MaskLayer[] = [],
+    crossLines: CrossReferenceLine[] = [],
   ): void {
     if (masks.length) this.drawMasks(masks, frame, view);
     if (annotationsVisible) {
@@ -221,7 +231,24 @@ export class Renderer {
       }
       if (draft) this.drawAnnotation(draft, frame, view, false, true);
     }
+    if (crossLines.length) this.drawCrossLines(crossLines);
     if (crosshair) this.drawCrosshair(crosshair, frame, view);
+  }
+
+  private drawCrossLines(lines: CrossReferenceLine[]): void {
+    const context = this.overlayContext;
+    context.save();
+    context.lineWidth = 1.25;
+    context.setLineDash([6, 4]);
+    for (const line of lines) {
+      context.strokeStyle = line.color;
+      context.beginPath();
+      context.moveTo(line.start.x, line.start.y);
+      context.lineTo(line.end.x, line.end.y);
+      context.stroke();
+    }
+    context.setLineDash([]);
+    context.restore();
   }
 
   private drawMasks(masks: MaskLayer[], frame: FrameMetadata, view: ViewTransform): void {

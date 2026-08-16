@@ -98,11 +98,20 @@ import {
   patientToPlaneMat4,
   planeToPatientMat4,
 } from './patient-space';
-import { imageGeometry, Renderer } from './renderer';
+import { imageGeometry, Renderer, type CrossReferenceLine } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
 import { volumeCapabilityReason } from './volume-capability';
 import { MAX_SERIES_PANES, seriesGridLayout } from './viewport-layout';
+import { crossReferenceSegment } from './series-sync';
+import {
+  frameHasGeometry,
+  seriesGeometryFrame,
+  syncEligibility,
+  syncFrameTargets,
+  windowEquals,
+  type SyncWindowLevel,
+} from './sync-controller';
 import {
   normalizedModality,
   parseWindowPresetSelection,
@@ -111,6 +120,19 @@ import {
 } from './window-presets';
 import type { VolumeRenderer, VolumePreset, VolumeQuality } from './volume-renderer';
 import { importConflictMessage, importSummary } from './transfer-report';
+
+/** 扫描定位线配色：按序列 pane 索引取色，与多窗格序列体系保持区分度。 */
+const SYNC_LINE_COLORS = [
+  '#45d4e3',
+  '#ffd166',
+  '#ff7a9c',
+  '#8ef29a',
+  '#c792ea',
+  '#ffab70',
+  '#7fd6ff',
+  '#f48fb1',
+  '#a3f7bf',
+];
 import type {
   AiLabelDescriptor,
   AiModelDescriptor,
@@ -309,6 +331,9 @@ interface SeriesPane {
   lutRequests: RequestVersion;
   windowFrameRequest: number | null;
   wheelFrameDelta: number;
+  syncExcludedReason: string | null;
+  syncManualExcluded: boolean;
+  syncBadge: HTMLElement;
   infoTitle: HTMLElement;
   infoMeta: HTMLElement;
   infoFrame: HTMLElement;
@@ -457,6 +482,9 @@ export class App {
   private routerPanel: RouterPanel;
   private lifecyclePanel: LifecyclePanel;
   private shareStudyUid: string | null = null;
+  private syncScrollEnabled = true;
+  private syncWindowEnabled = true;
+  private syncPropagating = false;
 
   private get activePane(): SeriesPane {
     const pane = this.panes[this.activePaneIndex];
@@ -665,6 +693,11 @@ export class App {
     dropHint.className = 'pane-drop-hint';
     dropHint.textContent = '拖入序列';
     dropHint.hidden = false;
+    const syncBadge = document.createElement('span');
+    syncBadge.className = 'pane-sync-badge';
+    syncBadge.hidden = true;
+    syncBadge.title = '点击加入/退出联动同步';
+    element.append(syncBadge);
     const pane: SeriesPane = {
       index,
       element,
@@ -685,6 +718,9 @@ export class App {
       lutRequests: new RequestVersion(),
       windowFrameRequest: null,
       wheelFrameDelta: 0,
+      syncExcludedReason: null,
+      syncManualExcluded: false,
+      syncBadge,
       infoTitle,
       infoMeta,
       infoFrame,
@@ -692,6 +728,11 @@ export class App {
       dropHint,
     };
     this.bindPaneEvents(pane);
+    syncBadge.addEventListener('click', (event) => {
+      event.stopPropagation();
+      pane.syncManualExcluded = !pane.syncManualExcluded;
+      this.refreshSyncBadges();
+    });
     closeButton.addEventListener('click', (event) => {
       event.stopPropagation();
       void this.closePane(index);
@@ -749,6 +790,23 @@ export class App {
     pane.element.addEventListener('dragover', (event) => this.paneDragOver(pane, event));
     pane.element.addEventListener('dragleave', (event) => this.paneDragLeave(pane, event));
     pane.element.addEventListener('drop', (event) => void this.paneDrop(pane, event));
+  }
+
+  private bindSyncControls(): void {
+    const scrollButton = requiredElement<HTMLButtonElement>('sync-scroll-button');
+    const windowButton = requiredElement<HTMLButtonElement>('sync-window-button');
+    scrollButton.addEventListener('click', () => {
+      this.syncScrollEnabled = !this.syncScrollEnabled;
+      scrollButton.classList.toggle('active', this.syncScrollEnabled);
+      scrollButton.setAttribute('aria-pressed', String(this.syncScrollEnabled));
+      this.refreshSyncBadges();
+      this.render();
+    });
+    windowButton.addEventListener('click', () => {
+      this.syncWindowEnabled = !this.syncWindowEnabled;
+      windowButton.classList.toggle('active', this.syncWindowEnabled);
+      windowButton.setAttribute('aria-pressed', String(this.syncWindowEnabled));
+    });
   }
 
   private setupSeriesDropFallback(): void {
@@ -933,6 +991,8 @@ export class App {
     pane.lutRequests.invalidate();
     pane.windowFrameRequest = null;
     pane.wheelFrameDelta = 0;
+    pane.syncManualExcluded = false;
+    pane.syncExcludedReason = null;
     pane.renderer.clear();
     if (closeHandle && handle) {
       void closeSeries(handle).catch((error) => this.showError(errorMessage(error)));
@@ -1355,19 +1415,86 @@ export class App {
 
   async setFrame(requested: number): Promise<void> {
     if (!this.state) return;
-    const next = Math.max(0, Math.min(requested, this.state.metadata.frames.length - 1));
+    await this.setFrameOnPane(this.activePane, requested);
+    await this.propagateFrameSync(this.activePane);
+  }
+
+  private async setFrameOnPane(pane: SeriesPane, requested: number): Promise<void> {
+    const state = pane.state;
+    if (!state) return;
+    const next = Math.max(0, Math.min(requested, state.metadata.frames.length - 1));
     if (
-      next === this.state.currentFrame
-      && (this.state.lut || this.state.metadata.frames[next].pixel_format === 'rgb8')
+      next === state.currentFrame
+      && (state.lut || state.metadata.frames[next].pixel_format === 'rgb8')
     ) return;
-    this.state.currentFrame = next;
-    this.selectedMeasurementId = null;
-    this.draft = null;
+    state.currentFrame = next;
+    if (pane === this.activePane) {
+      this.selectedMeasurementId = null;
+      this.draft = null;
+    }
     this.updateUi();
     try {
-      await this.loadCurrentFrame();
+      if (pane === this.activePane) await this.loadCurrentFrame();
+      else await this.loadFrameForPane(pane, next);
     } catch (error) {
       this.showError(errorMessage(error));
+    }
+  }
+
+  private async propagateFrameSync(source: SeriesPane): Promise<void> {
+    if (!this.syncScrollEnabled || this.syncPropagating || this.cinePlaying) return;
+    if (this.panes.filter((pane) => pane.state != null).length < 2) return;
+    const sourceState = source.state;
+    if (!sourceState) return;
+    const sourceFrame = sourceState.metadata.frames[sourceState.currentFrame];
+    if (!sourceFrame || !frameHasGeometry(sourceFrame)) return;
+    const members = this.panes
+      .filter((pane) => pane !== source && pane.state != null && !pane.syncExcludedReason)
+      .map((pane) => ({
+        paneIndex: this.paneIndex(pane),
+        frames: pane.state!.metadata.frames,
+      }));
+    const targets = syncFrameTargets(sourceFrame, members, new Set());
+    this.syncPropagating = true;
+    try {
+      for (const target of targets) {
+        if (target.frameIndex == null) continue;
+        const pane = this.panes[target.paneIndex];
+        const state = pane?.state;
+        if (!state || state.currentFrame === target.frameIndex) continue;
+        state.currentFrame = target.frameIndex;
+        pane.draft = null;
+        pane.selectedMeasurementId = null;
+        await this.loadFrameForPane(pane, target.frameIndex);
+      }
+      this.updateUi();
+    } finally {
+      this.syncPropagating = false;
+    }
+  }
+
+  private async propagateWindowSync(source: SeriesPane): Promise<void> {
+    if (!this.syncWindowEnabled || this.syncPropagating) return;
+    if (this.panes.filter((pane) => pane.state != null).length < 2) return;
+    const sourceState = source.state;
+    if (!sourceState) return;
+    const sourceWindow: SyncWindowLevel = {
+      center: sourceState.windowCenter,
+      width: sourceState.windowWidth,
+    };
+    this.syncPropagating = true;
+    try {
+      for (const pane of this.panes) {
+        if (pane === source || pane.state == null || pane.syncExcludedReason) continue;
+        const state = pane.state;
+        if (windowEquals(sourceWindow, { center: state.windowCenter, width: state.windowWidth })) continue;
+        state.windowCenter = sourceWindow.center;
+        state.windowWidth = sourceWindow.width;
+        await this.refreshLutForPane(pane);
+      }
+      this.updateUi();
+    } finally {
+      this.syncPropagating = false;
     }
   }
 
@@ -1453,15 +1580,27 @@ export class App {
 
   private async loadCurrentFrame(): Promise<void> {
     if (!this.state) return;
-    const state = this.state;
-    const generation = this.frameRequests.next();
-    const frameIndex = state.currentFrame;
+    await this.loadFrameForPane(this.activePane, this.state.currentFrame, {
+      busy: true,
+      statistics: true,
+      prefetch: true,
+    });
+  }
+
+  private async loadFrameForPane(
+    pane: SeriesPane,
+    frameIndex: number,
+    options: { busy?: boolean; statistics?: boolean; prefetch?: boolean } = {},
+  ): Promise<void> {
+    const state = pane.state;
+    if (!state) return;
+    const generation = pane.frameRequests.next();
     const frame = state.metadata.frames[frameIndex];
-    this.setBusy(true, `正在加载第 ${frameIndex + 1} 帧...`);
+    if (options.busy) this.setBusy(true, `正在加载第 ${frameIndex + 1} 帧...`);
     try {
       const isColor = frame.pixel_format === 'rgb8';
       const [buffer, lut] = await Promise.all([
-        this.getFrame(frameIndex),
+        this.getFrameForPane(pane, frameIndex),
         isColor
           ? Promise.resolve<Uint8Array | null>(null)
           : buildLut(
@@ -1473,15 +1612,19 @@ export class App {
             state.voiFunction,
           ),
       ]);
-      if (!this.frameRequests.isCurrent(generation) || state !== this.state) return;
+      if (
+        !pane.frameRequests.isCurrent(generation)
+        || state !== pane.state
+        || state.currentFrame !== frameIndex
+      ) return;
       state.lut = lut;
-      this.renderer.setFrame(buffer, frame);
-      if (lut) this.renderer.applyLut(lut);
+      pane.renderer.setFrame(buffer, frame);
+      if (lut) pane.renderer.applyLut(lut);
       this.render();
-      this.ensureCurrentStatistics();
-      this.prefetchFrames(frameIndex);
+      if (options.statistics && pane === this.activePane) this.ensureCurrentStatistics();
+      if (options.prefetch && pane === this.activePane) this.prefetchFrames(frameIndex);
     } finally {
-      if (this.frameRequests.isCurrent(generation)) this.setBusy(false);
+      if (pane.frameRequests.isCurrent(generation) && options.busy) this.setBusy(false);
       this.updateUi();
     }
   }
@@ -1489,9 +1632,16 @@ export class App {
   private async refreshLut(): Promise<void> {
     if (!this.state) return;
     if (this.currentFrame().pixel_format === 'rgb8') return;
-    const state = this.state;
+    await this.refreshLutForPane(this.activePane);
+    await this.propagateWindowSync(this.activePane);
+  }
+
+  private async refreshLutForPane(pane: SeriesPane): Promise<void> {
+    const state = pane.state;
+    if (!state) return;
+    if (state.metadata.frames[state.currentFrame]?.pixel_format === 'rgb8') return;
     const frameIndex = state.currentFrame;
-    const generation = this.lutRequests.next();
+    const generation = pane.lutRequests.next();
     try {
       const lut = await buildLut(
         state.metadata.handle,
@@ -1502,14 +1652,14 @@ export class App {
         state.voiFunction,
       );
       if (
-        !this.lutRequests.isCurrent(generation) ||
-        state !== this.state ||
+        !pane.lutRequests.isCurrent(generation) ||
+        state !== pane.state ||
         frameIndex !== state.currentFrame
       ) {
         return;
       }
       state.lut = lut;
-      this.renderer.applyLut(lut);
+      pane.renderer.applyLut(lut);
       this.render();
     } catch (error) {
       this.showError(errorMessage(error));
@@ -2210,9 +2360,18 @@ export class App {
   }
 
   private async getFrame(index: number, signal?: AbortSignal): Promise<ArrayBuffer> {
-    if (!this.state) throw new Error('没有已打开的序列');
-    const handle = this.state.metadata.handle;
-    const stack = this.state.metadata.active_stack;
+    return this.getFrameForPane(this.activePane, index, signal);
+  }
+
+  private async getFrameForPane(
+    pane: SeriesPane,
+    index: number,
+    signal?: AbortSignal,
+  ): Promise<ArrayBuffer> {
+    const state = pane.state;
+    if (!state) throw new Error('没有已打开的序列');
+    const handle = state.metadata.handle;
+    const stack = state.metadata.active_stack;
     const requestKey = `${handle}:${stack}:${index}`;
     const cached = this.frameCache.get(requestKey);
     if (cached) return cached;
@@ -3884,6 +4043,7 @@ export class App {
       this.applyPreset(this.presetSelect.value);
       this.updateWindowPresetControls();
     });
+    this.bindSyncControls();
     this.imageStackSelect.addEventListener('change', () => {
       void this.switchImageStack(Number(this.imageStackSelect.value));
     });
@@ -6186,7 +6346,52 @@ export class App {
         pane.selectedMeasurementId,
         pane.annotationsVisible,
         pane === this.activePane ? this.currentMaskLayers() : [],
+        this.crossReferenceLinesFor(pane),
       );
+    }
+  }
+
+  /** 本窗格当前帧上应绘制的其他序列扫描定位线（屏幕坐标）。 */
+  private crossReferenceLinesFor(pane: SeriesPane): CrossReferenceLine[] {
+    const state = pane.state;
+    if (!state || !this.syncScrollEnabled) return [];
+    if (this.panes.filter((candidate) => candidate.state != null).length < 2) return [];
+    const targetFrame = state.metadata.frames[state.currentFrame];
+    if (!targetFrame || !frameHasGeometry(targetFrame)) return [];
+    const lines: CrossReferenceLine[] = [];
+    for (const other of this.panes) {
+      if (other === pane || other.state == null || other.syncExcludedReason) continue;
+      const referenceFrame = other.state.metadata.frames[other.state.currentFrame];
+      if (!referenceFrame) continue;
+      const segment = crossReferenceSegment(
+        seriesGeometryFrame(referenceFrame),
+        seriesGeometryFrame(targetFrame),
+      );
+      if (!segment) continue;
+      lines.push({
+        start: pane.renderer.toScreenFor(segment.start, targetFrame, state),
+        end: pane.renderer.toScreenFor(segment.end, targetFrame, state),
+        color: SYNC_LINE_COLORS[this.paneIndex(other) % SYNC_LINE_COLORS.length],
+      });
+    }
+    return lines;
+  }
+
+  /** 刷新各窗格的同步参与状态与角标（几何缺失 / 手动退出）。 */
+  private refreshSyncBadges(): void {
+    for (const pane of this.panes) {
+      const state = pane.state;
+      let reason: string | null = null;
+      if (pane.syncManualExcluded) reason = '手动';
+      else if (state) reason = syncEligibility(state.metadata.frames).reason;
+      pane.syncExcludedReason = reason;
+      const show = reason != null && this.syncScrollEnabled;
+      pane.syncBadge.hidden = !show;
+      if (show) {
+        pane.syncBadge.textContent = reason === '手动'
+          ? '已退出联动'
+          : reason === '无帧' ? '无帧' : '缺几何 · 未同步';
+      }
     }
   }
 
@@ -6506,6 +6711,7 @@ export class App {
   }
 
   private updateUi(): void {
+    this.refreshSyncBadges();
     const hasSeries = this.state != null;
     const workspaceHasSeries = this.panes.some((pane) => pane.state != null);
     const frameCount = this.state?.metadata.frames.length ?? 0;
