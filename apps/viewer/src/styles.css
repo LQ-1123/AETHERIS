@@ -2359,6 +2359,12 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   font-size: 11px;
 }
 
+.dialog-error.dialog-success {
+  border-left-color: #4fae7c;
+  color: #c8f3d9;
+  background: #173528;
+}
+
 .tag-preview {
   border-top: 1px solid #3b4144;
 }

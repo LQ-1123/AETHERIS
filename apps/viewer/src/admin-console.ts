@@ -39,6 +39,8 @@ export class AdminConsole {
   private users: AdminUser[] = [];
   private busy = false;
   private sourcesOffset = 0;
+  /** 渲染代际：每次渲染自增；过期渲染不得写 DOM（防快速点击时的交错渲染）。 */
+  private renderGeneration = 0;
 
   constructor(private readonly reportError: (message: string) => void) {
     element<HTMLButtonElement>('admin-console-btn').addEventListener('click', () => void this.open());
@@ -66,8 +68,15 @@ export class AdminConsole {
 
   private showError(message: string): void {
     this.error.textContent = message;
+    this.error.classList.remove('dialog-success');
     this.error.hidden = false;
     this.reportError(message);
+  }
+
+  private showSuccess(message: string): void {
+    this.error.textContent = message;
+    this.error.classList.add('dialog-success');
+    this.error.hidden = false;
   }
 
   private clearError(): void {
@@ -113,7 +122,8 @@ export class AdminConsole {
   }
 
   private async renderDevices(): Promise<void> {
-    this.body.replaceChildren();
+    const generation = ++this.renderGeneration;
+    const fragment = document.createDocumentFragment();
 
     const form = document.createElement('form');
     form.className = 'admin-device-form';
@@ -142,7 +152,7 @@ export class AdminConsole {
       event.preventDefault();
       void this.register();
     });
-    this.body.append(form);
+    fragment.append(form);
 
     const list = document.createElement('div');
     list.className = 'admin-list';
@@ -190,7 +200,9 @@ export class AdminConsole {
       row.append(info, status, actions);
       list.append(row);
     }
-    this.body.append(list);
+    fragment.append(list);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
   }
 
   private async register(): Promise<void> {
@@ -232,13 +244,16 @@ export class AdminConsole {
   }
 
   private async renderSources(): Promise<void> {
-    this.body.replaceChildren();
+    const generation = ++this.renderGeneration;
+    const fragment = document.createDocumentFragment();
     const activeDevices = this.activeDevices();
     if (activeDevices.length === 0) {
       const hint = document.createElement('p');
       hint.className = 'admin-empty';
       hint.textContent = '还没有已启用的设备。请先在「设备」页注册并批准设备，再来归属历史序列。';
-      this.body.append(hint);
+      fragment.append(hint);
+      if (generation !== this.renderGeneration) return;
+      this.body.replaceChildren(fragment);
       return;
     }
 
@@ -253,7 +268,7 @@ export class AdminConsole {
     bulkButton.textContent = '归属本页';
     bulkButton.addEventListener('click', () => void this.bulkResolve(bulkSelect.value));
     bulk.append(bulkLabel, bulkSelect, bulkButton);
-    this.body.append(bulk);
+    fragment.append(bulk);
 
     let entries: SeriesSourceEntry[] = [];
     try {
@@ -300,7 +315,7 @@ export class AdminConsole {
       row.append(info, status, actions);
       list.append(row);
     }
-    this.body.append(list);
+    fragment.append(list);
 
     const pager = document.createElement('div');
     pager.className = 'admin-pager';
@@ -323,7 +338,9 @@ export class AdminConsole {
       void this.renderSources();
     });
     pager.append(previous, next);
-    this.body.append(pager);
+    fragment.append(pager);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
   }
 
   private async resolve(seriesUid: string, deviceId: string): Promise<void> {
@@ -365,7 +382,8 @@ export class AdminConsole {
   }
 
   private async renderGrants(): Promise<void> {
-    this.body.replaceChildren();
+    const generation = ++this.renderGeneration;
+    const fragment = document.createDocumentFragment();
     const activeDevices = this.activeDevices();
     const list = document.createElement('div');
     list.className = 'admin-list';
@@ -425,13 +443,23 @@ export class AdminConsole {
       row.append(grantBox);
       list.append(row);
     }
-    this.body.append(list);
+    fragment.append(list);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
   }
 
   private async saveGrants(user: AdminUser, deviceIds: string[]): Promise<void> {
     this.clearError();
+    const label = user.display_name || user.username;
+    if (deviceIds.length === 0) {
+      const confirmed = window.confirm(
+        `未勾选任何设备，保存将清空「${label}」的全部设备授权。确认继续？`,
+      );
+      if (!confirmed) return;
+    }
     try {
       await replaceUserDeviceGrants(user.id, deviceIds);
+      this.showSuccess(`已保存「${label}」的授权（${deviceIds.length} 台设备）。`);
       await this.renderGrants();
     } catch (error) {
       this.showError(errorMessage(error));
