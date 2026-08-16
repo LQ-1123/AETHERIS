@@ -3,8 +3,8 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-export class ByteLruCache {
-  private entries = new Map<number, CacheEntry>();
+export class ByteLruCache<K extends number | string = number> {
+  private entries = new Map<K, CacheEntry>();
   private totalBytes = 0;
   private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -13,7 +13,7 @@ export class ByteLruCache {
     private readonly ttlMs = Number.POSITIVE_INFINITY,
   ) {}
 
-  get(key: number): ArrayBuffer | undefined {
+  get(key: K): ArrayBuffer | undefined {
     const now = Date.now();
     this.removeExpired(now);
     const entry = this.entries.get(key);
@@ -25,7 +25,7 @@ export class ByteLruCache {
     return entry.value;
   }
 
-  set(key: number, value: ArrayBuffer): void {
+  set(key: K, value: ArrayBuffer): void {
     const now = Date.now();
     this.removeExpired(now);
     const existing = this.entries.get(key);
@@ -34,7 +34,7 @@ export class ByteLruCache {
     this.entries.set(key, { value, expiresAt: this.expiryFrom(now) });
     this.totalBytes += value.byteLength;
     while (this.totalBytes > this.maxBytes && this.entries.size > 1) {
-      const oldest = this.entries.keys().next().value as number | undefined;
+      const oldest = this.entries.keys().next().value as K | undefined;
       if (oldest == null) break;
       const removed = this.entries.get(oldest);
       this.entries.delete(oldest);

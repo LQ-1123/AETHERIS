@@ -1117,6 +1117,12 @@ button svg {
   border-color: #373c3f;
   background: #222628;
   text-align: left;
+  cursor: grab;
+}
+
+.series-row.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
 }
 
 .series-entry {
@@ -1251,6 +1257,59 @@ button svg {
   background: #050607;
 }
 
+#series-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: grid;
+  gap: 2px;
+  background: #2b3032;
+}
+
+#series-grid.single-pane {
+  gap: 0;
+  background: #050607;
+}
+
+.series-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  outline: 1px solid transparent;
+  background: #050607;
+}
+
+.series-pane.active {
+  z-index: 1;
+}
+
+#viewport.multi-pane .series-pane.active {
+  outline-color: #58b8c7;
+}
+
+.series-pane canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.series-pane canvas.pane-overlay-canvas {
+  z-index: 1;
+  touch-action: none;
+}
+
+.series-pane.drop-target {
+  outline-color: #7fd6ff;
+  outline-width: 2px;
+  background: #0d171c;
+}
+
+.series-pane.drop-replace {
+  outline-color: #ffd166;
+  outline-width: 2px;
+}
+
 #image-canvas,
 #overlay-canvas {
   position: absolute;
@@ -1258,15 +1317,151 @@ button svg {
   display: block;
 }
 
-#viewport.mpr-active > #image-canvas,
-#viewport.mpr-active > #overlay-canvas,
-#viewport.mpr-active > [data-series-overlay] {
+#viewport.mpr-active #series-grid,
+#viewport.vr-active #series-grid,
+#viewport.mpr-active #series-drop-hint,
+#viewport.vr-active #series-drop-hint {
   display: none;
 }
 
-#viewport.vr-active > #image-canvas,
-#viewport.vr-active > #overlay-canvas {
+#viewport.mpr-active > [data-series-overlay],
+#viewport.vr-active > [data-series-overlay] {
   display: none;
+}
+
+#viewport.multi-pane [data-series-overlay] {
+  display: none !important;
+}
+
+.pane-info {
+  position: absolute;
+  z-index: 3;
+  display: none;
+  pointer-events: none;
+  flex-direction: column;
+  gap: 2px;
+  color: #eef0f1;
+  text-shadow: 0 1px 3px #000;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+#viewport.multi-pane .pane-info {
+  display: flex;
+}
+
+.pane-info-top-left {
+  top: 9px;
+  left: 11px;
+}
+
+.pane-info-top-right {
+  top: 9px;
+  right: 34px;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.pane-info .pane-title {
+  max-width: min(42vw, 460px);
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-info .pane-meta {
+  max-width: min(42vw, 460px);
+  overflow: hidden;
+  color: #b9c3c7;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-info .pane-frame {
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(5, 6, 7, 0.62);
+  color: #9fd8de;
+  font-variant-numeric: tabular-nums;
+}
+
+.pane-close {
+  position: absolute;
+  z-index: 4;
+  top: 6px;
+  right: 6px;
+  display: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(5, 6, 7, 0.58);
+  color: #cfd6d9;
+  cursor: pointer;
+  place-items: center;
+}
+
+#viewport.multi-pane .pane-close {
+  display: grid;
+}
+
+.pane-close:hover {
+  background: rgba(151, 61, 61, 0.82);
+  color: #fff;
+}
+
+.pane-close svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pane-drop-hint {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(5, 6, 7, 0.45);
+  color: #79d4de;
+  font-size: 12px;
+}
+
+#viewport.multi-pane .series-pane.empty .pane-drop-hint {
+  display: flex;
+}
+
+.pane-drop-hint svg {
+  width: 18px;
+  height: 18px;
+}
+
+#series-drop-hint {
+  position: absolute;
+  z-index: 12;
+  inset: 10px;
+  display: flex;
+  pointer-events: none;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed #58b8c7;
+  border-radius: 8px;
+  background: rgba(7, 16, 20, 0.78);
+  color: #aee8ee;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+#series-drop-hint svg {
+  width: 22px;
+  height: 22px;
 }
 
 #vr-view {
@@ -1288,11 +1483,13 @@ button svg {
   touch-action: none;
 }
 
-body[data-tool="window"] #overlay-canvas {
+body[data-tool="window"] #overlay-canvas,
+body[data-tool="window"] .pane-overlay-canvas {
   cursor: ew-resize;
 }
 
-body[data-tool="pan"] #overlay-canvas {
+body[data-tool="pan"] #overlay-canvas,
+body[data-tool="pan"] .pane-overlay-canvas {
   cursor: grab;
 }
 
@@ -1301,11 +1498,18 @@ body[data-tool="arrow"] #overlay-canvas,
 body[data-tool="ellipse_roi"] #overlay-canvas,
 body[data-tool="rectangle_roi"] #overlay-canvas,
 body[data-tool="angle"] #overlay-canvas,
-body[data-tool="point_probe"] #overlay-canvas {
+body[data-tool="point_probe"] #overlay-canvas,
+body[data-tool="length"] .pane-overlay-canvas,
+body[data-tool="arrow"] .pane-overlay-canvas,
+body[data-tool="ellipse_roi"] .pane-overlay-canvas,
+body[data-tool="rectangle_roi"] .pane-overlay-canvas,
+body[data-tool="angle"] .pane-overlay-canvas,
+body[data-tool="point_probe"] .pane-overlay-canvas {
   cursor: crosshair;
 }
 
-body[data-tool="crosshair"] #overlay-canvas {
+body[data-tool="crosshair"] #overlay-canvas,
+body[data-tool="crosshair"] .pane-overlay-canvas {
   cursor: crosshair;
 }
 
@@ -1489,13 +1693,19 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 
 #empty-state {
   position: absolute;
+  z-index: 5;
   inset: 0;
   display: flex;
+  pointer-events: none;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: 12px;
   color: #858d91;
+}
+
+#empty-state .command-button {
+  pointer-events: auto;
 }
 
 .empty-symbol {

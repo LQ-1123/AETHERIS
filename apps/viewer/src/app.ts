@@ -96,6 +96,7 @@ import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
 import { volumeCapabilityReason } from './volume-capability';
+import { MAX_SERIES_PANES, seriesGridLayout } from './viewport-layout';
 import {
   normalizedModality,
   parseWindowPresetSelection,
@@ -282,9 +283,52 @@ export interface MprWheelAccumulator {
   y: number;
 }
 
+interface SeriesPane {
+  index: number;
+  element: HTMLElement;
+  imageCanvas: HTMLCanvasElement;
+  overlayCanvas: HTMLCanvasElement;
+  renderer: Renderer;
+  state: ViewState | null;
+  measurements: Map<string, Annotation[]>;
+  draft: Annotation | null;
+  selectedMeasurementId: string | null;
+  annotationHistory: AnnotationHistory;
+  annotationsVisible: boolean;
+  angleAwaitingEnd: boolean;
+  remoteSeriesOpen: boolean;
+  sharedAnnotationRecords: Map<string, SharedAnnotationRecord>;
+  annotationSyncCursor: string | null;
+  frameRequests: RequestVersion;
+  lutRequests: RequestVersion;
+  windowFrameRequest: number | null;
+  wheelFrameDelta: number;
+  infoTitle: HTMLElement;
+  infoMeta: HTMLElement;
+  infoFrame: HTMLElement;
+  closeButton: HTMLButtonElement;
+  dropHint: HTMLElement;
+}
+
+interface SeriesDragPayload {
+  studyUid: string;
+  seriesUid: string;
+}
+
+interface SeriesPointerDrag {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  started: boolean;
+  payload: SeriesDragPayload;
+}
+
+const SERIES_DRAG_MIME = 'application/x-aetheris-series';
+const SERIES_POINTER_DRAG_THRESHOLD = 6;
+
 export class App {
-  private state: ViewState | null = null;
-  private renderer: Renderer;
+  private panes: SeriesPane[] = [];
+  private activePaneIndex = 0;
   private mprRenderers: Record<MprPlane, Renderer>;
   private viewerMode: ViewerMode = '2d';
   private mpr: MprSession | null = null;
@@ -341,20 +385,12 @@ export class App {
     width: number;
   } | null = null;
   private vrWindowToolActive = false;
-  private frameCache = new ByteLruCache(FRONTEND_CACHE_BYTES, FRAME_CACHE_TTL_MS);
+  private frameCache = new ByteLruCache<string>(FRONTEND_CACHE_BYTES, FRAME_CACHE_TTL_MS);
   private pendingFrames = new Map<string, Promise<ArrayBuffer>>();
   private framePrefetchGeneration = 0;
   private framePrefetchKey: string | null = null;
   private framePrefetchCompletedAt = 0;
   private framePrefetchAbort: AbortController | null = null;
-  private measurements = new Map<string, Annotation[]>();
-  private draft: Annotation | null = null;
-  private selectedMeasurementId: string | null = null;
-  private annotationHistory = new AnnotationHistory();
-  private annotationsVisible = true;
-  private angleAwaitingEnd = false;
-  private sharedAnnotationRecords = new Map<string, SharedAnnotationRecord>();
-  private annotationSyncCursor: string | null = null;
   private annotationSyncTimer: number | null = null;
   private annotationSyncActive = false;
   private annotationSyncQueues = new Map<string, Promise<void>>();
@@ -385,16 +421,11 @@ export class App {
   private aiRunning = false;
   private aiStatus = '';
   private drag: DragState | null = null;
-  private frameRequests = new RequestVersion();
-  private lutRequests = new RequestVersion();
-  private windowFrameRequest: number | null = null;
-  private wheelFrameDelta = 0;
   private cinePlaying = false;
   private cineSpeed = 1;
   private cineTimer: number | null = null;
   private busy = false;
   private remoteDownloadActive = false;
-  private remoteSeriesOpen = false;
   private remoteUser: RemoteUser | null = null;
   private userWindowPresets: UserWindowPreset[] = [];
   private windowPresetDialogMode: 'create' | 'rename' = 'create';
@@ -422,7 +453,123 @@ export class App {
   private lifecyclePanel: LifecyclePanel;
   private shareStudyUid: string | null = null;
 
+  private get activePane(): SeriesPane {
+    const pane = this.panes[this.activePaneIndex];
+    if (pane === undefined) throw new Error('阅片窗格尚未初始化');
+    return pane;
+  }
+
+  private get state(): ViewState | null {
+    return this.panes[this.activePaneIndex]?.state ?? null;
+  }
+
+  private set state(value: ViewState | null) {
+    const pane = this.panes[this.activePaneIndex];
+    if (pane) pane.state = value;
+  }
+
+  private get renderer(): Renderer {
+    return this.activePane.renderer;
+  }
+
+  private get measurements(): Map<string, Annotation[]> {
+    return this.activePane.measurements;
+  }
+
+  private set measurements(value: Map<string, Annotation[]>) {
+    this.activePane.measurements = value;
+  }
+
+  private get draft(): Annotation | null {
+    return this.activePane.draft;
+  }
+
+  private set draft(value: Annotation | null) {
+    this.activePane.draft = value;
+  }
+
+  private get selectedMeasurementId(): string | null {
+    return this.activePane.selectedMeasurementId;
+  }
+
+  private set selectedMeasurementId(value: string | null) {
+    this.activePane.selectedMeasurementId = value;
+  }
+
+  private get annotationHistory(): AnnotationHistory {
+    return this.activePane.annotationHistory;
+  }
+
+  private get annotationsVisible(): boolean {
+    return this.activePane.annotationsVisible;
+  }
+
+  private set annotationsVisible(value: boolean) {
+    this.activePane.annotationsVisible = value;
+  }
+
+  private get angleAwaitingEnd(): boolean {
+    return this.activePane.angleAwaitingEnd;
+  }
+
+  private set angleAwaitingEnd(value: boolean) {
+    this.activePane.angleAwaitingEnd = value;
+  }
+
+  private get remoteSeriesOpen(): boolean {
+    return this.activePane.remoteSeriesOpen;
+  }
+
+  private set remoteSeriesOpen(value: boolean) {
+    this.activePane.remoteSeriesOpen = value;
+  }
+
+  private get sharedAnnotationRecords(): Map<string, SharedAnnotationRecord> {
+    return this.activePane.sharedAnnotationRecords;
+  }
+
+  private set sharedAnnotationRecords(value: Map<string, SharedAnnotationRecord>) {
+    this.activePane.sharedAnnotationRecords = value;
+  }
+
+  private get annotationSyncCursor(): string | null {
+    return this.activePane.annotationSyncCursor;
+  }
+
+  private set annotationSyncCursor(value: string | null) {
+    this.activePane.annotationSyncCursor = value;
+  }
+
+  private get frameRequests(): RequestVersion {
+    return this.activePane.frameRequests;
+  }
+
+  private get lutRequests(): RequestVersion {
+    return this.activePane.lutRequests;
+  }
+
+  private get windowFrameRequest(): number | null {
+    return this.activePane.windowFrameRequest;
+  }
+
+  private set windowFrameRequest(value: number | null) {
+    this.activePane.windowFrameRequest = value;
+  }
+
+  private get wheelFrameDelta(): number {
+    return this.activePane.wheelFrameDelta;
+  }
+
+  private set wheelFrameDelta(value: number) {
+    this.activePane.wheelFrameDelta = value;
+  }
+
+  private get multiPane(): boolean {
+    return this.panes.filter((pane) => pane.state != null).length > 1;
+  }
+
   private viewport = requiredElement<HTMLElement>('viewport');
+  private seriesGrid = requiredElement<HTMLElement>('series-grid');
   private overlayCanvas = requiredElement<HTMLCanvasElement>('overlay-canvas');
   private volumeCanvas = requiredElement<HTMLCanvasElement>('vr-canvas');
   private frameSlider = requiredElement<HTMLInputElement>('frame-slider');
@@ -440,10 +587,7 @@ export class App {
   constructor() {
     this.routerPanel = new RouterPanel((message) => this.showError(message));
     this.lifecyclePanel = new LifecyclePanel((message) => this.showError(message));
-    this.renderer = new Renderer(
-      requiredElement<HTMLCanvasElement>('image-canvas'),
-      this.overlayCanvas,
-    );
+    this.initializePanes();
     this.mprRenderers = {
       axial: new Renderer(
         requiredElement<HTMLCanvasElement>('axial-image-canvas'),
@@ -463,12 +607,603 @@ export class App {
       ),
     };
     this.setupEventListeners();
+    this.setupSeriesDropFallback();
     this.setupRemoteProgress();
     this.setupImportDrop();
     this.setupResizeObserver();
     this.restoreConnectionFields();
     this.updateUi();
     void this.autoLoginLocal();
+  }
+
+  private initializePanes(): void {
+    const element = requiredElement<HTMLElement>('series-pane-0');
+    const pane = this.createSeriesPane(
+      0,
+      element,
+      requiredElement<HTMLCanvasElement>('image-canvas'),
+      this.overlayCanvas,
+      element.querySelector<HTMLElement>('.pane-title') ?? document.createElement('strong'),
+      element.querySelector<HTMLElement>('.pane-meta') ?? document.createElement('span'),
+      element.querySelector<HTMLElement>('.pane-frame') ?? document.createElement('span'),
+      element.querySelector<HTMLButtonElement>('.pane-close') ?? document.createElement('button'),
+      element.querySelector<HTMLElement>('.pane-drop-hint') ?? document.createElement('div'),
+    );
+    this.panes = [pane];
+    this.applyPaneLayout();
+  }
+
+  private createSeriesPane(
+    index: number,
+    element: HTMLElement,
+    imageCanvas: HTMLCanvasElement,
+    overlayCanvas: HTMLCanvasElement,
+    infoTitle: HTMLElement,
+    infoMeta: HTMLElement,
+    infoFrame: HTMLElement,
+    closeButton: HTMLButtonElement,
+    dropHint: HTMLElement,
+  ): SeriesPane {
+    element.className = 'series-pane';
+    if (index === 0) element.classList.add('active');
+    element.dataset.paneIndex = String(index);
+    element.setAttribute('aria-label', `阅片窗格 ${index + 1}`);
+    imageCanvas.classList.add('pane-image-canvas');
+    overlayCanvas.classList.add('pane-overlay-canvas');
+    closeButton.type = 'button';
+    closeButton.className = 'pane-close';
+    closeButton.title = '关闭此窗格';
+    closeButton.setAttribute('aria-label', closeButton.title);
+    closeButton.textContent = '×';
+    closeButton.hidden = false;
+    closeButton.style.display = 'none';
+    dropHint.className = 'pane-drop-hint';
+    dropHint.textContent = '拖入序列';
+    dropHint.hidden = false;
+    const pane: SeriesPane = {
+      index,
+      element,
+      imageCanvas,
+      overlayCanvas,
+      renderer: new Renderer(imageCanvas, overlayCanvas),
+      state: null,
+      measurements: new Map(),
+      draft: null,
+      selectedMeasurementId: null,
+      annotationHistory: new AnnotationHistory(),
+      annotationsVisible: true,
+      angleAwaitingEnd: false,
+      remoteSeriesOpen: false,
+      sharedAnnotationRecords: new Map(),
+      annotationSyncCursor: null,
+      frameRequests: new RequestVersion(),
+      lutRequests: new RequestVersion(),
+      windowFrameRequest: null,
+      wheelFrameDelta: 0,
+      infoTitle,
+      infoMeta,
+      infoFrame,
+      closeButton,
+      dropHint,
+    };
+    this.bindPaneEvents(pane);
+    closeButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      void this.closePane(index);
+    });
+    element.addEventListener('click', () => {
+      if (!this.busy && this.activePane !== pane) this.activatePane(this.paneIndex(pane));
+    });
+    return pane;
+  }
+
+  private appendEmptyPane(): SeriesPane {
+    const index = this.panes.length;
+    const element = document.createElement('section');
+    const imageCanvas = document.createElement('canvas');
+    const overlayCanvas = document.createElement('canvas');
+    const infoTitle = document.createElement('strong');
+    infoTitle.className = 'pane-title';
+    const infoMeta = document.createElement('span');
+    infoMeta.className = 'pane-meta';
+    const infoFrame = document.createElement('span');
+    infoFrame.className = 'pane-frame';
+    const infoLeft = document.createElement('div');
+    infoLeft.className = 'pane-info pane-info-top-left';
+    infoLeft.append(infoTitle, infoMeta);
+    const infoRight = document.createElement('div');
+    infoRight.className = 'pane-info pane-info-top-right';
+    infoRight.append(infoFrame);
+    const closeButton = document.createElement('button');
+    const dropHint = document.createElement('div');
+    element.append(imageCanvas, overlayCanvas, infoLeft, infoRight, closeButton, dropHint);
+    this.seriesGrid.append(element);
+    const pane = this.createSeriesPane(
+      index,
+      element,
+      imageCanvas,
+      overlayCanvas,
+      infoTitle,
+      infoMeta,
+      infoFrame,
+      closeButton,
+      dropHint,
+    );
+    this.panes.push(pane);
+    return pane;
+  }
+
+  private bindPaneEvents(pane: SeriesPane): void {
+    const canvas = pane.overlayCanvas;
+    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    canvas.addEventListener('pointerdown', (event) => this.panePointerDown(pane, event));
+    canvas.addEventListener('pointermove', (event) => this.pointerMove(event));
+    canvas.addEventListener('pointerup', (event) => this.pointerUp(event));
+    canvas.addEventListener('pointercancel', (event) => this.pointerUp(event));
+    canvas.addEventListener('wheel', (event) => this.paneWheel(pane, event), { passive: false });
+    pane.element.addEventListener('dragover', (event) => this.paneDragOver(pane, event));
+    pane.element.addEventListener('dragleave', (event) => this.paneDragLeave(pane, event));
+    pane.element.addEventListener('drop', (event) => void this.paneDrop(pane, event));
+  }
+
+  private setupSeriesDropFallback(): void {
+    this.viewport.addEventListener('dragover', (event) => {
+      if (!event.dataTransfer?.types.includes(SERIES_DRAG_MIME)) return;
+      event.preventDefault();
+      this.seriesDragActive = true;
+      this.applyPaneLayout();
+    });
+    this.viewport.addEventListener('dragleave', (event) => {
+      if (!event.dataTransfer?.types.includes(SERIES_DRAG_MIME)) return;
+      if (event.relatedTarget instanceof Node && this.viewport.contains(event.relatedTarget)) return;
+      this.seriesDragActive = false;
+      this.applyPaneLayout();
+    });
+    this.viewport.addEventListener('drop', (event) => {
+      const payload = this.seriesDragPayload(event);
+      if (!payload) return;
+      event.preventDefault();
+      const target = event.target instanceof Element ? event.target.closest('.series-pane') : null;
+      const targetPane = target ? this.panes.find((candidate) => candidate.element === target) : null;
+      if (targetPane) {
+        void this.paneDrop(targetPane, event);
+        return;
+      }
+      const pane = this.panes.find((candidate) => candidate.state == null) ?? this.panes[0];
+      if (pane) void this.paneDrop(pane, event);
+    });
+  }
+
+  private panePointerDown(pane: SeriesPane, event: PointerEvent): void {
+    if (this.activePane !== pane && !this.busy && !this.remoteDownloadActive) {
+      this.activatePane(this.paneIndex(pane));
+    }
+    if (this.activePane !== pane || !this.state || this.busy) return;
+    this.pointerDown(event);
+  }
+
+  private paneWheel(pane: SeriesPane, event: WheelEvent): void {
+    if (this.activePane !== pane && !this.busy && !this.remoteDownloadActive) {
+      this.activatePane(this.paneIndex(pane));
+    }
+    if (this.activePane !== pane) return;
+    this.wheel(event);
+  }
+
+  private paneIndex(pane: SeriesPane): number {
+    const index = this.panes.indexOf(pane);
+    return index >= 0 ? index : pane.index;
+  }
+
+  private seriesPaneCount(): number {
+    return this.panes.filter((pane) => pane.state != null).length;
+  }
+
+  private ensurePaneSlots(): void {
+    const desired = Math.max(1, seriesGridLayout(this.seriesPaneCount()).slots);
+    while (this.panes.length < desired) this.appendEmptyPane();
+    while (this.panes.length > desired) {
+      const last = this.panes[this.panes.length - 1];
+      if (!last || last.state) break;
+      last.element.remove();
+      this.panes.pop();
+    }
+    this.applyPaneLayout();
+    this.resizeViewport();
+  }
+
+  private applyPaneLayout(): void {
+    const seriesCount = this.seriesPaneCount();
+    const effectiveCount = Math.min(MAX_SERIES_PANES, Math.max(seriesCount, this.panes.length));
+    const layout = seriesGridLayout(effectiveCount);
+    const columns = layout.columns;
+    const rows = Math.max(1, Math.ceil(this.panes.length / columns));
+    this.seriesGrid.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+    this.seriesGrid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+    this.seriesGrid.classList.toggle('single-pane', this.panes.length === 1);
+    this.viewport.classList.toggle('multi-pane', seriesCount > 1);
+    this.panes.forEach((pane, index) => {
+      pane.index = index;
+      pane.element.dataset.paneIndex = String(index);
+      pane.element.setAttribute('aria-label', `阅片窗格 ${index + 1}`);
+      pane.element.classList.toggle('active', index === this.activePaneIndex);
+      pane.element.classList.toggle('empty', pane.state == null);
+    });
+    const dropHint = requiredElement<HTMLElement>('series-drop-hint');
+    dropHint.hidden = !this.seriesDragActive;
+  }
+
+  private seriesDragActive = false;
+  private seriesPointerDrag: SeriesPointerDrag | null = null;
+  private seriesClickSuppressedUntil = 0;
+
+  private switchActivePane(index: number): SeriesPane | null {
+    const target = this.panes[index];
+    if (!target || index === this.activePaneIndex || this.busy || this.remoteDownloadActive) return null;
+    this.stopCine();
+    this.stopAnnotationSync();
+    const previousPane = this.activePane;
+    if (previousPane.windowFrameRequest != null) {
+      cancelAnimationFrame(previousPane.windowFrameRequest);
+      previousPane.windowFrameRequest = null;
+    }
+    if (this.viewerMode !== '2d' || this.mpr) this.leaveAdvancedViewModes();
+    this.clearAdvancedWorkspaceState();
+    this.activePaneIndex = index;
+    this.viewerMode = '2d';
+    this.updatePaneActivation();
+    this.updatePaneLabels();
+    return target;
+  }
+
+  private activatePane(index: number): void {
+    const target = this.switchActivePane(index);
+    if (!target) return;
+    if (target.state) {
+      target.renderer.clear();
+      void this.loadCurrentFrame().then(() => {
+        if (this.remoteSeriesOpen) {
+          this.startAnnotationSync();
+          void this.refreshSharedAnnotations();
+        }
+      }).catch((error) => this.showError(errorMessage(error)));
+    } else {
+      this.render();
+    }
+    this.updateUi();
+    this.resizeViewport();
+  }
+
+  private leaveAdvancedViewModes(): void {
+    this.stopMprPrefetch();
+    this.disposeGpuMprRenderer();
+    this.disposeVolumeRenderer();
+    if (this.state && (this.state.tool === 'crosshair' || isMaskTool(this.state.tool))) {
+      this.state.tool = 'window';
+    }
+    if (this.state) void closeMpr(this.state.metadata.handle).catch(() => undefined);
+    this.mpr = null;
+    this.mprMeasurements = new Map();
+    this.mprDraft = null;
+    this.mprDrag = null;
+    this.mprProjection = 'slice';
+    this.mprSlabThicknessMm = 10;
+    this.invalidateMprRequests();
+    this.viewerMode = '2d';
+  }
+
+  private clearAdvancedWorkspaceState(): void {
+    this.segmentationProjects = [];
+    this.segmentationSegments = [];
+    this.segmentationSegment = null;
+    this.maskVolumes = new Map();
+    this.maskTagFilter = '';
+    this.maskMatchedSegmentIds = null;
+    this.maskTagQueryGeneration += 1;
+    this.maskUndoEntries = [];
+    this.maskRedoEntries = [];
+    this.maskDirtySlices.clear();
+    this.maskSyncingSegments.clear();
+    this.maskSyncErrors.clear();
+    this.maskWorkspacePromise = null;
+    this.aiStatus = '';
+    if (this.state && isMaskTool(this.state.tool)) this.state.tool = 'window';
+  }
+
+  private resetPaneState(pane: SeriesPane, closeHandle: boolean): void {
+    const handle = pane.state?.metadata.handle ?? null;
+    if (pane.windowFrameRequest != null) {
+      cancelAnimationFrame(pane.windowFrameRequest);
+      pane.windowFrameRequest = null;
+    }
+    pane.state = null;
+    pane.measurements = new Map();
+    pane.draft = null;
+    pane.selectedMeasurementId = null;
+    pane.annotationHistory.clear();
+    pane.sharedAnnotationRecords = new Map();
+    pane.annotationSyncCursor = null;
+    pane.remoteSeriesOpen = false;
+    pane.frameRequests.invalidate();
+    pane.lutRequests.invalidate();
+    pane.windowFrameRequest = null;
+    pane.wheelFrameDelta = 0;
+    pane.renderer.clear();
+    if (closeHandle && handle) {
+      void closeSeries(handle).catch((error) => this.showError(errorMessage(error)));
+    }
+  }
+
+  private closePane(index: number): void {
+    const pane = this.panes[index];
+    if (!pane || this.busy || this.remoteDownloadActive) return;
+    const wasActive = index === this.activePaneIndex;
+    const activeBefore = this.activePane;
+    this.stopCine();
+    if (wasActive) this.stopAnnotationSync();
+    if (wasActive && (this.viewerMode !== '2d' || this.mpr)) this.leaveAdvancedViewModes();
+    if (wasActive) this.clearAdvancedWorkspaceState();
+    this.resetPaneState(pane, true);
+
+    // 最后一个窗格保留原始外壳，避免丢失全局 overlay 与固定 canvas。
+    if (this.panes.length === 1) {
+      this.activePaneIndex = 0;
+      this.viewerMode = '2d';
+      this.applyPaneLayout();
+      this.updatePaneLabels();
+      this.updateUi();
+      this.render();
+      return;
+    }
+
+    pane.element.remove();
+    const remaining = this.panes.filter((candidate) => candidate !== pane);
+    const filled = remaining.filter((candidate) => candidate.state != null);
+    const empty = remaining.filter((candidate) => candidate.state == null);
+    this.panes = [...filled, ...empty];
+    if (this.panes.length === 0) this.appendEmptyPane();
+    const desired = Math.max(1, seriesGridLayout(this.seriesPaneCount()).slots);
+    while (this.panes.length < desired) this.appendEmptyPane();
+    while (this.panes.length > desired) {
+      const last = this.panes[this.panes.length - 1];
+      if (!last || last.state) break;
+      last.element.remove();
+      this.panes.pop();
+    }
+    this.activePaneIndex = Math.max(0, this.panes.indexOf(activeBefore));
+    if (wasActive) {
+      const next = this.panes.find((candidate) => candidate.state != null) ?? this.panes[0];
+      this.activePaneIndex = this.panes.indexOf(next ?? this.panes[0]);
+      this.viewerMode = '2d';
+      this.clearAdvancedWorkspaceState();
+      if (this.state) {
+        void this.loadCurrentFrame().then(() => {
+          if (this.remoteSeriesOpen) {
+            this.startAnnotationSync();
+            void this.refreshSharedAnnotations();
+          }
+        }).catch((error) => this.showError(errorMessage(error)));
+      }
+    }
+    this.applyPaneLayout();
+    this.updatePaneLabels();
+    this.resizeViewport();
+    this.updateUi();
+    this.render();
+    if (this.state && !this.multiPane) {
+      void this.loadSegmentationWorkspace()
+        .then(() => this.updateUi())
+        .catch((error) => this.showError(errorMessage(error)));
+    }
+  }
+
+  private updatePaneActivation(): void {
+    this.panes.forEach((pane, index) => {
+      pane.element.classList.toggle('active', index === this.activePaneIndex);
+      pane.element.classList.toggle('empty', pane.state == null);
+    });
+  }
+
+  private updatePaneLabels(): void {
+    for (const pane of this.panes) {
+      const state = pane.state;
+      const frame = state?.metadata.frames[state.currentFrame];
+      if (!state || !frame) {
+        pane.infoTitle.textContent = '未加载';
+        pane.infoMeta.textContent = '拖入序列';
+        pane.infoFrame.textContent = '0 / 0';
+        pane.closeButton.style.display = 'none';
+        continue;
+      }
+      const patient = state.metadata.patient;
+      pane.infoTitle.textContent = formatPersonName(patient.patient_name) || '未提供';
+      pane.infoMeta.textContent = [
+        patient.modality,
+        patient.series_description?.trim(),
+        state.metadata.frames.length > 1 ? `${state.currentFrame + 1} / ${state.metadata.frames.length}` : '',
+      ].filter(Boolean).join(' · ');
+      pane.infoFrame.textContent = `${state.currentFrame + 1} / ${state.metadata.frames.length}`;
+      pane.closeButton.style.display = this.seriesPaneCount() > 1 ? 'grid' : 'none';
+    }
+  }
+
+  private paneDragOver(pane: SeriesPane, event: DragEvent): void {
+    if (!event.dataTransfer?.types.includes(SERIES_DRAG_MIME)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = event.altKey ? 'move' : 'copy';
+    this.updateSeriesDropTarget(pane, event.altKey);
+  }
+
+  private paneDragLeave(pane: SeriesPane, event: DragEvent): void {
+    if (!event.dataTransfer?.types.includes(SERIES_DRAG_MIME)) return;
+    if (event.relatedTarget instanceof Node && pane.element.contains(event.relatedTarget)) return;
+    pane.element.classList.remove('drop-target', 'drop-replace');
+    if (![...this.panes].some((candidate) =>
+      candidate.element.classList.contains('drop-target')
+      || candidate.element.classList.contains('drop-replace')
+    )) {
+      this.seriesDragActive = false;
+      this.applyPaneLayout();
+    }
+  }
+
+  private async paneDrop(pane: SeriesPane, event: DragEvent): Promise<void> {
+    const payload = this.seriesDragPayload(event);
+    if (!payload) return;
+    event.preventDefault();
+    event.stopPropagation();
+    await this.openDraggedSeries(pane, payload, event.altKey);
+  }
+
+  private seriesDragPayload(event: DragEvent): SeriesDragPayload | null {
+    const raw = event.dataTransfer?.getData(SERIES_DRAG_MIME);
+    if (!raw) return null;
+    try {
+      const value = JSON.parse(raw) as { studyUid?: unknown; seriesUid?: unknown };
+      return typeof value.studyUid === 'string' && typeof value.seriesUid === 'string'
+        ? { studyUid: value.studyUid, seriesUid: value.seriesUid }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private updateSeriesDropTarget(pane: SeriesPane | null, altKey: boolean): void {
+    this.seriesDragActive = true;
+    for (const candidate of this.panes) {
+      candidate.element.classList.toggle('drop-replace', candidate === pane && altKey && candidate.state != null);
+      candidate.element.classList.toggle('drop-target', candidate === pane && (!altKey || candidate.state == null));
+    }
+    const hint = requiredElement<HTMLElement>('series-drop-hint').querySelector('span');
+    if (hint) {
+      hint.textContent = !pane
+        ? '释放以添加序列并自动分屏'
+        : pane.state == null
+          ? '释放以在此窗格打开序列'
+          : altKey
+            ? '释放以替换此窗格的序列'
+            : this.seriesPaneCount() >= MAX_SERIES_PANES
+              ? '窗格已满，释放将替换此窗格'
+              : '释放以添加序列并自动分屏';
+    }
+    this.applyPaneLayout();
+  }
+
+  private clearSeriesDropTargets(): void {
+    for (const candidate of this.panes) {
+      candidate.element.classList.remove('drop-target', 'drop-replace');
+    }
+    this.seriesDragActive = false;
+    this.applyPaneLayout();
+  }
+
+  private async openDraggedSeries(
+    pane: SeriesPane,
+    payload: SeriesDragPayload,
+    replaceRequested: boolean,
+  ): Promise<void> {
+    if (this.busy || this.remoteDownloadActive) {
+      this.showError('当前正在加载序列，请稍后再拖入。');
+      return;
+    }
+    this.clearSeriesDropTargets();
+    const existingIndex = this.panes.findIndex((candidate) =>
+      candidate.state?.metadata.series_uid === payload.seriesUid
+      && candidate.state.metadata.study_uid === payload.studyUid
+    );
+    if (existingIndex >= 0) {
+      this.activatePane(existingIndex);
+      return;
+    }
+    const replace = replaceRequested && pane.state != null;
+    if (replace || pane.state == null || this.seriesPaneCount() >= MAX_SERIES_PANES) {
+      this.switchActivePane(this.paneIndex(pane));
+      await this.openRemote(payload.studyUid, payload.seriesUid);
+      return;
+    }
+    const count = this.seriesPaneCount();
+    const desired = Math.max(count + 1, seriesGridLayout(count + 1).slots);
+    while (this.panes.length < desired) this.appendEmptyPane();
+    this.applyPaneLayout();
+    this.resizeViewport();
+    const emptyPane = this.panes.find((candidate) => candidate.state == null);
+    if (emptyPane) {
+      this.switchActivePane(this.paneIndex(emptyPane));
+      await this.openRemote(payload.studyUid, payload.seriesUid);
+    }
+  }
+
+  private beginSeriesPointerDrag(
+    button: HTMLButtonElement,
+    event: PointerEvent,
+    payload: SeriesDragPayload,
+  ): void {
+    if (event.button !== 0 || this.busy || this.remoteDownloadActive) return;
+    this.seriesPointerDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      started: false,
+      payload,
+    };
+    button.setPointerCapture(event.pointerId);
+  }
+
+  private moveSeriesPointerDrag(event: PointerEvent): void {
+    const drag = this.seriesPointerDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.started) {
+      const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+      if (distance < SERIES_POINTER_DRAG_THRESHOLD) return;
+      drag.started = true;
+      (event.currentTarget as HTMLElement | null)?.classList.add('dragging');
+    }
+    event.preventDefault();
+    const viewportRect = this.viewport.getBoundingClientRect();
+    const insideViewport = event.clientX >= viewportRect.left
+      && event.clientX <= viewportRect.right
+      && event.clientY >= viewportRect.top
+      && event.clientY <= viewportRect.bottom;
+    const pane = insideViewport ? this.seriesPaneAtPoint(event.clientX, event.clientY) : null;
+    this.updateSeriesDropTarget(pane, event.altKey);
+  }
+
+  private finishSeriesPointerDrag(event: PointerEvent, cancelled: boolean): void {
+    const drag = this.seriesPointerDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    this.seriesPointerDrag = null;
+    const button = event.currentTarget as HTMLElement | null;
+    button?.classList.remove('dragging');
+    if (button instanceof HTMLButtonElement && button.hasPointerCapture(event.pointerId)) {
+      button.releasePointerCapture(event.pointerId);
+    }
+    if (cancelled) {
+      this.clearSeriesDropTargets();
+      return;
+    }
+    if (!drag.started) return;
+    const viewportRect = this.viewport.getBoundingClientRect();
+    const insideViewport = event.clientX >= viewportRect.left
+      && event.clientX <= viewportRect.right
+      && event.clientY >= viewportRect.top
+      && event.clientY <= viewportRect.bottom;
+    const pane = insideViewport
+      ? (this.seriesPaneAtPoint(event.clientX, event.clientY) ?? this.panes.find((candidate) => candidate.state == null) ?? this.panes[0])
+      : null;
+    this.seriesClickSuppressedUntil = Date.now() + 350;
+    if (pane) void this.openDraggedSeries(pane, drag.payload, event.altKey);
+    else this.clearSeriesDropTargets();
+  }
+
+  private cancelSeriesPointerDrag(event: PointerEvent): void {
+    this.finishSeriesPointerDrag(event, true);
+  }
+
+  private seriesPaneAtPoint(clientX: number, clientY: number): SeriesPane | null {
+    const element = document.elementFromPoint(clientX, clientY);
+    const paneElement = element instanceof Element ? element.closest('.series-pane') : null;
+    return paneElement ? this.panes.find((candidate) => candidate.element === paneElement) ?? null : null;
   }
 
   async openFiles(): Promise<void> {
@@ -572,6 +1307,8 @@ export class App {
       this.disposeVolumeRenderer();
       if (previous) void closeSeries(previous.metadata.handle).catch(console.error);
       openedHandle = null;
+      this.ensurePaneSlots();
+      this.updatePaneLabels();
       this.showSeriesWarning();
     } catch (error) {
       if (openedHandle != null) {
@@ -601,6 +1338,8 @@ export class App {
           this.renderer.clear();
         }
       }
+      this.ensurePaneSlots();
+      this.updatePaneLabels();
       throw error;
     } finally {
       this.remoteDownloadActive = false;
@@ -782,6 +1521,10 @@ export class App {
 
   private async setViewerMode(mode: ViewerMode): Promise<void> {
     if (!this.state || this.busy || mode === this.viewerMode) return;
+    if (mode !== '2d' && this.multiPane) {
+      this.showError('多窗格对比模式下仅支持 2D 阅片，请先关闭其他窗格再使用 MPR / VR。');
+      return;
+    }
     this.stopCine();
     const previousMode = this.viewerMode;
     if (mode === '2d') {
@@ -1484,22 +2227,17 @@ export class App {
   }
 
   private async getFrame(index: number, signal?: AbortSignal): Promise<ArrayBuffer> {
-    const cached = this.frameCache.get(index);
-    if (cached) return cached;
     if (!this.state) throw new Error('没有已打开的序列');
     const handle = this.state.metadata.handle;
     const stack = this.state.metadata.active_stack;
     const requestKey = `${handle}:${stack}:${index}`;
+    const cached = this.frameCache.get(requestKey);
+    if (cached) return cached;
     const pending = this.pendingFrames.get(requestKey);
     if (pending) return pending;
     const request = loadFrame(handle, stack, index, signal)
       .then((buffer) => {
-        if (
-          this.state?.metadata.handle === handle &&
-          this.state.metadata.active_stack === stack
-        ) {
-          this.frameCache.set(index, buffer);
-        }
+        this.frameCache.set(requestKey, buffer);
         return buffer;
       })
       .finally(() => {
@@ -1632,8 +2370,9 @@ export class App {
   }
 
   private async loadSegmentationWorkspace(): Promise<void> {
-    const studyUid = this.state?.metadata.study_uid;
-    const seriesUid = this.state?.metadata.series_uid;
+    const state = this.state;
+    const studyUid = state?.metadata.study_uid;
+    const seriesUid = state?.metadata.series_uid;
     if (!this.remoteSeriesOpen || !studyUid || !seriesUid) {
       const segment = localSegmentationSegment();
       this.segmentationProjects = [];
@@ -1644,9 +2383,11 @@ export class App {
     }
     const selectedId = this.segmentationSegment?.id;
     const projects = await listSegmentationProjects(studyUid, seriesUid);
+    if (this.state !== state) return;
     const segmentGroups = await Promise.all(
       projects.map((project) => listSegmentationSegments(studyUid, seriesUid, project.id)),
     );
+    if (this.state !== state) return;
     this.segmentationProjects = projects;
     this.segmentationSegments = segmentGroups.flat().sort(
       (left, right) => left.segment_number - right.segment_number || left.label.localeCompare(right.label),
@@ -3200,12 +3941,6 @@ export class App {
       if (!studyUid || !seriesUid || seriesUid === this.state?.metadata.series_uid) return;
       void this.openRemote(studyUid, seriesUid);
     });
-    this.overlayCanvas.addEventListener('contextmenu', (event) => event.preventDefault());
-    this.overlayCanvas.addEventListener('pointerdown', (event) => this.pointerDown(event));
-    this.overlayCanvas.addEventListener('pointermove', (event) => this.pointerMove(event));
-    this.overlayCanvas.addEventListener('pointerup', (event) => this.pointerUp(event));
-    this.overlayCanvas.addEventListener('pointercancel', (event) => this.pointerUp(event));
-    this.overlayCanvas.addEventListener('wheel', (event) => this.wheel(event), { passive: false });
 
     for (const pane of document.querySelectorAll<HTMLElement>('.mpr-viewport')) {
       const plane = pane.dataset.plane as MprPlane;
@@ -3286,6 +4021,25 @@ export class App {
     }
   }
 
+  private closeAllPanes(): void {
+    this.stopCine();
+    this.stopAnnotationSync();
+    if (this.viewerMode !== '2d' || this.mpr) this.leaveAdvancedViewModes();
+    this.clearAdvancedWorkspaceState();
+    for (const pane of this.panes) this.resetPaneState(pane, true);
+    const first = this.panes[0];
+    if (first) {
+      for (const pane of this.panes.slice(1)) pane.element.remove();
+      this.panes = [first];
+      this.activePaneIndex = 0;
+      this.viewerMode = '2d';
+    }
+    this.applyPaneLayout();
+    this.updatePaneLabels();
+    this.updateUi();
+    this.render();
+  }
+
   private async logout(): Promise<void> {
     try {
       await remoteLogout();
@@ -3295,8 +4049,8 @@ export class App {
       this.remoteUser = null;
       this.userWindowPresets = [];
       this.closeWindowPresetDialog();
-      this.remoteSeriesOpen = false;
       this.stopAnnotationSync();
+      this.closeAllPanes();
       this.patients = [];
       this.studies.clear();
       this.series.clear();
@@ -3356,6 +4110,7 @@ export class App {
   private setupImportDrop(): void {
     void import('@tauri-apps/api/webview').then(({ getCurrentWebview }) =>
       getCurrentWebview().onDragDropEvent(({ payload }) => {
+        if (this.seriesDragActive || this.seriesPointerDrag) return;
         const overlay = requiredElement<HTMLElement>('import-drop-overlay');
         if (payload.type === 'enter') {
           if (!this.canEditDicomTags() || this.transferActive) return;
@@ -4035,8 +4790,30 @@ export class App {
                     recommendation.textContent = 'MPR 推荐数据源';
                     seriesButton.append(recommendation);
                   }
+                  const seriesPayload: SeriesDragPayload = {
+                    studyUid: study.study_uid,
+                    seriesUid: entry.series_uid,
+                  };
                   seriesButton.addEventListener('click', () => {
+                    if (Date.now() < this.seriesClickSuppressedUntil) return;
                     void this.openRemote(study.study_uid, entry.series_uid);
+                  });
+                  seriesButton.addEventListener('pointerdown', (event) => {
+                    this.beginSeriesPointerDrag(seriesButton, event, seriesPayload);
+                  });
+                  seriesButton.addEventListener('pointermove', (event) => {
+                    this.moveSeriesPointerDrag(event);
+                  });
+                  seriesButton.addEventListener('pointerup', (event) => {
+                    this.finishSeriesPointerDrag(event, false);
+                  });
+                  seriesButton.addEventListener('pointercancel', (event) => {
+                    this.cancelSeriesPointerDrag(event);
+                  });
+                  seriesButton.addEventListener('lostpointercapture', (event) => {
+                    if (this.seriesPointerDrag?.pointerId === event.pointerId) {
+                      this.cancelSeriesPointerDrag(event);
+                    }
                   });
                   seriesEntry.append(seriesButton);
                   this.appendExportButton(seriesEntry, study.study_uid, entry.series_uid);
@@ -4539,7 +5316,10 @@ export class App {
   private pointerDown(event: PointerEvent): void {
     if (!this.state || this.busy) return;
     const point = this.eventPoint(event);
-    this.overlayCanvas.setPointerCapture(event.pointerId);
+    const canvas = event.currentTarget instanceof HTMLCanvasElement
+      ? event.currentTarget
+      : this.overlayCanvas;
+    canvas.setPointerCapture(event.pointerId);
     if (event.button === 1 || this.state.tool === 'pan') {
       this.drag = {
         kind: 'pan',
@@ -4738,8 +5518,11 @@ export class App {
       if (annotation) void this.refreshAnnotationStatistics(annotation);
     }
     this.drag = null;
-    if (this.overlayCanvas.hasPointerCapture(event.pointerId)) {
-      this.overlayCanvas.releasePointerCapture(event.pointerId);
+    const canvas = event.currentTarget instanceof HTMLCanvasElement
+      ? event.currentTarget
+      : this.overlayCanvas;
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
     }
     this.render();
     this.updateUi();
@@ -5413,7 +6196,6 @@ export class App {
 
   private resizeViewport(): void {
     const rect = this.viewport.getBoundingClientRect();
-    this.renderer.resize(rect.width, rect.height);
     if (this.viewerMode === 'vr') {
       this.volumeRenderer?.resize(rect.width, rect.height);
     } else if (this.viewerMode === 'mpr') {
@@ -5422,25 +6204,38 @@ export class App {
         const paneRect = pane.getBoundingClientRect();
         this.mprRenderers[plane].resize(paneRect.width, paneRect.height);
       }
+    } else {
+      for (const pane of this.panes) {
+        const paneRect = pane.element.getBoundingClientRect();
+        pane.renderer.resize(paneRect.width, paneRect.height);
+      }
     }
     this.render();
   }
 
   private render(): void {
-    if (!this.state) return;
     if (this.viewerMode === 'vr') return;
     if (this.viewerMode === 'mpr' && this.mpr) {
       for (const plane of MPR_PLANES) this.renderMprPlane(plane);
       return;
     }
-    this.renderer.render(
-      this.state,
-      this.currentMeasurements(),
-      this.draft,
-      this.selectedMeasurementId,
-      this.annotationsVisible,
-      this.currentMaskLayers(),
-    );
+    for (const pane of this.panes) {
+      const state = pane.state;
+      if (!state) {
+        pane.renderer.clear();
+        continue;
+      }
+      const frame = state.metadata.frames[state.currentFrame];
+      const annotations = pane.measurements.get(frame?.frame_key ?? '') ?? [];
+      pane.renderer.render(
+        state,
+        annotations,
+        pane.draft,
+        pane.selectedMeasurementId,
+        pane.annotationsVisible,
+        pane === this.activePane ? this.currentMaskLayers() : [],
+      );
+    }
   }
 
   private renderMprPlane(plane: MprPlane): void {
@@ -5735,8 +6530,32 @@ export class App {
     }
   }
 
+  private clearDetailsPanel(): void {
+    for (const id of [
+      'patient-name-detail',
+      'patient-id-detail',
+      'study-date',
+      'accession-number',
+      'modality',
+      'study-description',
+      'series-description',
+      'dimensions',
+      'instance-number',
+      'pixel-format',
+      'projection-orientation',
+      'quantitative-status',
+    ]) {
+      setText(id, '--');
+    }
+    setText('spacing-description', '未加载影像');
+    setText('annotation-count', '0 项标注');
+    requiredElement<HTMLElement>('spacing-badge').dataset.confidence = 'none';
+    requiredElement<HTMLElement>('spacing-badge').textContent = '仅像素';
+  }
+
   private updateUi(): void {
     const hasSeries = this.state != null;
+    const workspaceHasSeries = this.panes.some((pane) => pane.state != null);
     const frameCount = this.state?.metadata.frames.length ?? 0;
     const appShell = requiredElement<HTMLElement>('app-shell');
     appShell.classList.toggle(
@@ -5745,11 +6564,12 @@ export class App {
     );
     appShell.classList.toggle('mpr-mode', this.viewerMode === 'mpr');
     appShell.classList.toggle('vr-mode', this.viewerMode === 'vr');
+    appShell.classList.toggle('multi-pane', this.multiPane);
     this.viewport.classList.toggle('mpr-active', this.viewerMode === 'mpr');
     this.viewport.classList.toggle('vr-active', this.viewerMode === 'vr');
     requiredElement<HTMLElement>('mpr-grid').hidden = this.viewerMode !== 'mpr';
     requiredElement<HTMLElement>('vr-view').hidden = this.viewerMode !== 'vr';
-    requiredElement<HTMLElement>('empty-state').hidden = hasSeries;
+    requiredElement<HTMLElement>('empty-state').hidden = workspaceHasSeries;
     requiredElement<HTMLElement>('details-panel').setAttribute('aria-disabled', String(!hasSeries));
     for (const overlay of document.querySelectorAll<HTMLElement>('[data-series-overlay]')) {
       overlay.hidden = !hasSeries;
@@ -5803,7 +6623,7 @@ export class App {
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
       if (button.dataset.viewMode === 'mpr') {
-        button.disabled = !hasSeries || this.busy || !this.canAttemptMpr();
+        button.disabled = !hasSeries || this.busy || this.multiPane || !this.canAttemptMpr();
       } else if (button.dataset.viewMode === 'vr') {
         const metadata = this.mpr?.metadata.volume_rendering ?? {
           dimensions: [1, 1, 1] as [number, number, number],
@@ -5816,8 +6636,10 @@ export class App {
         const reason = this.canAttemptMpr()
           ? volumeCapabilityReason(this.volumeCanvas, metadata)
           : '当前图像组不是规则薄层灰度体数据';
-        button.disabled = !hasSeries || this.busy || reason != null;
-        button.title = reason ? `GPU 体渲染不可用：${reason}` : 'GPU 体渲染';
+        button.disabled = !hasSeries || this.busy || this.multiPane || reason != null;
+        button.title = this.multiPane
+          ? '多窗格对比模式下暂不可用'
+          : reason ? `GPU 体渲染不可用：${reason}` : 'GPU 体渲染';
       }
     }
     for (const control of document.querySelectorAll<HTMLElement>('[data-mpr-tool]')) {
@@ -5854,14 +6676,25 @@ export class App {
     const maskPanel = requiredElement<HTMLElement>('mask-menu-panel');
     if (!hasSeries) maskPanel.hidden = true;
     maskButton.classList.toggle('active', maskMode);
-    maskButton.disabled = !hasSeries || this.viewerMode === 'vr';
+    maskButton.disabled = !hasSeries || this.viewerMode === 'vr' || this.multiPane;
+    if (this.multiPane) maskPanel.hidden = true;
+    maskButton.title = this.multiPane ? '多窗格对比模式下暂不可用' : 'Mask 标注';
     maskButton.setAttribute('aria-expanded', String(!maskPanel.hidden));
     requiredElement<HTMLButtonElement>('revision-history-btn').hidden = !(
       hasSeries && this.remoteSeriesOpen && this.canViewDicomRevisions()
     );
+    this.applyPaneLayout();
+    this.updatePaneLabels();
     this.updateToolbarMenuStates();
     this.updateMprLayout();
-    if (!this.state) return;
+    if (!this.state) {
+      requiredElement<HTMLElement>('mpr-source-control').hidden = true;
+      setText('window-readout', 'WL -- WW --');
+      setText('zoom-readout', '100%');
+      setText('frame-counter', '0 / 0');
+      this.clearDetailsPanel();
+      return;
+    }
 
     const frame = this.currentFrame();
     const total = frameCount;
@@ -6051,6 +6884,10 @@ export class App {
 
   private updateMprSourceOptions(): void {
     const control = requiredElement<HTMLElement>('mpr-source-control');
+    if (this.multiPane) {
+      control.hidden = true;
+      return;
+    }
     const studyUid = this.state?.metadata.study_uid;
     const entries = studyUid ? this.series.get(studyUid) : undefined;
     if (!this.state || !entries || entries.length <= 1) {
@@ -6167,7 +7004,10 @@ export class App {
   }
 
   private eventPoint(event: MouseEvent | PointerEvent | WheelEvent): Point {
-    const rect = this.overlayCanvas.getBoundingClientRect();
+    const canvas = event.currentTarget instanceof HTMLCanvasElement
+      ? event.currentTarget
+      : this.overlayCanvas;
+    const rect = canvas.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 

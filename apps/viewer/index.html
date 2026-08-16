@@ -377,8 +377,41 @@
         </aside>
 
         <div id="viewport">
-          <canvas id="image-canvas"></canvas>
-          <canvas id="overlay-canvas"></canvas>
+          <div id="series-grid" class="series-grid" aria-label="序列阅片窗格">
+            <section id="series-pane-0" class="series-pane active" data-pane-index="0" aria-label="阅片窗格 1">
+              <canvas id="image-canvas"></canvas>
+              <canvas id="overlay-canvas"></canvas>
+              <div class="pane-info pane-info-top-left">
+                <strong class="pane-title">未加载</strong>
+                <span class="pane-meta">--</span>
+              </div>
+              <div class="pane-info pane-info-top-right">
+                <span class="pane-frame">0 / 0</span>
+              </div>
+              <button class="pane-close" type="button" title="关闭此窗格" aria-label="关闭此窗格" hidden>
+                <i data-lucide="x"></i>
+              </button>
+              <div class="pane-drop-hint" hidden>
+                <i data-lucide="layers-3"></i>
+                <span>拖入序列</span>
+              </div>
+            </section>
+          </div>
+          <div class="viewport-overlay top-left" data-series-overlay aria-live="polite" hidden>
+            <strong id="patient-name">未加载</strong>
+            <span id="patient-id">--</span>
+          </div>
+          <div class="viewport-overlay top-right" data-series-overlay hidden>
+            <span id="modality-overlay"></span>
+            <label id="image-stack-control" title="图像组" hidden>
+              <i data-lucide="layers-3"></i>
+              <select id="image-stack-select" data-requires-series aria-label="图像组"></select>
+            </label>
+          </div>
+          <div id="series-drop-hint" class="series-drop-hint" hidden>
+            <i data-lucide="layout-grid"></i>
+            <span>释放以添加序列并自动分屏</span>
+          </div>
           <div id="mpr-grid" hidden>
             <div class="mpr-viewport mpr-main" data-plane="axial" tabindex="0">
               <canvas id="axial-image-canvas"></canvas>
@@ -423,17 +456,6 @@
             <span class="spinner"></span>
             <span id="loading-text"></span>
             <button id="cancel-download" class="loading-cancel" type="button" hidden>取消</button>
-          </div>
-          <div class="viewport-overlay top-left" data-series-overlay aria-live="polite" hidden>
-            <strong id="patient-name">未加载</strong>
-            <span id="patient-id">--</span>
-          </div>
-          <div class="viewport-overlay top-right" data-series-overlay hidden>
-            <span id="modality-overlay"></span>
-            <label id="image-stack-control" title="图像组" hidden>
-              <i data-lucide="layers-3"></i>
-              <select id="image-stack-select" data-requires-series aria-label="图像组"></select>
-            </label>
           </div>
         </div>
 
