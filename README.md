@@ -109,8 +109,10 @@ AETHERIS implements the core DIMSE services required for PACS interoperability:
 | C-ECHO SCP  | ✅     |
 | C-STORE SCP | ✅     |
 | C-FIND SCP  | ✅     |
-| C-MOVE SCP  | ✅     |
-| C-GET SCP   | ✅     |
+| C-MOVE SCP  | 🚧     |
+| C-GET SCP   | 🚧     |
+
+> C-MOVE / C-GET SCP are on the roadmap but **not yet implemented**; incoming requests for them are currently rejected (association aborted). Retrieval today goes through WADO-RS or C-STORE.
 
 The DIMSE layer is implemented in the Rust workspace rather than relying entirely on a third-party PACS server.
 
@@ -254,6 +256,8 @@ Medical images are not required to leave the host for inference.
 On Apple Silicon, the local pipeline can automatically use **MPS** where available.
 
 The AI subsystem is deliberately designed as a worker boundary rather than embedding a specific model directly into the PACS core. This allows future models and inference engines to be introduced without redesigning the storage or networking layers.
+
+License note: the bundled `lungmask` plugin inherits the upstream **GPL-3.0** license, and `thorax-vessels` uses Apache-2.0 code with research-only weights. See `apps/viewer/ai-plugins/README.md`.
 
 ---
 

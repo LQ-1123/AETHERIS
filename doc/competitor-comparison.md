@@ -15,7 +15,7 @@
 
 ### 平台/后端
 
-- DIMSE：C-ECHO / C-STORE / C-FIND / C-MOVE / C-GET SCP
+- DIMSE：C-ECHO / C-STORE / C-FIND SCP（C-MOVE/C-GET 尚未实现，规划中）
 - DICOMweb：QIDO-RS / WADO-RS / STOW-RS（Part10）
 - PostgreSQL 元数据索引、持久可靠存储
 - RBAC、JWT、审计日志、TAG 修订/回滚

@@ -106,8 +106,10 @@ AETHERIS 实现了 PACS 互操作所需的核心 DIMSE 服务：
 | C-ECHO SCP  | ✅   |
 | C-STORE SCP | ✅   |
 | C-FIND SCP  | ✅   |
-| C-MOVE SCP  | ✅   |
-| C-GET SCP   | ✅   |
+| C-MOVE SCP  | 🚧   |
+| C-GET SCP   | 🚧   |
+
+> C-MOVE / C-GET SCP 尚在路线图中、**代码尚未实现**（当前收到请求即中止 association）；取回暂走 WADO-RS / C-STORE。
 
 DIMSE 层在 Rust workspace 内实现，而非完全依赖第三方 PACS 服务器——协议层显式、可测、可扩展。
 
@@ -234,6 +236,8 @@ AETHERIS 提供面向医学图像处理的本地 AI Worker 架构，当前支持
 Worker 完全本地运行，医学图像不离开宿主机即可完成推理。Apple Silicon 上可自动使用 **MPS**。
 
 AI 子系统刻意设计为 Worker 边界而非把具体模型塞进 PACS 核心——未来引入新模型和推理引擎无需重构存储与网络层。
+
+许可提示：内置 `lungmask` 插件承袭上游 **GPL-3.0** 协议，`thorax-vessels` 代码为 Apache-2.0、权重为研究用途。详见 `apps/viewer/ai-plugins/README.md`。
 
 ---
 
