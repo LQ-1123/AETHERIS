@@ -3,8 +3,9 @@
 use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
-    ClinicalWorkItem, DiagnosticReport, DownloadProgress, PatientSummary, RemoteState, RemoteUser,
-    ReportTemplate, ReportVersion, SeriesSummary, StudySummary, UserWindowPreset,
+    AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress, PatientSummary,
+    RemoteState, RemoteUser, ReportTemplate, ReportVersion, SeriesSourceEntry, SeriesSummary,
+    StudySummary, UserWindowPreset,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
@@ -521,6 +522,112 @@ pub async fn release_work_item(
 ) -> Result<(), String> {
     state
         .release_work_item(&work_id, revision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn register_device(
+    name: String,
+    callingAeTitle: String,
+    sourceIp: String,
+    modalityHint: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<DicomDevice, String> {
+    state
+        .register_device(&name, &callingAeTitle, &sourceIp, modalityHint.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_devices(
+    status: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<DicomDevice>, String> {
+    state
+        .list_devices(status.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn approve_device(
+    deviceId: String,
+    name: String,
+    modalityHint: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<DicomDevice, String> {
+    state
+        .approve_device(&deviceId, &name, modalityHint.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn set_device_status(
+    deviceId: String,
+    status: String,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .set_device_status(&deviceId, &status)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_series_sources(
+    unattributed: bool,
+    limit: u32,
+    offset: u32,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<SeriesSourceEntry>, String> {
+    state
+        .list_series_sources(unattributed, limit, offset)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn resolve_series_source(
+    seriesUid: String,
+    deviceId: String,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .resolve_series_source(&seriesUid, &deviceId)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_users(state: State<'_, RemoteState>) -> Result<Vec<AdminUser>, String> {
+    state
+        .list_users()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_user_device_grants(
+    userId: i64,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<String>, String> {
+    state
+        .list_user_device_grants(userId)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn replace_user_device_grants(
+    userId: i64,
+    deviceIds: Vec<String>,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<String>, String> {
+    state
+        .replace_user_device_grants(userId, deviceIds)
         .await
         .map_err(|error| error.to_string())
 }

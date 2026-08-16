@@ -762,6 +762,160 @@ button svg {
   min-width: 180px;
 }
 
+/* ---- 管理控制台 ---- */
+
+.admin-console-tabs {
+  margin-bottom: 12px;
+}
+
+.admin-console-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 200px;
+}
+
+.admin-device-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid #33505c;
+  border-radius: 8px;
+}
+
+.admin-device-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #9fc3cd;
+}
+
+.admin-device-form .command-button {
+  align-self: end;
+  justify-self: start;
+}
+
+.admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #2c4550;
+  border-radius: 8px;
+  background: #0f1a20;
+}
+
+.admin-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.admin-row-info strong {
+  font-size: 13px;
+  color: #e3eef1;
+}
+
+.admin-row-info span {
+  font-size: 11px;
+  color: #8fb3bd;
+}
+
+.admin-status {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: #22333c;
+  color: #c6d4d9;
+}
+
+.admin-status[data-status="active"] {
+  background: #17382b;
+  color: #7fe3a8;
+}
+
+.admin-status[data-status="pending"] {
+  background: #3a2f14;
+  color: #ffd98a;
+}
+
+.admin-status[data-status="disabled"] {
+  background: #331f24;
+  color: #ff9c9c;
+}
+
+.admin-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-row-actions select {
+  max-width: 180px;
+}
+
+.admin-bulk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid #3a4a50;
+  border-radius: 8px;
+  background: #14222a;
+  font-size: 12px;
+}
+
+.admin-bulk select {
+  flex: 1;
+}
+
+.admin-pager {
+  display: flex;
+  gap: 10px;
+}
+
+.admin-grant-row {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.admin-grant-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  width: 100%;
+  padding-top: 6px;
+  border-top: 1px dashed #2c4550;
+}
+
+.admin-grant-box label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #c6d4d9;
+}
+
+.admin-grant-box .command-button {
+  margin-left: auto;
+}
+
+.admin-empty {
+  font-size: 12px;
+  color: #8fb3bd;
+}
+
 .view-mode-control button {
   width: 40px;
   color: #b9c0c3;

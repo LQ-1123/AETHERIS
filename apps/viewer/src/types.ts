@@ -865,3 +865,35 @@ export interface ClinicalWorkItem {
   series_description: string | null;
   study_date: string | null;
 }
+
+// ---- 管理员控制台（A1）----
+
+export interface DicomDevice {
+  id: string;
+  name: string;
+  calling_ae_title: string;
+  source_ip: string;
+  modality_hint: string | null;
+  status: 'pending' | 'active' | 'disabled';
+  approved_at: string | null;
+}
+
+export interface SeriesSourceEntry {
+  series_uid: string;
+  study_uid: string;
+  patient_id: string;
+  patient_name: string | null;
+  modality: string | null;
+  description: string | null;
+  instance_count: number;
+  source_status: string;
+  device_name: string | null;
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  display_name: string | null;
+  role: string;
+  is_active: boolean;
+}

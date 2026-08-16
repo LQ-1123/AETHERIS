@@ -1,10 +1,12 @@
 import type {
+  AdminUser,
   AiModelDescriptor,
   AiPluginConfiguration,
   AiSegmentationResult,
   AiCatalog,
   ClinicalWorkItem,
   DiagnosticReport,
+  DicomDevice,
   DicomRevision,
   ImportTransferResponse,
   PatientSummary,
@@ -37,6 +39,7 @@ import type {
   RouteRuleInput,
   PurgeRequest,
   SeriesMetadata,
+  SeriesSourceEntry,
   SharedAnnotationRecord,
   StructuredPayload,
   StudySummary,
@@ -363,6 +366,72 @@ export async function claimWorkItem(workId: string, revision: number): Promise<v
 export async function releaseWorkItem(workId: string, revision: number): Promise<void> {
   const invoke = await getInvoke();
   await invoke('release_work_item', { workId, revision });
+}
+
+export async function registerDevice(
+  name: string,
+  callingAeTitle: string,
+  sourceIp: string,
+  modalityHint: string | null,
+): Promise<DicomDevice> {
+  const invoke = await getInvoke();
+  return invoke<DicomDevice>('register_device', {
+    name,
+    callingAeTitle,
+    sourceIp,
+    modalityHint,
+  });
+}
+
+export async function listDevices(status?: string): Promise<DicomDevice[]> {
+  const invoke = await getInvoke();
+  return invoke<DicomDevice[]>('list_devices', { status: status ?? null });
+}
+
+export async function approveDevice(
+  deviceId: string,
+  name: string,
+  modalityHint: string | null,
+): Promise<DicomDevice> {
+  const invoke = await getInvoke();
+  return invoke<DicomDevice>('approve_device', { deviceId, name, modalityHint });
+}
+
+export async function setDeviceStatus(deviceId: string, status: string): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('set_device_status', { deviceId, status });
+}
+
+export async function listSeriesSources(
+  unattributed: boolean,
+  limit: number,
+  offset: number,
+): Promise<SeriesSourceEntry[]> {
+  const invoke = await getInvoke();
+  return invoke<SeriesSourceEntry[]>('list_series_sources', { unattributed, limit, offset });
+}
+
+export async function resolveSeriesSource(seriesUid: string, deviceId: string): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('resolve_series_source', { seriesUid, deviceId });
+}
+
+export async function listUsers(): Promise<AdminUser[]> {
+  const invoke = await getInvoke();
+  return invoke<AdminUser[]>('list_users');
+}
+
+export async function listUserDeviceGrants(userId: number): Promise<string[]> {
+  const invoke = await getInvoke();
+  return invoke<string[]>('list_user_device_grants', { userId });
+}
+
+export async function replaceUserDeviceGrants(
+  userId: number,
+  deviceIds: string[],
+): Promise<string[]> {
+  const invoke = await getInvoke();
+  return invoke<string[]>('replace_user_device_grants', { userId, deviceIds });
 }
 
 export async function createWindowPreset(

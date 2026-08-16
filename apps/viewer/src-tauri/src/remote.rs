@@ -106,6 +106,39 @@ pub struct ClinicalWorkItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DicomDevice {
+    pub id: String,
+    pub name: String,
+    pub calling_ae_title: String,
+    pub source_ip: String,
+    pub modality_hint: Option<String>,
+    pub status: String,
+    pub approved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeriesSourceEntry {
+    pub series_uid: String,
+    pub study_uid: String,
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub modality: Option<String>,
+    pub description: Option<String>,
+    pub instance_count: i64,
+    pub source_status: String,
+    pub device_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminUser {
+    pub id: i64,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatientSummary {
     pub id: i64,
     pub patient_id: String,
@@ -458,6 +491,131 @@ impl RemoteState {
         )
         .await?;
         Ok(())
+    }
+
+    pub async fn register_device(
+        &self,
+        name: &str,
+        calling_ae_title: &str,
+        source_ip: &str,
+        modality_hint: Option<&str>,
+    ) -> Result<DicomDevice, RemoteError> {
+        let url = self.session_url("api/v1/devices").await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "name": name,
+                "calling_ae_title": calling_ae_title,
+                "source_ip": source_ip,
+                "modality_hint": modality_hint,
+            })),
+        )
+        .await
+    }
+
+    pub async fn list_devices(&self, status: Option<&str>) -> Result<Vec<DicomDevice>, RemoteError> {
+        let mut url = self.session_url("api/v1/devices").await?;
+        if let Some(status) = status {
+            url.query_pairs_mut().append_pair("status", status);
+        }
+        self.get_json(url).await
+    }
+
+    pub async fn approve_device(
+        &self,
+        device_id: &str,
+        name: &str,
+        modality_hint: Option<&str>,
+    ) -> Result<DicomDevice, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/devices/{device_id}/approve"))
+            .await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "name": name,
+                "modality_hint": modality_hint,
+            })),
+        )
+        .await
+    }
+
+    pub async fn set_device_status(
+        &self,
+        device_id: &str,
+        status: &str,
+    ) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/devices/{device_id}"))
+            .await?;
+        self.authorized_request(
+            Method::PATCH,
+            url,
+            Some(serde_json::json!({ "status": status })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_series_sources(
+        &self,
+        unattributed: bool,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<SeriesSourceEntry>, RemoteError> {
+        let mut url = self.session_url("api/v1/series-sources").await?;
+        url.query_pairs_mut()
+            .append_pair("unattributed", &unattributed.to_string())
+            .append_pair("limit", &limit.to_string())
+            .append_pair("offset", &offset.to_string());
+        self.get_json(url).await
+    }
+
+    pub async fn resolve_series_source(
+        &self,
+        series_uid: &str,
+        device_id: &str,
+    ) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/series/{series_uid}/resolve-source"))
+            .await?;
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "device_id": device_id })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_users(&self) -> Result<Vec<AdminUser>, RemoteError> {
+        let url = self.session_url("api/v1/users").await?;
+        self.get_json(url).await
+    }
+
+    pub async fn list_user_device_grants(&self, user_id: i64) -> Result<Vec<String>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/users/{user_id}/device-grants"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn replace_user_device_grants(
+        &self,
+        user_id: i64,
+        device_ids: Vec<String>,
+    ) -> Result<Vec<String>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/users/{user_id}/device-grants"))
+            .await?;
+        self.authorized_json(
+            Method::PUT,
+            url,
+            Some(serde_json::json!({ "device_ids": device_ids })),
+        )
+        .await
     }
 
     pub async fn list_patients(

@@ -244,6 +244,9 @@
         <button id="lifecycle-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM 生命周期" hidden>
           <i data-lucide="archive-restore"></i><span>生命周期管理</span>
         </button>
+        <button id="admin-console-btn" class="toolbar-menu-item" type="button" role="menuitem" title="管理控制台：设备、来源归属与用户授权" hidden>
+          <i data-lucide="shield-check"></i><span>管理控制台</span>
+        </button>
         <button id="ai-plugins-manage-btn" class="toolbar-menu-item" type="button" role="menuitem" title="增加本地 AI 插件">
           <i data-lucide="package-plus"></i><span>增加 AI 插件</span>
         </button>
@@ -797,6 +800,26 @@
         <button id="report-release-btn" class="command-button" type="button" hidden>释放任务</button>
       </section>
       <section id="report-body" class="report-body"></section>
+    </dialog>
+
+    <dialog id="admin-console-dialog" class="operational-dialog admin-console-dialog" aria-labelledby="admin-console-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="admin-console-title">管理控制台</h2>
+          <span id="admin-console-subtitle">设备批准 · 来源归属 · 用户授权</span>
+        </div>
+        <div class="dialog-heading-actions">
+          <button id="admin-console-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
+          <button id="admin-console-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+      </header>
+      <p id="admin-console-error" class="dialog-error" role="alert" hidden></p>
+      <nav class="segmented admin-console-tabs" aria-label="管理视图">
+        <button class="active" data-admin-tab="devices" type="button">设备</button>
+        <button data-admin-tab="sources" type="button">来源归属</button>
+        <button data-admin-tab="grants" type="button">用户授权</button>
+      </nav>
+      <section id="admin-console-body" class="admin-console-body"></section>
     </dialog>
 
     <script type="module" src="/src/main.ts"></script>

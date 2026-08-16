@@ -102,6 +102,7 @@ import { imageGeometry, Renderer, type CrossReferenceLine } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
 import { ReportPanel, type ReportContext } from './report-panel';
+import { AdminConsole } from './admin-console';
 import { volumeCapabilityReason } from './volume-capability';
 import { MAX_SERIES_PANES, seriesGridLayout } from './viewport-layout';
 import { crossReferenceSegment } from './series-sync';
@@ -482,6 +483,7 @@ export class App {
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
   private reportPanel: ReportPanel;
+  private adminConsole: AdminConsole;
   private lifecyclePanel: LifecyclePanel;
   private shareStudyUid: string | null = null;
   private syncScrollEnabled = true;
@@ -626,6 +628,7 @@ export class App {
       () => this.reportContext(),
       () => ({ id: this.remoteUser?.id ?? null, role: this.remoteUser?.role ?? null }),
     );
+    this.adminConsole = new AdminConsole((message) => this.showError(message));
     this.lifecyclePanel = new LifecyclePanel((message) => this.showError(message));
     this.initializePanes();
     this.mprRenderers = {
@@ -6734,6 +6737,8 @@ export class App {
     this.refreshSyncBadges();
     const hasSeries = this.state != null;
     if (!hasSeries) this.reportPanel.close();
+    requiredElement<HTMLButtonElement>('admin-console-btn').hidden = this.remoteUser?.role !== 'admin';
+    if (this.remoteUser?.role !== 'admin') this.adminConsole.close();
     const workspaceHasSeries = this.panes.some((pane) => pane.state != null);
     const frameCount = this.state?.metadata.frames.length ?? 0;
     const appShell = requiredElement<HTMLElement>('app-shell');
