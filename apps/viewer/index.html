@@ -138,6 +138,9 @@
         <button id="sync-window-button" class="icon-button active" data-requires-series type="button" aria-pressed="true" title="窗位联动：多窗格同步窗宽窗位" aria-label="窗位联动">
           <i data-lucide="sun"></i>
         </button>
+        <button id="report-panel-btn" class="icon-button" data-requires-series type="button" title="诊断报告：结构化撰写、签发与修订" aria-label="诊断报告">
+          <i data-lucide="file-text"></i>
+        </button>
         <div class="preset-control">
           <label for="preset-select">窗预设</label>
           <select id="preset-select" data-requires-series aria-label="窗预设"></select>
@@ -775,6 +778,27 @@
         </footer>
       </form>
     </dialog>
+
+    <dialog id="report-dialog" class="operational-dialog report-dialog" aria-labelledby="report-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="report-title">诊断报告</h2>
+          <span id="report-subtitle"></span>
+        </div>
+        <div class="dialog-heading-actions">
+          <button id="report-refresh" class="icon-button" type="button" title="刷新报告与任务状态" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
+          <button id="report-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+      </header>
+      <p id="report-error" class="dialog-error" role="alert" hidden></p>
+      <section id="report-workitem-row" class="report-workitem-row" hidden>
+        <span id="report-workitem-text"></span>
+        <button id="report-claim-btn" class="command-button" type="button" hidden>领取任务</button>
+        <button id="report-release-btn" class="command-button" type="button" hidden>释放任务</button>
+      </section>
+      <section id="report-body" class="report-body"></section>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

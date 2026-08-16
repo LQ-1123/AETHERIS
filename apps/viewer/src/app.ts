@@ -101,6 +101,7 @@ import {
 import { imageGeometry, Renderer, type CrossReferenceLine } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
+import { ReportPanel, type ReportContext } from './report-panel';
 import { volumeCapabilityReason } from './volume-capability';
 import { MAX_SERIES_PANES, seriesGridLayout } from './viewport-layout';
 import { crossReferenceSegment } from './series-sync';
@@ -480,6 +481,7 @@ export class App {
   private selectedRollbackRevision: DicomRevision | null = null;
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
+  private reportPanel: ReportPanel;
   private lifecyclePanel: LifecyclePanel;
   private shareStudyUid: string | null = null;
   private syncScrollEnabled = true;
@@ -619,6 +621,11 @@ export class App {
 
   constructor() {
     this.routerPanel = new RouterPanel((message) => this.showError(message));
+    this.reportPanel = new ReportPanel(
+      (message) => this.showError(message),
+      () => this.reportContext(),
+      () => ({ id: this.remoteUser?.id ?? null, role: this.remoteUser?.role ?? null }),
+    );
     this.lifecyclePanel = new LifecyclePanel((message) => this.showError(message));
     this.initializePanes();
     this.mprRenderers = {
@@ -792,8 +799,21 @@ export class App {
     pane.element.addEventListener('drop', (event) => void this.paneDrop(pane, event));
   }
 
-  private bindSyncControls(): void {
-    const scrollButton = requiredElement<HTMLButtonElement>('sync-scroll-button');
+  /** 当前活动窗格的检查上下文（报告面板与工作项领取用）。 */
+  private reportContext(): ReportContext | null {
+    const state = this.state;
+    if (!state) return null;
+    const patient = state.metadata.patient;
+    return {
+      studyUid: state.metadata.study_uid ?? '',
+      seriesUid: state.metadata.series_uid ?? '',
+      modality: patient.modality,
+      patientName: formatPersonName(patient.patient_name) || patient.patient_id || '未提供',
+      seriesDescription: patient.series_description,
+    };
+  }
+
+  private bindSyncControls(): void {    const scrollButton = requiredElement<HTMLButtonElement>('sync-scroll-button');
     const windowButton = requiredElement<HTMLButtonElement>('sync-window-button');
     scrollButton.addEventListener('click', () => {
       this.syncScrollEnabled = !this.syncScrollEnabled;
@@ -6713,6 +6733,7 @@ export class App {
   private updateUi(): void {
     this.refreshSyncBadges();
     const hasSeries = this.state != null;
+    if (!hasSeries) this.reportPanel.close();
     const workspaceHasSeries = this.panes.some((pane) => pane.state != null);
     const frameCount = this.state?.metadata.frames.length ?? 0;
     const appShell = requiredElement<HTMLElement>('app-shell');

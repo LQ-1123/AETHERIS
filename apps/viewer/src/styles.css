@@ -599,6 +599,169 @@ button svg {
   display: none;
 }
 
+/* ---- 诊断报告面板 ---- */
+
+.report-workitem-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid #3a4a50;
+  border-radius: 8px;
+  background: #14222a;
+  font-size: 12px;
+}
+
+.report-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 160px;
+}
+
+.report-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.report-template-select {
+  width: 100%;
+}
+
+.report-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.report-form fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid #33505c;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.report-form legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9fd8e2;
+}
+
+.report-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #c6d4d9;
+}
+
+.report-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.report-form input[type="number"] {
+  width: 140px;
+}
+
+.report-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.report-choice-label {
+  font-size: 12px;
+  color: #c6d4d9;
+}
+
+.report-choice > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.report-choice > div label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.report-choice textarea {
+  min-height: 48px;
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.report-amending-banner {
+  padding: 8px 12px;
+  border: 1px solid #8a6d3b;
+  border-radius: 8px;
+  background: #2c2413;
+  color: #ffd98a;
+  font-size: 12px;
+}
+
+.report-text {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #2c4550;
+  border-radius: 8px;
+  background: #0d1418;
+  color: #dbe7eb;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.report-versions-heading {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #9fd8e2;
+}
+
+.report-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.report-versions details {
+  border: 1px solid #2c4550;
+  border-radius: 8px;
+  background: #0f1a20;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.report-versions summary {
+  cursor: pointer;
+  color: #c6d4d9;
+}
+
+.report-amend-reason {
+  flex: 1;
+  min-width: 180px;
+}
+
 .view-mode-control button {
   width: 40px;
   color: #b9c0c3;

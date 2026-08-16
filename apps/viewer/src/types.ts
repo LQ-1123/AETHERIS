@@ -761,3 +761,107 @@ export interface DicomRevision {
   created_at: string;
   is_current: boolean;
 }
+
+// ---- 结构化报告（B2）----
+
+export type ReportSectionId = 'findings' | 'impression' | 'recommendation';
+
+export interface TemplateChoiceOption {
+  id: string;
+  label: string;
+  /** 选中后展开一个描述文本域。 */
+  expands?: boolean;
+}
+
+export interface TemplateField {
+  id: string;
+  kind: 'text' | 'choice' | 'number';
+  label: string;
+  required?: boolean;
+  unit?: string;
+  min?: number;
+  max?: number;
+  options?: TemplateChoiceOption[];
+}
+
+export interface TemplateSection {
+  /** 固定枚举（I5），同时决定该章节渲染进哪一列。 */
+  id: ReportSectionId;
+  title: string;
+  fields: TemplateField[];
+}
+
+export interface ReportTemplateStructure {
+  schema_version: 1;
+  sections: TemplateSection[];
+}
+
+export interface ReportTemplate {
+  id: string;
+  name: string;
+  modality: string;
+  body_part: string | null;
+  version: number;
+  structure: ReportTemplateStructure;
+  builtin: boolean;
+}
+
+/** 自包含快照（I1）：渲染/编辑报告只依赖它，不查模板表。 */
+export interface StructuredPayload {
+  template_id: string;
+  template_version: number;
+  structure: ReportTemplateStructure;
+  values: Record<string, unknown>;
+}
+
+export interface ChoiceValue {
+  choice: string;
+  description?: string;
+}
+
+export interface NumberValue {
+  value: number;
+}
+
+export interface DiagnosticReport {
+  id: string;
+  study_uid: string;
+  author_id: number;
+  status: 'draft' | 'signed' | 'amending';
+  findings: string;
+  impression: string;
+  recommendation: string | null;
+  revision: number;
+  access_incomplete: boolean;
+  template_payload: StructuredPayload | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReportVersion {
+  id: string;
+  report_id: string;
+  version_number: number;
+  findings: string;
+  impression: string;
+  recommendation: string | null;
+  covered_series_uids: string[];
+  access_incomplete: boolean;
+  amendment_reason: string | null;
+  signed_by: number;
+  signed_at: string;
+}
+
+export interface ClinicalWorkItem {
+  id: string;
+  series_uid: string;
+  study_uid: string;
+  status: 'pending' | 'claimed' | 'reporting' | 'completed';
+  assignee_id: number | null;
+  assignee_name: string | null;
+  revision: number;
+  patient_name: string | null;
+  modality: string | null;
+  series_description: string | null;
+  study_date: string | null;
+}

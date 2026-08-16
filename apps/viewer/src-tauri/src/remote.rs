@@ -47,6 +47,65 @@ pub struct UserWindowPreset {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportTemplate {
+    pub id: String,
+    pub name: String,
+    pub modality: String,
+    pub body_part: Option<String>,
+    pub version: i32,
+    pub structure: serde_json::Value,
+    pub builtin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticReport {
+    pub id: String,
+    pub study_uid: String,
+    pub author_id: i64,
+    pub status: String,
+    pub findings: String,
+    pub impression: String,
+    pub recommendation: Option<String>,
+    pub revision: i32,
+    pub access_incomplete: bool,
+    pub template_payload: Option<serde_json::Value>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportVersion {
+    pub id: String,
+    pub report_id: String,
+    pub version_number: i32,
+    pub findings: String,
+    pub impression: String,
+    pub recommendation: Option<String>,
+    pub covered_series_uids: Vec<String>,
+    pub access_incomplete: bool,
+    pub amendment_reason: Option<String>,
+    pub signed_by: i64,
+    pub signed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClinicalWorkItem {
+    pub id: String,
+    pub series_uid: String,
+    pub study_uid: String,
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub modality: Option<String>,
+    pub series_description: Option<String>,
+    pub device_name: String,
+    pub received_date: String,
+    pub status: String,
+    pub assignee_id: Option<i64>,
+    pub assignee_name: Option<String>,
+    pub revision: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatientSummary {
     pub id: i64,
     pub patient_id: String,
@@ -257,6 +316,147 @@ impl RemoteState {
             .session_url(&format!("api/window-presets/{preset_id}"))
             .await?;
         self.authorized_request(Method::DELETE, url, None).await?;
+        Ok(())
+    }
+
+    pub async fn list_report_templates(
+        &self,
+        modality: Option<&str>,
+    ) -> Result<Vec<ReportTemplate>, RemoteError> {
+        let mut url = self.session_url("api/v1/report-templates").await?;
+        if let Some(modality) = modality {
+            url.query_pairs_mut().append_pair("modality", modality);
+        }
+        self.get_json(url).await
+    }
+
+    pub async fn list_reports(
+        &self,
+        study_uid: &str,
+    ) -> Result<Vec<DiagnosticReport>, RemoteError> {
+        let mut url = self.session_url("api/v1/reports").await?;
+        url.query_pairs_mut().append_pair("study_uid", study_uid);
+        self.get_json(url).await
+    }
+
+    pub async fn create_report(
+        &self,
+        study_uid: &str,
+        series_uids: Vec<String>,
+        template_payload: Option<serde_json::Value>,
+    ) -> Result<DiagnosticReport, RemoteError> {
+        let url = self.session_url("api/v1/reports").await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "study_uid": study_uid,
+                "covered_series_uids": series_uids,
+                "template_payload": template_payload,
+            })),
+        )
+        .await
+    }
+
+    pub async fn update_report_draft(
+        &self,
+        report_id: &str,
+        revision: i32,
+        findings: &str,
+        impression: &str,
+        recommendation: Option<&str>,
+        template_payload: Option<serde_json::Value>,
+    ) -> Result<DiagnosticReport, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/draft"))
+            .await?;
+        self.authorized_json(
+            Method::PUT,
+            url,
+            Some(serde_json::json!({
+                "revision": revision,
+                "findings": findings,
+                "impression": impression,
+                "recommendation": recommendation,
+                "template_payload": template_payload,
+            })),
+        )
+        .await
+    }
+
+    pub async fn sign_report(&self, report_id: &str, revision: i32) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/sign"))
+            .await?;
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "revision": revision })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn begin_report_amendment(
+        &self,
+        report_id: &str,
+        reason: &str,
+    ) -> Result<DiagnosticReport, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/amendments"))
+            .await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "reason": reason })),
+        )
+        .await
+    }
+
+    pub async fn list_report_versions(
+        &self,
+        report_id: &str,
+    ) -> Result<Vec<ReportVersion>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/versions"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn list_worklist(
+        &self,
+        status: Option<&str>,
+    ) -> Result<Vec<ClinicalWorkItem>, RemoteError> {
+        let mut url = self.session_url("api/v1/worklist").await?;
+        if let Some(status) = status {
+            url.query_pairs_mut().append_pair("status", status);
+        }
+        self.get_json(url).await
+    }
+
+    pub async fn claim_work_item(&self, work_id: &str, revision: i32) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/worklist/{work_id}/claim"))
+            .await?;
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "revision": revision })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn release_work_item(&self, work_id: &str, revision: i32) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/worklist/{work_id}/release"))
+            .await?;
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "revision": revision })),
+        )
+        .await?;
         Ok(())
     }
 

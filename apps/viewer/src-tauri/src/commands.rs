@@ -3,8 +3,8 @@
 use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
-    DownloadProgress, PatientSummary, RemoteState, RemoteUser, SeriesSummary, StudySummary,
-    UserWindowPreset,
+    ClinicalWorkItem, DiagnosticReport, DownloadProgress, PatientSummary, RemoteState, RemoteUser,
+    ReportTemplate, ReportVersion, SeriesSummary, StudySummary, UserWindowPreset,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
@@ -393,6 +393,134 @@ pub async fn delete_window_preset(
 ) -> Result<(), String> {
     state
         .delete_window_preset(preset_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_report_templates(
+    modality: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ReportTemplate>, String> {
+    state
+        .list_report_templates(modality.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_reports(
+    study_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<DiagnosticReport>, String> {
+    state
+        .list_reports(&study_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn create_report(
+    study_uid: String,
+    series_uids: Vec<String>,
+    template_payload: Option<serde_json::Value>,
+    state: State<'_, RemoteState>,
+) -> Result<DiagnosticReport, String> {
+    state
+        .create_report(&study_uid, series_uids, template_payload)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn update_report_draft(
+    report_id: String,
+    revision: i32,
+    findings: String,
+    impression: String,
+    recommendation: Option<String>,
+    template_payload: Option<serde_json::Value>,
+    state: State<'_, RemoteState>,
+) -> Result<DiagnosticReport, String> {
+    state
+        .update_report_draft(
+            &report_id,
+            revision,
+            &findings,
+            &impression,
+            recommendation.as_deref(),
+            template_payload,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn sign_report(
+    report_id: String,
+    revision: i32,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .sign_report(&report_id, revision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn begin_report_amendment(
+    report_id: String,
+    reason: String,
+    state: State<'_, RemoteState>,
+) -> Result<DiagnosticReport, String> {
+    state
+        .begin_report_amendment(&report_id, &reason)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_report_versions(
+    report_id: String,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ReportVersion>, String> {
+    state
+        .list_report_versions(&report_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_worklist(
+    status: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ClinicalWorkItem>, String> {
+    state
+        .list_worklist(status.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn claim_work_item(
+    work_id: String,
+    revision: i32,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .claim_work_item(&work_id, revision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn release_work_item(
+    work_id: String,
+    revision: i32,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .release_work_item(&work_id, revision)
         .await
         .map_err(|error| error.to_string())
 }

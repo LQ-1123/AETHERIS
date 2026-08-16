@@ -3,12 +3,16 @@ import type {
   AiPluginConfiguration,
   AiSegmentationResult,
   AiCatalog,
+  ClinicalWorkItem,
+  DiagnosticReport,
   DicomRevision,
   ImportTransferResponse,
   PatientSummary,
   MprMetadata,
   MprPlane,
   MprProjectionMode,
+  ReportTemplate,
+  ReportVersion,
   RoiStatistics,
   RemoteSeriesSummary,
   RemoteUser,
@@ -34,6 +38,7 @@ import type {
   PurgeRequest,
   SeriesMetadata,
   SharedAnnotationRecord,
+  StructuredPayload,
   StudySummary,
   TagRuleInput,
   TransformJob,
@@ -283,6 +288,81 @@ export async function remoteLogout(): Promise<void> {
 export async function listWindowPresets(): Promise<UserWindowPreset[]> {
   const invoke = await getInvoke();
   return invoke<UserWindowPreset[]>('list_window_presets');
+}
+
+export async function listReportTemplates(modality?: string): Promise<ReportTemplate[]> {
+  const invoke = await getInvoke();
+  return invoke<ReportTemplate[]>('list_report_templates', { modality: modality ?? null });
+}
+
+export async function listReports(studyUid: string): Promise<DiagnosticReport[]> {
+  const invoke = await getInvoke();
+  return invoke<DiagnosticReport[]>('list_reports', { studyUid });
+}
+
+export async function createReport(
+  studyUid: string,
+  seriesUids: string[],
+  payload: StructuredPayload | null,
+): Promise<DiagnosticReport> {
+  const invoke = await getInvoke();
+  return invoke<DiagnosticReport>('create_report', {
+    studyUid,
+    seriesUids,
+    templatePayload: payload ?? null,
+  });
+}
+
+export async function updateReportDraft(
+  reportId: string,
+  revision: number,
+  findings: string,
+  impression: string,
+  recommendation: string | null,
+  payload: StructuredPayload | null,
+): Promise<DiagnosticReport> {
+  const invoke = await getInvoke();
+  return invoke<DiagnosticReport>('update_report_draft', {
+    reportId,
+    revision,
+    findings,
+    impression,
+    recommendation,
+    templatePayload: payload ?? null,
+  });
+}
+
+export async function signReport(reportId: string, revision: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('sign_report', { reportId, revision });
+}
+
+export async function beginReportAmendment(
+  reportId: string,
+  reason: string,
+): Promise<DiagnosticReport> {
+  const invoke = await getInvoke();
+  return invoke<DiagnosticReport>('begin_report_amendment', { reportId, reason });
+}
+
+export async function listReportVersions(reportId: string): Promise<ReportVersion[]> {
+  const invoke = await getInvoke();
+  return invoke<ReportVersion[]>('list_report_versions', { reportId });
+}
+
+export async function listWorklist(status?: string): Promise<ClinicalWorkItem[]> {
+  const invoke = await getInvoke();
+  return invoke<ClinicalWorkItem[]>('list_worklist', { status: status ?? null });
+}
+
+export async function claimWorkItem(workId: string, revision: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('claim_work_item', { workId, revision });
+}
+
+export async function releaseWorkItem(workId: string, revision: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('release_work_item', { workId, revision });
 }
 
 export async function createWindowPreset(
