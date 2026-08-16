@@ -458,6 +458,39 @@ pub async fn list_clinical_work(
       .fetch_all(pool).await?)
 }
 
+/// 按序列查工作项（供报告面板显示领取状态，不按日期过滤——历史数据也要能领）。
+/// 可见性与工作列表一致：来源可信 + 设备已批准 + 用户有该设备授权（管理员除外）。
+pub async fn work_item_for_series(
+    pool: &PgPool,
+    institution_id: i64,
+    user_id: i64,
+    is_admin: bool,
+    series_uid: &str,
+) -> Result<Option<ClinicalWorkItem>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT w.id,se.series_instance_uid series_uid,st.study_instance_uid study_uid,
+                  p.patient_id,p.name patient_name,se.modality,se.description series_description,
+                  d.id device_id,d.name device_name,(MIN(i.received_at) AT TIME ZONE ins.timezone)::date received_date,
+                  w.status,w.assignee_fk assignee_id,u.display_name assignee_name,w.revision
+           FROM diagnostic_work_items w JOIN series se ON se.id=w.series_fk
+           JOIN studies st ON st.id=se.study_fk JOIN patients p ON p.id=st.patient_fk
+           JOIN institutions ins ON ins.id=w.institution_id
+           JOIN dicom_devices d ON d.id=se.source_device_fk AND d.status='active'
+           JOIN instances i ON i.series_fk=se.id LEFT JOIN users u ON u.id=w.assignee_fk
+           WHERE w.institution_id=$1 AND se.series_instance_uid=$2 AND se.source_status='trusted'
+             AND ($4 OR EXISTS(SELECT 1 FROM user_device_grants g
+                               WHERE g.user_fk=$3 AND g.device_fk=d.id))
+           GROUP BY w.id,se.id,st.id,p.id,d.id,u.id,ins.timezone
+           ORDER BY w.id"#,
+    )
+    .bind(institution_id)
+    .bind(series_uid)
+    .bind(user_id)
+    .bind(is_admin)
+    .fetch_optional(pool)
+    .await?)
+}
+
 pub async fn claim_work_item(
     pool: &PgPool,
     institution_id: i64,

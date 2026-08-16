@@ -467,6 +467,16 @@ impl RemoteState {
         self.get_json(url).await
     }
 
+    pub async fn work_item_for_series(
+        &self,
+        series_uid: &str,
+    ) -> Result<ClinicalWorkItem, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/worklist/series/{series_uid}"))
+            .await?;
+        self.get_json(url).await
+    }
+
     pub async fn claim_work_item(&self, work_id: &str, revision: i32) -> Result<(), RemoteError> {
         let url = self
             .session_url(&format!("api/v1/worklist/{work_id}/claim"))

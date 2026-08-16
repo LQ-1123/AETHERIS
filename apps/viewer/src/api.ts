@@ -358,6 +358,11 @@ export async function listWorklist(status?: string): Promise<ClinicalWorkItem[]>
   return invoke<ClinicalWorkItem[]>('list_worklist', { status: status ?? null });
 }
 
+export async function workItemForSeries(seriesUid: string): Promise<ClinicalWorkItem> {
+  const invoke = await getInvoke();
+  return invoke<ClinicalWorkItem>('work_item_for_series', { seriesUid });
+}
+
 export async function claimWorkItem(workId: string, revision: number): Promise<void> {
   const invoke = await getInvoke();
   await invoke('claim_work_item', { workId, revision });

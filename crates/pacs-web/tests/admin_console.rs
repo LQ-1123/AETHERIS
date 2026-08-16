@@ -248,7 +248,167 @@ async fn work_item_backfill_statement_is_idempotent() {
     assert!(after_once >= before, "回填只增不减");
 }
 
-/// 用户授权 PUT = 全量替换语义，GET 往返一致。
+/// 按序列查工作项：不受「仅当天」日期过滤限制，且遵守设备授权可见性。
+#[tokio::test]
+async fn work_item_for_series_ignores_date_but_respects_grants() {
+    let Some(pool) = pool().await else { return };
+    let secret = b"admin-wi-test-secret-at-least-32-byt";
+    let (admin_token, _admin_id) = admin_token(&pool, secret, "admin-wi").await;
+    let auth = Arc::new(AuthService::new(pool.clone(), secret).unwrap());
+    let app = pacs_web::clinical_routes(pacs_web::WebState::new(pool.clone()), auth);
+    let admin_bearer = format!("Bearer {admin_token}");
+
+    // 医生 + 设备 + 授权 + 历史序列（模拟几天前入库）
+    let suffix = Uuid::new_v4();
+    let ae = format!("WI{}", &suffix.to_string().replace('-', "")[..8]);
+    let doctor_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (institution_id, username, password_hash, role)
+         VALUES (1, $1, 'unused', 'radiologist') RETURNING id",
+    )
+    .bind(format!("wi-doctor-{suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let codec = AccessTokenCodec::new(secret).unwrap();
+    let doctor_token = codec
+        .issue(doctor_id, 1, "wi-doctor", Role::Radiologist, Utc::now())
+        .unwrap();
+    let doctor_bearer = format!("Bearer {doctor_token}");
+
+    let device = app
+        .clone()
+        .oneshot(
+            Request::post("/devices")
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({
+                    "name": "历史设备",
+                    "calling_ae_title": ae,
+                    "source_ip": "10.1.1.9"
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let device = response_json(device).await;
+    let device_id = device["id"].as_str().unwrap().to_owned();
+    let approved = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/devices/{device_id}/approve"))
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"name": "历史设备"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), StatusCode::OK);
+
+    let patient_id: i64 = sqlx::query_scalar(
+        "INSERT INTO patients (institution_id, patient_id) VALUES (1, $1) RETURNING id",
+    )
+    .bind(format!("wi-patient-{suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let study_uid = format!("1.2.826.0.1.3680043.9.7436.{suffix}");
+    let study_id: i64 = sqlx::query_scalar(
+        "INSERT INTO studies (institution_id, patient_fk, study_instance_uid)
+         VALUES (1, $1, $2) RETURNING id",
+    )
+    .bind(patient_id)
+    .bind(&study_uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let numeric = suffix.to_string().chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    let series_uid = format!("1.2.826.0.1.3680043.9.7437.{numeric}");
+    let series_id: i64 = sqlx::query_scalar(
+        "INSERT INTO series (study_fk, series_instance_uid, modality)
+         VALUES ($1, $2, 'CT') RETURNING id",
+    )
+    .bind(study_id)
+    .bind(&series_uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO instances (series_fk, sop_instance_uid, transfer_syntax_uid,
+           storage_path, file_size, file_sha256, logical_instance_id)
+           VALUES ($1, $2, '1.2.840.10008.1.2.1', '/test/legacy.dcm', 1, '\x00',
+                   gen_random_uuid())"#,
+    )
+    .bind(series_id)
+    .bind(format!("1.2.826.0.1.3680043.9.7438.{numeric}"))
+    .execute(&pool)
+    .await
+    .unwrap();
+    // 回填工作项（与 0023 同语句）
+    sqlx::query(
+        r#"INSERT INTO diagnostic_work_items (id, institution_id, series_fk)
+           SELECT gen_random_uuid(), st.institution_id, se.id
+           FROM series se JOIN studies st ON st.id = se.study_fk
+           ON CONFLICT (institution_id, series_fk) DO NOTHING"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // 归属到设备
+    let resolved = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/series/{series_uid}/resolve-source"))
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"device_id": device_id}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.status(), StatusCode::NO_CONTENT);
+
+    // 未授权的医生 → 404（不可见）
+    let denied = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/worklist/series/{series_uid}"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+
+    // 授权后 → 200 且能拿到工作项（不因入库日期过滤）
+    let granted = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/users/{doctor_id}/device-grants"))
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"device_ids": [device_id]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+    let found = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/worklist/series/{series_uid}"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(found.status(), StatusCode::OK);
+    let item = response_json(found).await;
+    assert_eq!(item["series_uid"], series_uid);
+    assert_eq!(item["status"], "pending");
+}
 #[tokio::test]
 async fn user_device_grants_roundtrip() {
     let Some(pool) = pool().await else { return };

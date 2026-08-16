@@ -152,5 +152,5 @@ pub use clinical::{
     list_devices, list_report_templates, list_report_versions, list_reports, list_series_sources,
     observe_device, record_dimse_origin, register_device, release_work_item,
     replace_user_device_grants, resolve_series_source, set_device_status, sign_report,
-    update_report_draft, user_device_grants,
+    update_report_draft, user_device_grants, work_item_for_series,
 };

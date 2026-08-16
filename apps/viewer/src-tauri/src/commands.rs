@@ -503,6 +503,17 @@ pub async fn list_worklist(
 }
 
 #[tauri::command]
+pub async fn work_item_for_series(
+    seriesUid: String,
+    state: State<'_, RemoteState>,
+) -> Result<ClinicalWorkItem, String> {
+    state
+        .work_item_for_series(&seriesUid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn claim_work_item(
     work_id: String,
     revision: i32,

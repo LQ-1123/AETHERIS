@@ -43,6 +43,7 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/worklist", get(worklist))
         .route("/worklist/{work_id}/claim", post(claim))
         .route("/worklist/{work_id}/release", post(release))
+        .route("/worklist/series/{series_uid}", get(work_item_by_series))
         .route(
             "/studies/{study_uid}/clinical-context",
             get(clinical_context),
@@ -502,6 +503,28 @@ async fn worklist(
         .await
         .map_err(ApiError::db)?,
     ))
+}
+
+/// 按序列查工作项（报告面板用）：不受工作列表「仅当天」的日期过滤限制，
+/// 历史入库的序列也能领取并撰写报告。
+async fn work_item_by_series(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(series_uid): Path<String>,
+) -> Result<Json<pacs_db::ClinicalWorkItem>, ApiError> {
+    pacs_core::Uid::parse(&series_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Series UID 无效"))?;
+    let item = pacs_db::work_item_for_series(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        identity.role == Role::Admin,
+        &series_uid,
+    )
+    .await
+    .map_err(ApiError::db)?
+    .ok_or(ApiError::not_found())?;
+    Ok(Json(item))
 }
 
 #[derive(Serialize, sqlx::FromRow)]

@@ -5,10 +5,10 @@ import {
   listReportTemplates,
   listReports,
   listReportVersions,
-  listWorklist,
   releaseWorkItem,
   signReport,
   updateReportDraft,
+  workItemForSeries,
 } from './api';
 import { payloadFromTemplate, renderReportText, validatePayload } from './report-render';
 import type {
@@ -95,14 +95,14 @@ export class ReportPanel {
     this.clearError();
     try {
       const { studyUid, seriesUid, modality, patientName, seriesDescription } = this.context;
-      const [reports, templates, worklist] = await Promise.all([
+      const [reports, templates, item] = await Promise.all([
         listReports(studyUid),
         listReportTemplates(modality ?? undefined),
-        listWorklist(),
+        workItemForSeries(seriesUid).catch(() => null),
       ]);
       this.reports = reports;
       this.templates = templates;
-      this.workItem = worklist.find((item) => item.series_uid === seriesUid) ?? null;
+      this.workItem = item;
       this.report = reports[0] ?? null;
       this.versions = [];
       if (this.report?.status === 'signed') {

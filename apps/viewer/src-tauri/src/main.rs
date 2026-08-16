@@ -78,6 +78,7 @@ fn main() {
             commands::begin_report_amendment,
             commands::list_report_versions,
             commands::list_worklist,
+            commands::work_item_for_series,
             commands::claim_work_item,
             commands::release_work_item,
             commands::register_device,
