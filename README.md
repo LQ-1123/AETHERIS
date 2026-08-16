@@ -177,6 +177,8 @@ Drag a series row from **Patient → Study → Series** into the workspace to sp
 
 Each pane has its own `Renderer` and `ViewState` for independent navigation, windowing, zoom/pan, measurement, and annotations. Click a pane to activate it; hold `Alt` while dropping onto an occupied pane to replace that series; use the pane close button to remove it. Multi-pane mode currently focuses on 2D comparison reading; MPR / VR run in single-pane mode.
 
+<p align="center"><img src="doc/img/多窗口图像.png" alt="Multi-window split-screen viewing" width="760"/></p>
+
 ### Geometry-aware Series Reconstruction
 
 Series ordering does not rely on filenames or `InstanceNumber`.
@@ -206,6 +208,8 @@ Current visualization capabilities include:
 * 3D sparse masks
 * Interactive measurement
 * Annotation overlays
+
+<p align="center"><img src="doc/img/多角度MPR重建.png" alt="Multi-angle MPR reconstruction" width="760"/></p>
 
 Volume rendering mouse gestures:
 

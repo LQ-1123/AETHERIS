@@ -167,6 +167,8 @@ AETHERIS 内置基于 **Tauri 2** 的原生桌面阅片器，既可作远程 PAC
 
 每个窗格拥有独立的 `Renderer` 与 `ViewState`，可分别浏览、调窗、缩放、平移、测量和标注。点击窗格激活；按住 `Alt` 拖入已有窗格可替换该窗格序列；点击窗格右上角按钮关闭。多窗格模式当前专注 2D 对比阅片，MPR / VR 在单窗格下使用。
 
+<p align="center"><img src="doc/img/多窗口图像.png" alt="多窗口分屏阅片" width="760"/></p>
+
 ### 几何感知的序列重建
 
 序列排序不依赖文件名或 `InstanceNumber`：
@@ -192,6 +194,8 @@ AETHERIS 不止于基础 2D 阅片，当前可视化能力包括：
 * 3D 稀疏 Mask
 * 交互式测量
 * 标注叠加
+
+<p align="center"><img src="doc/img/多角度MPR重建.png" alt="多角度 MPR 重建" width="760"/></p>
 
 体渲染鼠标手势：
 
