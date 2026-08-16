@@ -159,16 +159,33 @@ export class ReportPanel {
     else this.workItemText.textContent = `已由${item.assignee_name ?? '他人'}领取`;
   }
 
+  /** 当前序列的工作项是否已被我领取（创建报告的前置条件之一）。 */
+  private claimedByMe(): boolean {
+    const item = this.workItem;
+    const user = this.getCurrentUser();
+    return !!item
+      && (item.status === 'claimed' || item.status === 'reporting')
+      && item.assignee_id === user.id;
+  }
+
   private renderEmpty(): void {
     this.body.replaceChildren();
     const section = document.createElement('section');
     section.className = 'report-empty';
     const hint = document.createElement('p');
-    hint.textContent = this.writable()
-      ? '该检查还没有报告。选择一个模板开始撰写：'
-      : '该检查还没有报告。需要医师角色才能创建。';
+    if (!this.writable()) {
+      hint.textContent = '该检查还没有报告。需要医师角色才能创建。';
+    } else if (!this.workItem) {
+      hint.textContent = '该序列没有待诊任务，无法创建报告（任务在影像入库或来源归属时自动生成）。';
+    } else if (!this.claimedByMe()) {
+      hint.textContent = this.workItem.assignee_id != null
+        ? `任务已由${this.workItem.assignee_name ?? '他人'}领取。`
+        : '请先在顶部「领取任务」，领取成功后才能撰写报告。';
+    } else {
+      hint.textContent = '该检查还没有报告。选择一个模板开始撰写：';
+    }
     section.append(hint);
-    if (this.writable() && this.templates.length > 0) {
+    if (this.writable() && this.claimedByMe() && this.templates.length > 0) {
       const select = document.createElement('select');
       select.className = 'report-template-select';
       for (const template of this.templates) {
@@ -194,6 +211,14 @@ export class ReportPanel {
   private async create(templateId: string): Promise<void> {
     if (!this.context) return;
     this.clearError();
+    if (!this.workItem) {
+      this.showError('该序列没有待诊任务，无法创建报告');
+      return;
+    }
+    if (!this.claimedByMe()) {
+      this.showError('请先在顶部「领取任务」再创建报告');
+      return;
+    }
     const template = this.templates.find((candidate) => candidate.id === templateId);
     if (!template) return;
     try {
