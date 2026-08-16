@@ -1,0 +1,377 @@
+use std::sync::{Arc, Mutex, OnceLock};
+
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode, header};
+use chrono::Utc;
+use pacs_auth::{AccessTokenCodec, AuthService, Role};
+use serde_json::{Value, json};
+use sqlx::migrate::MigrateDatabase;
+use sqlx::{PgPool, Postgres};
+use tower::ServiceExt;
+use uuid::Uuid;
+
+/// 建库/迁移串行化；连接池每个测试自建（PgPool 不能跨 tokio runtime 共享）。
+static DB_SETUP: OnceLock<Mutex<()>> = OnceLock::new();
+
+async fn pool() -> Option<PgPool> {
+    dotenvy::dotenv().ok();
+    let Ok(url) = std::env::var("PACS_TEST_DATABASE_URL") else {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CI 必须设置 PACS_TEST_DATABASE_URL"
+        );
+        eprintln!("\n>>> 跳过管理员控制台 API 测试: 未设置 PACS_TEST_DATABASE_URL\n");
+        return None;
+    };
+    let slot = DB_SETUP.get_or_init(|| Mutex::new(()));
+    let _guard = slot.lock().unwrap();
+    if !Postgres::database_exists(&url).await.unwrap_or(false) {
+        Postgres::create_database(&url)
+            .await
+            .expect("应能创建测试库");
+    }
+    let setup_pool = pacs_db::connect(&url).await.expect("应能连接测试库");
+    pacs_db::migrate(&setup_pool).await.expect("迁移应能应用");
+    drop(setup_pool);
+    drop(_guard);
+    pacs_db::connect(&url).await.ok()
+}
+
+async fn response_json(response: axum::response::Response) -> Value {
+    serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+}
+
+async fn admin_token(pool: &PgPool, secret: &[u8], prefix: &str) -> (String, i64) {
+    let suffix = Uuid::new_v4();
+    let username = format!("{prefix}-{suffix}");
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (institution_id, username, password_hash, role)
+         VALUES (1, $1, 'unused', 'admin') RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let codec = AccessTokenCodec::new(secret).unwrap();
+    let token = codec
+        .issue(user_id, 1, &username, Role::Admin, Utc::now())
+        .unwrap();
+    (token, user_id)
+}
+
+/// 注册 → 批准 → 归属 → 列表过滤，全链路走真实 API。
+#[tokio::test]
+async fn device_registration_approval_and_series_attribution() {
+    let Some(pool) = pool().await else { return };
+    let secret = b"admin-console-test-secret-at-least-32";
+    let (token, _admin_id) = admin_token(&pool, secret, "admin-console").await;
+    let auth = Arc::new(AuthService::new(pool.clone(), secret).unwrap());
+    let app = pacs_web::clinical_routes(pacs_web::WebState::new(pool.clone()), auth);
+
+    // 建一条未归属序列（模拟历史数据）
+    let suffix = Uuid::new_v4();
+    let patient_id: i64 = sqlx::query_scalar(
+        "INSERT INTO patients (institution_id, patient_id) VALUES (1, $1) RETURNING id",
+    )
+    .bind(format!("console-patient-{suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let study_uid = format!("1.2.826.0.1.3680043.9.7434.{suffix}");
+    let study_id: i64 = sqlx::query_scalar(
+        "INSERT INTO studies (institution_id, patient_fk, study_instance_uid)
+         VALUES (1, $1, $2) RETURNING id",
+    )
+    .bind(patient_id)
+    .bind(&study_uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let numeric = suffix.to_string().chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    let series_uid = format!("1.2.826.0.1.3680043.9.7435.{numeric}");
+    sqlx::query(
+        "INSERT INTO series (study_fk, series_instance_uid, modality)
+         VALUES ($1, $2, 'CT')",
+    )
+    .bind(study_id)
+    .bind(&series_uid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let bearer = format!("Bearer {token}");
+    let ae_suffix = suffix.to_string().replace('-', "");
+    let ae_title = format!("CT{}", &ae_suffix[..8]);
+
+    // 注册设备 → 201 pending
+    let registered = app
+        .clone()
+        .oneshot(
+            Request::post("/devices")
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "测试 CT 机",
+                        "calling_ae_title": ae_title,
+                        "source_ip": "192.168.1.50",
+                        "modality_hint": "CT"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let registered_status = registered.status();
+    let registered_body = response_json(registered).await;
+    assert_eq!(
+        registered_status,
+        StatusCode::CREATED,
+        "注册设备应 201，实际 {registered_status} body={registered_body}"
+    );
+    let device = registered_body;
+    assert_eq!(device["status"], "pending");
+    let device_id = device["id"].as_str().unwrap().to_owned();
+
+    // 重复注册 → 422
+    let duplicate = app
+        .clone()
+        .oneshot(
+            Request::post("/devices")
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "name": "重复设备",
+                        "calling_ae_title": ae_title,
+                        "source_ip": "192.168.1.50"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 批准 → active
+    let approved = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/devices/{device_id}/approve"))
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"name": "测试 CT 机"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), StatusCode::OK);
+    assert_eq!(response_json(approved).await["status"], "active");
+
+    // 未归属列表包含该序列
+    let unattributed = app
+        .clone()
+        .oneshot(
+            Request::get("/series-sources?unattributed=true")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unattributed.status(), StatusCode::OK);
+    let list = response_json(unattributed).await;
+    let entry = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["series_uid"] == series_uid)
+        .expect("未归属列表应包含新序列");
+    assert_eq!(entry["source_status"], "legacy_unattributed");
+
+    // 归属 → trusted；未归属列表不再包含
+    let resolved = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/series/{series_uid}/resolve-source"))
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"device_id": device_id}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.status(), StatusCode::NO_CONTENT);
+    let after = app
+        .clone()
+        .oneshot(
+            Request::get("/series-sources?unattributed=true")
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let after = response_json(after).await;
+    assert!(
+        !after
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["series_uid"] == series_uid),
+        "归属后的序列不应再出现在未归属列表"
+    );
+}
+
+/// 0023 回填语句幂等：重复执行不产生重复工作项（与迁移内容一致的语句）。
+#[tokio::test]
+async fn work_item_backfill_statement_is_idempotent() {
+    let Some(pool) = pool().await else { return };
+    let total = async |pool: &PgPool| -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM diagnostic_work_items")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let before = total(&pool).await;
+    let statement = r#"INSERT INTO diagnostic_work_items (id, institution_id, series_fk)
+                       SELECT gen_random_uuid(), st.institution_id, se.id
+                       FROM series se JOIN studies st ON st.id = se.study_fk
+                       ON CONFLICT (institution_id, series_fk) DO NOTHING"#;
+    sqlx::query(statement).execute(&pool).await.unwrap();
+    let after_once = total(&pool).await;
+    sqlx::query(statement).execute(&pool).await.unwrap();
+    let after_twice = total(&pool).await;
+    assert_eq!(after_once, after_twice, "回填语句重复执行不得产生重复工作项");
+    assert!(after_once >= before, "回填只增不减");
+}
+
+/// 用户授权 PUT = 全量替换语义，GET 往返一致。
+#[tokio::test]
+async fn user_device_grants_roundtrip() {
+    let Some(pool) = pool().await else { return };
+    let secret = b"admin-grants-test-secret-at-least-32";
+    let (token, _admin_id) = admin_token(&pool, secret, "admin-grants").await;
+    let auth = Arc::new(AuthService::new(pool.clone(), secret).unwrap());
+    let app = pacs_web::clinical_routes(pacs_web::WebState::new(pool.clone()), auth);
+    let bearer = format!("Bearer {token}");
+
+    // 注册并批准两个设备
+    let suffix = Uuid::new_v4().to_string().replace('-', "");
+    let mut device_ids = Vec::new();
+    for index in 0..2 {
+        let ae_title = format!("G{index}{}", &suffix[..8]);
+        let registered = app
+            .clone()
+            .oneshot(
+                Request::post("/devices")
+                    .header(header::AUTHORIZATION, &bearer)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        json!({
+                            "name": format!("授权测试机 {index}"),
+                            "calling_ae_title": ae_title,
+                            "source_ip": format!("10.0.0.{index}")
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let device = response_json(registered).await;
+        let device_id = device["id"].as_str().unwrap().to_owned();
+        let approved = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/devices/{device_id}/approve"))
+                    .header(header::AUTHORIZATION, &bearer)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"name": format!("授权测试机 {index}")}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), StatusCode::OK);
+        device_ids.push(device_id);
+    }
+
+    // 目标用户（radiologist）
+    let suffix = Uuid::new_v4();
+    let doctor_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (institution_id, username, password_hash, role)
+         VALUES (1, $1, 'unused', 'radiologist') RETURNING id",
+    )
+    .bind(format!("grant-doctor-{suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // PUT 授权第一个设备
+    let put = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/users/{doctor_id}/device-grants"))
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"device_ids": [device_ids[0].clone()]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put.status(), StatusCode::OK);
+
+    // GET 往返一致
+    let get = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/users/{doctor_id}/device-grants"))
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let grants = response_json(get).await;
+    let ids = grants
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![device_ids[0].clone()]);
+
+    // PUT 全量替换为第二个设备
+    let replace = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/users/{doctor_id}/device-grants"))
+                .header(header::AUTHORIZATION, &bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"device_ids": [device_ids[1].clone()]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replace.status(), StatusCode::OK);
+    let get = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/users/{doctor_id}/device-grants"))
+                .header(header::AUTHORIZATION, &bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let grants = response_json(get).await;
+    let ids = grants
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec![device_ids[1].clone()], "PUT 应为全量替换语义");
+}

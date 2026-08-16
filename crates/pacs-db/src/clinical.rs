@@ -127,6 +127,83 @@ pub async fn list_devices(
     .await?)
 }
 
+/// 手动注册设备（status='pending'，批准后 active 才可归属历史序列）。
+/// 设备也可以由 DIMSE 入站观察自动创建；本函数服务于尚未接入或历史数据归属场景。
+pub async fn register_device(
+    pool: &PgPool,
+    institution_id: i64,
+    name: &str,
+    calling_ae_title: &str,
+    source_ip: &str,
+    modality_hint: Option<&str>,
+) -> Result<DicomDevice, DbError> {
+    sqlx::query_as(
+        r#"INSERT INTO dicom_devices(id,institution_id,name,calling_ae_title,source_ip,
+                   modality_hint)
+           VALUES($1,$2,$3,$4,$5,$6)
+           RETURNING id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                     first_seen_at,last_seen_at,approved_at"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(institution_id)
+    .bind(name.trim())
+    .bind(calling_ae_title.trim())
+    .bind(source_ip.trim())
+    .bind(modality_hint)
+    .fetch_one(pool)
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            DbError::Invalid("设备已存在（同 AE Title + 来源 IP）".to_owned())
+        }
+        other => DbError::from(other),
+    })
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct SeriesSourceEntry {
+    pub series_uid: String,
+    pub study_uid: String,
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub modality: Option<String>,
+    pub description: Option<String>,
+    pub instance_count: i64,
+    pub source_status: String,
+    pub device_name: Option<String>,
+}
+
+/// 列出序列的来源归属状态。`unattributed=true` 时只返回待归属
+/// （needs_review / legacy_unattributed）的序列，供管理员控制台批量归属。
+pub async fn list_series_sources(
+    pool: &PgPool,
+    institution_id: i64,
+    unattributed: bool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<SeriesSourceEntry>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT se.series_instance_uid series_uid,st.study_instance_uid study_uid,
+                  p.patient_id,p.name patient_name,se.modality,se.description,
+                  (SELECT count(*) FROM instances i WHERE i.series_fk=se.id) instance_count,
+                  se.source_status,d.name device_name
+           FROM series se
+           JOIN studies st ON st.id=se.study_fk
+           JOIN patients p ON p.id=st.patient_fk
+           LEFT JOIN dicom_devices d ON d.id=se.source_device_fk
+           WHERE st.institution_id=$1
+             AND (NOT $2 OR se.source_status IN ('needs_review','legacy_unattributed'))
+           ORDER BY st.study_date DESC NULLS LAST,se.id
+           LIMIT $3 OFFSET $4"#,
+    )
+    .bind(institution_id)
+    .bind(unattributed)
+    .bind(limit.clamp(1, 500))
+    .bind(offset.max(0))
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn approve_device(
     pool: &PgPool,
     institution_id: i64,

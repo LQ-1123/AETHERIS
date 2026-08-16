@@ -26,10 +26,11 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         )
         .route("/users/{user_id}/reset-password", post(reset_password))
         .route("/users/{user_id}/revoke-sessions", post(revoke_sessions))
-        .route("/devices", get(devices))
+        .route("/devices", get(devices).post(register_device))
         .route("/devices/{device_id}/approve", post(approve_device))
         .route("/devices/{device_id}", patch(update_device_status))
         .route("/series/{series_uid}/resolve-source", post(resolve_source))
+        .route("/series-sources", get(series_sources))
         .route("/worklist/{work_id}/assign", post(assign))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn(move |request, next| {
@@ -332,6 +333,76 @@ struct ApproveDeviceRequest {
     name: String,
     modality_hint: Option<String>,
 }
+
+#[derive(Deserialize)]
+struct RegisterDeviceRequest {
+    name: String,
+    calling_ae_title: String,
+    source_ip: String,
+    modality_hint: Option<String>,
+}
+async fn register_device(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<RegisterDeviceRequest>,
+) -> Result<(StatusCode, Json<pacs_db::DicomDevice>), ApiError> {
+    if req.name.trim().is_empty()
+        || req.calling_ae_title.trim().is_empty()
+        || req.source_ip.trim().is_empty()
+    {
+        return Err(ApiError::bad(
+            "invalid_device_fields",
+            "设备名称、AE Title 与来源 IP 不能为空",
+        ));
+    }
+    let device = pacs_db::register_device(
+        &state.pool,
+        identity.institution_id,
+        &req.name,
+        &req.calling_ae_title,
+        &req.source_ip,
+        req.modality_hint.as_deref(),
+    )
+    .await
+    .map_err(ApiError::db)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::DeviceRegistered,
+        serde_json::json!({
+            "device_id":device.id,
+            "calling_ae_title":device.calling_ae_title,
+            "source_ip":device.source_ip,
+        }),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(device)))
+}
+
+#[derive(Deserialize)]
+struct SeriesSourcesQuery {
+    unattributed: Option<bool>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+async fn series_sources(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<SeriesSourcesQuery>,
+) -> Result<Json<Vec<pacs_db::SeriesSourceEntry>>, ApiError> {
+    Ok(Json(
+        pacs_db::list_series_sources(
+            &state.pool,
+            identity.institution_id,
+            q.unattributed.unwrap_or(true),
+            q.limit.unwrap_or(100),
+            q.offset.unwrap_or(0),
+        )
+        .await
+        .map_err(ApiError::db)?,
+    ))
+}
+
 async fn approve_device(
     State(state): State<WebState>,
     Extension(identity): Extension<Identity>,
