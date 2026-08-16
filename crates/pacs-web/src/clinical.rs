@@ -51,6 +51,7 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/reports/{report_id}/sign", post(sign_report))
         .route("/reports/{report_id}/amendments", post(begin_amendment))
         .route("/reports/{report_id}/versions", get(report_versions))
+        .route("/report-templates", get(report_templates))
         .with_state(state)
         .layer(axum::middleware::from_fn(move |request, next| {
             let auth = Arc::clone(&clinical_auth);
@@ -602,10 +603,44 @@ async fn assign(
 struct CreateReportRequest {
     study_uid: String,
     covered_series_uids: Vec<String>,
+    template_payload: Option<serde_json::Value>,
 }
 #[derive(Deserialize)]
 struct ReportsQuery {
     study_uid: String,
+}
+#[derive(Deserialize)]
+struct TemplatesQuery {
+    modality: Option<String>,
+}
+
+/// 结构化模板快照大小上限（1 MiB），超限直接 400。
+const MAX_TEMPLATE_PAYLOAD_BYTES: usize = 1_048_576;
+
+fn validate_template_payload(payload: &Option<serde_json::Value>) -> Result<(), ApiError> {
+    let Some(payload) = payload else {
+        return Ok(());
+    };
+    if serde_json::to_vec(payload).map(|v| v.len()).unwrap_or(usize::MAX) > MAX_TEMPLATE_PAYLOAD_BYTES
+    {
+        return Err(ApiError::bad(
+            "template_payload_too_large",
+            "template_payload 超过 1 MiB 上限",
+        ));
+    }
+    Ok(())
+}
+
+async fn report_templates(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<TemplatesQuery>,
+) -> Result<Json<Vec<pacs_db::ReportTemplate>>, ApiError> {
+    Ok(Json(
+        pacs_db::list_report_templates(&state.pool, identity.institution_id, q.modality.as_deref())
+            .await
+            .map_err(ApiError::db)?,
+    ))
 }
 async fn list_reports(
     State(state): State<WebState>,
@@ -633,12 +668,14 @@ async fn create_report(
     if identity.role != Role::Radiologist {
         return Err(ApiError::forbidden("radiologist_required"));
     }
+    validate_template_payload(&req.template_payload)?;
     let report = pacs_db::create_report(
         &state.pool,
         identity.institution_id,
         identity.user_id,
         &req.study_uid,
         &req.covered_series_uids,
+        req.template_payload,
     )
     .await
     .map_err(ApiError::db)?;
@@ -709,6 +746,7 @@ struct DraftRequest {
     findings: String,
     impression: String,
     recommendation: Option<String>,
+    template_payload: Option<serde_json::Value>,
 }
 async fn update_draft(
     State(state): State<WebState>,
@@ -719,6 +757,7 @@ async fn update_draft(
     if identity.role != Role::Radiologist {
         return Err(ApiError::forbidden("radiologist_required"));
     }
+    validate_template_payload(&req.template_payload)?;
     Ok(Json(
         pacs_db::update_report_draft(
             &state.pool,
@@ -729,6 +768,7 @@ async fn update_draft(
             &req.findings,
             &req.impression,
             req.recommendation.as_deref(),
+            req.template_payload,
         )
         .await
         .map_err(ApiError::db)?,

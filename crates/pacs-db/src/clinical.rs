@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -484,6 +485,7 @@ pub struct DiagnosticReport {
     pub recommendation: Option<String>,
     pub revision: i32,
     pub access_incomplete: bool,
+    pub template_payload: Option<Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -494,6 +496,7 @@ pub async fn create_report(
     author_id: i64,
     study_uid: &str,
     series_uids: &[String],
+    template_payload: Option<Value>,
 ) -> Result<DiagnosticReport, DbError> {
     if series_uids.is_empty() {
         return Err(DbError::Invalid("报告至少覆盖一个序列".to_owned()));
@@ -533,16 +536,19 @@ pub async fn create_report(
         .await?;
     let id = Uuid::new_v4();
     let report: DiagnosticReport = sqlx::query_as(
-        r#"INSERT INTO diagnostic_reports(id,institution_id,study_fk,author_fk,access_incomplete)
-           VALUES($1,$2,$3,$4,$5)
-           RETURNING id,$6::TEXT study_uid,author_fk author_id,status,findings,impression,
-                     recommendation,revision,access_incomplete,created_at,updated_at"#,
+        r#"INSERT INTO diagnostic_reports(id,institution_id,study_fk,author_fk,access_incomplete,
+                   template_payload)
+           VALUES($1,$2,$3,$4,$5,$6)
+           RETURNING id,$7::TEXT study_uid,author_fk author_id,status,findings,impression,
+                     recommendation,revision,access_incomplete,template_payload,
+                     created_at,updated_at"#,
     )
     .bind(id)
     .bind(institution_id)
     .bind(study_id)
     .bind(author_id)
     .bind(total != series_uids.len() as i64)
+    .bind(&template_payload)
     .bind(study_uid)
     .fetch_one(&mut *tx)
     .await?;
@@ -570,7 +576,7 @@ pub async fn list_reports(
     Ok(sqlx::query_as(
         r#"SELECT r.id,st.study_instance_uid study_uid,r.author_fk author_id,r.status,
                   r.findings,r.impression,r.recommendation,r.revision,r.access_incomplete,
-                  r.created_at,r.updated_at
+                  r.template_payload,r.created_at,r.updated_at
            FROM diagnostic_reports r JOIN studies st ON st.id=r.study_fk
            WHERE r.institution_id=$1 AND st.study_instance_uid=$2
              AND ($4 OR r.author_fk=$3 OR EXISTS(
@@ -601,6 +607,36 @@ pub struct ReportVersion {
     pub amendment_reason: Option<String>,
     pub signed_by: i64,
     pub signed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ReportTemplate {
+    pub id: Uuid,
+    pub name: String,
+    pub modality: String,
+    pub body_part: Option<String>,
+    pub version: i32,
+    pub structure: Value,
+    pub builtin: bool,
+}
+
+/// 列出机构内的报告模板；`modality` 为 None 时返回全部。
+/// 仅供「新建报告时选模板」，历史报告的渲染不依赖本表（设计不变量 I1）。
+pub async fn list_report_templates(
+    pool: &PgPool,
+    institution_id: i64,
+    modality: Option<&str>,
+) -> Result<Vec<ReportTemplate>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT id,name,modality,body_part,version,structure,builtin
+           FROM report_templates
+           WHERE institution_id=$1 AND ($2::text IS NULL OR modality=$2)
+           ORDER BY modality,name"#,
+    )
+    .bind(institution_id)
+    .bind(modality)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn list_report_versions(
@@ -652,7 +688,7 @@ pub async fn begin_report_amendment(
                                WHERE g.user_fk=$3 AND g.device_fk=d.id)))
            RETURNING r.id,st.study_instance_uid study_uid,r.author_fk author_id,r.status,
                      r.findings,r.impression,r.recommendation,r.revision,r.access_incomplete,
-                     r.created_at,r.updated_at"#,
+                     r.template_payload,r.created_at,r.updated_at"#,
     )
     .bind(report_id)
     .bind(institution_id)
@@ -673,15 +709,32 @@ pub async fn update_report_draft(
     findings: &str,
     impression: &str,
     recommendation: Option<&str>,
+    template_payload: Option<Value>,
 ) -> Result<DiagnosticReport, DbError> {
+    // I2 派生缓存单向：结构化报告（payload 非空）的草稿更新必须携带 payload，
+    // 文本列不得绕过 payload 被独立修改。
+    let has_payload: bool = sqlx::query_scalar(
+        "SELECT template_payload IS NOT NULL FROM diagnostic_reports WHERE id=$1 AND institution_id=$2",
+    )
+    .bind(report_id)
+    .bind(institution_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| DbError::Conflict("报告版本已变化或不可编辑".to_owned()))?;
+    if has_payload && template_payload.is_none() {
+        return Err(DbError::Invalid(
+            "结构化报告必须携带 template_payload".to_owned(),
+        ));
+    }
     sqlx::query_as(
         r#"UPDATE diagnostic_reports r SET findings=$5,impression=$6,recommendation=$7,
+                  template_payload=COALESCE($8, r.template_payload),
                   revision=revision+1
            FROM studies st WHERE r.id=$2 AND r.institution_id=$1 AND r.author_fk=$3
              AND r.revision=$4 AND r.status IN ('draft','amending') AND st.id=r.study_fk
            RETURNING r.id,st.study_instance_uid study_uid,r.author_fk author_id,r.status,
                      r.findings,r.impression,r.recommendation,r.revision,r.access_incomplete,
-                     r.created_at,r.updated_at"#,
+                     r.template_payload,r.created_at,r.updated_at"#,
     )
     .bind(institution_id)
     .bind(report_id)
@@ -690,6 +743,7 @@ pub async fn update_report_draft(
     .bind(findings)
     .bind(impression)
     .bind(recommendation)
+    .bind(&template_payload)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| DbError::Conflict("报告版本已变化或不可编辑".to_owned()))
