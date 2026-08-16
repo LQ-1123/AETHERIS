@@ -163,6 +163,19 @@ The viewer can operate both as a remote PACS client and as a local DICOM viewer.
 * Multi-file series
 * Image measurement
 * Annotations
+* Multi-window split-screen viewing
+
+### Multi-window Split-screen Viewing
+
+Drag a series row from **Patient → Study → Series** into the workspace to split the screen automatically and render multiple series side by side:
+
+* 1 series: 1×1
+* 2 series: 1×2
+* 3–4 series: 2×2
+* 5–6 series: 3×2
+* 7–9 series: 3×3
+
+Each pane has its own `Renderer` and `ViewState` for independent navigation, windowing, zoom/pan, measurement, and annotations. Click a pane to activate it; hold `Alt` while dropping onto an occupied pane to replace that series; use the pane close button to remove it. Multi-pane mode currently focuses on 2D comparison reading; MPR / VR run in single-pane mode.
 
 ### Geometry-aware Series Reconstruction
 
@@ -193,6 +206,13 @@ Current visualization capabilities include:
 * 3D sparse masks
 * Interactive measurement
 * Annotation overlays
+
+Volume rendering mouse gestures:
+
+* Left drag — Window / Level
+* Right drag — Rotate
+* Middle drag — Pan
+* Wheel — Zoom
 
 The architecture is intended to support progressively more advanced volumetric visualization without coupling the viewer to the server implementation.
 
