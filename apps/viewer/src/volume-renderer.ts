@@ -6,6 +6,7 @@ import {
   GLSL3,
   LinearFilter,
   Mesh,
+  MOUSE,
   PerspectiveCamera,
   RedFormat,
   Scene,
@@ -121,6 +122,12 @@ export class VolumeRenderer {
     this.camera.position.set(1.45, 1.1, 1.65);
     this.camera.lookAt(0, 0, 0);
     this.controls = new OrbitControls(this.camera, canvas);
+    // 左键交给业务层做窗宽窗位；右键旋转；中键平移；滚轮保持缩放。
+    this.controls.mouseButtons = {
+      LEFT: null,
+      MIDDLE: MOUSE.PAN,
+      RIGHT: MOUSE.ROTATE,
+    };
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 0.9;
@@ -150,12 +157,6 @@ export class VolumeRenderer {
 
   setQuality(quality: VolumeQuality): void {
     this.material.uniforms.uSteps.value = QUALITY_STEPS[quality];
-  }
-
-  /** 启用/停用 OrbitControls，供 VR 拖拽调窗时临时占用指针交互。 */
-  setInteractionsEnabled(enabled: boolean): void {
-    if (this.disposed) return;
-    this.controls.enabled = enabled;
   }
 
   resetView(): void {

@@ -384,7 +384,6 @@ export class App {
     center: number;
     width: number;
   } | null = null;
-  private vrWindowToolActive = false;
   private frameCache = new ByteLruCache<string>(FRONTEND_CACHE_BYTES, FRAME_CACHE_TTL_MS);
   private pendingFrames = new Map<string, Promise<ArrayBuffer>>();
   private framePrefetchGeneration = 0;
@@ -1583,7 +1582,6 @@ export class App {
         );
         this.viewerMode = 'vr';
         this.state.tool = 'pan';
-        this.setVrWindowTool(false);
         this.updateUi();
         this.resizeViewport();
       } else {
@@ -1614,7 +1612,6 @@ export class App {
     this.volumeRenderer?.dispose();
     this.volumeRenderer = null;
     this.volumeWindowDrag = null;
-    this.vrWindowToolActive = false;
   }
 
   private disposeGpuMprRenderer(): void {
@@ -3509,36 +3506,12 @@ export class App {
     this.updateUi();
   }
 
-  private updateVolumeWindow(): void {
-    const center = Number(requiredElement<HTMLInputElement>('vr-window-center').value);
-    const width = Number(requiredElement<HTMLInputElement>('vr-window-width').value);
-    if (!Number.isFinite(center) || !Number.isFinite(width) || width <= 0) return;
-    this.volumeWindowCenter = center;
-    this.volumeWindowWidth = width;
-    this.volumeRenderer?.setWindow(center, width);
-    this.updateVolumeControlReadout();
-  }
-
-  private updateVolumeControlReadout(): void {
-    setText('vr-window-center-value', `WL ${this.volumeWindowCenter.toFixed(0)}`);
-    setText('vr-window-width-value', `WW ${this.volumeWindowWidth.toFixed(0)}`);
-  }
-
-  private setVrWindowTool(active: boolean): void {
-    if (this.viewerMode !== 'vr' || !this.volumeRenderer) {
-      this.vrWindowToolActive = false;
-    } else {
-      this.vrWindowToolActive = active;
-      this.volumeRenderer.setInteractionsEnabled(!active);
-    }
-    this.volumeWindowDrag = null;
-    this.updateUi();
-  }
-
   private vrWindowPointerDown(event: PointerEvent): void {
-    if (this.viewerMode !== 'vr' || !this.volumeRenderer || !this.vrWindowToolActive) return;
-    if (event.button !== 0 && event.button !== 1) return;
+    if (this.viewerMode !== 'vr' || !this.volumeRenderer) return;
+    if (event.button !== 0) return;
+    // 阻止 OrbitControls 处理左键：左键留给窗宽窗位手势。
     event.preventDefault();
+    event.stopImmediatePropagation();
     this.volumeCanvas.setPointerCapture(event.pointerId);
     this.volumeWindowDrag = {
       pointerId: event.pointerId,
@@ -3567,7 +3540,6 @@ export class App {
       this.volumeCanvas.releasePointerCapture(event.pointerId);
     }
     this.volumeWindowDrag = null;
-    this.updateVolumeControlReadout();
   }
 
 
@@ -3914,12 +3886,6 @@ export class App {
     requiredElement<HTMLSelectElement>('vr-quality').addEventListener('change', (event) => {
       this.volumeQuality = (event.currentTarget as HTMLSelectElement).value as VolumeQuality;
       this.volumeRenderer?.setQuality(this.volumeQuality);
-    });
-    for (const id of ['vr-window-center', 'vr-window-width']) {
-      requiredElement<HTMLInputElement>(id).addEventListener('input', () => this.updateVolumeWindow());
-    }
-    requiredElement<HTMLButtonElement>('vr-window-tool').addEventListener('click', () => {
-      this.setVrWindowTool(!this.vrWindowToolActive);
     });
     this.volumeCanvas.addEventListener('contextmenu', (event) => event.preventDefault());
     this.volumeCanvas.addEventListener('pointerdown', (event) => this.vrWindowPointerDown(event));
@@ -6663,13 +6629,6 @@ export class App {
     );
     const volumeControls = requiredElement<HTMLElement>('vr-controls');
     volumeControls.hidden = this.viewerMode !== 'vr';
-    const vrWindowTool = requiredElement<HTMLButtonElement>('vr-window-tool');
-    vrWindowTool.disabled = this.viewerMode !== 'vr' || !this.volumeRenderer;
-    vrWindowTool.classList.toggle('active', this.vrWindowToolActive);
-    vrWindowTool.setAttribute('aria-pressed', String(this.vrWindowToolActive));
-    vrWindowTool.title = this.vrWindowToolActive
-      ? 'VR 拖拽调窗已开启（点击关闭）'
-      : 'VR 拖拽调窗（水平调窗位，垂直调窗宽）';
     this.updateMaskSegmentOptions();
     this.updateAiControls();
     const maskButton = requiredElement<HTMLButtonElement>('mask-menu-button');
@@ -6744,21 +6703,8 @@ export class App {
     setText('cine-fps', `${(sourceFps * this.cineSpeed).toFixed(1)} fps`);
 
     if (this.mpr) {
-      const centerControl = requiredElement<HTMLInputElement>('vr-window-center');
-      const widthControl = requiredElement<HTMLInputElement>('vr-window-width');
-      const [minimum, maximum] = this.mpr.metadata.volume_rendering.value_range;
-      const span = Math.max(1, maximum - minimum);
-      centerControl.min = String(minimum - span);
-      centerControl.max = String(maximum + span);
-      centerControl.step = String(Math.max(0.1, span / 1000));
-      centerControl.value = String(this.volumeWindowCenter);
-      widthControl.min = '1';
-      widthControl.max = String(Math.max(5000, span * 2));
-      widthControl.step = String(Math.max(1, span / 500));
-      widthControl.value = String(this.volumeWindowWidth);
       requiredElement<HTMLSelectElement>('vr-preset').value = this.volumePreset;
       requiredElement<HTMLSelectElement>('vr-quality').value = this.volumeQuality;
-      this.updateVolumeControlReadout();
     }
 
     this.updateImageStackOptions();

@@ -87,17 +87,7 @@
             <option value="lung">肺</option>
             <option value="pet">PET</option>
           </select>
-            <button id="vr-window-tool" class="icon-button vr-window-tool" type="button" title="VR 拖拽调窗（水平调窗位，垂直调窗宽）" aria-label="VR 拖拽调窗" aria-pressed="false">
-              <i data-lucide="sliders-horizontal"></i>
-            </button>
-          <label class="vr-range-control" title="体渲染窗位">
-            <input id="vr-window-center" type="range" min="-1000" max="3000" step="1" value="40" aria-label="体渲染窗位" />
-            <output id="vr-window-center-value">WL 40</output>
-          </label>
-          <label class="vr-range-control" title="体渲染窗宽">
-            <input id="vr-window-width" type="range" min="1" max="5000" step="1" value="400" aria-label="体渲染窗宽" />
-            <output id="vr-window-width-value">WW 400</output>
-          </label>
+          <span class="vr-gesture-hint" title="VR 鼠标手势">左键调窗 · 右键旋转 · 中键平移</span>
           <select id="vr-quality" aria-label="体渲染采样质量" title="采样质量">
             <option value="low">低</option>
             <option value="medium" selected>中</option>

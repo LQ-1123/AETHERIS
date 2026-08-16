@@ -639,11 +639,11 @@ button svg {
   white-space: nowrap;
 }
 
-.vr-controls,
-.vr-range-control {
+/* VR */
+.vr-controls {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -657,16 +657,13 @@ button svg {
   font-size: 10px;
 }
 
-.vr-window-tool {
-  width: 31px;
-  min-width: 31px;
-  height: 31px;
-}
-
-.vr-window-tool.active {
-  border-color: #58b8c7;
-  color: #58b8c7;
-  background: #173438;
+.vr-gesture-hint {
+  overflow: hidden;
+  color: #8fc3ca;
+  font-size: 10px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #vr-preset {
@@ -675,19 +672,6 @@ button svg {
 
 #vr-quality {
   width: 52px;
-}
-
-.vr-range-control input {
-  width: 62px;
-  accent-color: #58b8c7;
-}
-
-.vr-range-control output {
-  width: 42px;
-  color: #aeb4b8;
-  font-variant-numeric: tabular-nums;
-  font-size: 9px;
-  white-space: nowrap;
 }
 
 .command-button {
@@ -2891,9 +2875,11 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   }
 
   .mpr-slab-control input,
-  .mpr-slab-control output,
-  .vr-range-control input,
-  .vr-range-control output {
+  .mpr-slab-control output {
+    display: none;
+  }
+
+  .vr-gesture-hint {
     display: none;
   }
 }
