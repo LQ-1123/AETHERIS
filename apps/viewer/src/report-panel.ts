@@ -80,11 +80,19 @@ export class ReportPanel {
 
   private showError(message: string): void {
     this.error.textContent = message;
+    this.error.classList.remove('dialog-success');
     this.error.hidden = false;
     this.reportError(message);
   }
 
+  private showSuccess(message: string): void {
+    this.error.textContent = message;
+    this.error.classList.add('dialog-success');
+    this.error.hidden = false;
+  }
+
   private clearError(): void {
+    this.error.classList.remove('dialog-success');
     this.error.hidden = true;
   }
 
@@ -435,6 +443,7 @@ export class ReportPanel {
         payload,
       );
       this.report = updated;
+      this.showSuccess(`草稿已保存（第 ${updated.revision} 版）`);
       this.renderEditor(updated);
     } catch (error) {
       this.showError(errorMessage(error));
@@ -452,6 +461,7 @@ export class ReportPanel {
     try {
       await signReport(current.id, current.revision);
       await this.refresh();
+      this.showSuccess('报告已签发，版本历史已更新');
     } catch (error) {
       this.showError(errorMessage(error));
       await this.refresh();
@@ -534,6 +544,7 @@ export class ReportPanel {
     try {
       await claimWorkItem(this.workItem.id, this.workItem.revision);
       await this.refresh();
+      this.showSuccess('已领取任务，可以开始撰写报告');
     } catch (error) {
       this.showError(errorMessage(error));
       await this.refresh();
@@ -546,6 +557,7 @@ export class ReportPanel {
     try {
       await releaseWorkItem(this.workItem.id, this.workItem.revision);
       await this.refresh();
+      this.showSuccess('已释放任务');
     } catch (error) {
       this.showError(errorMessage(error));
       await this.refresh();
