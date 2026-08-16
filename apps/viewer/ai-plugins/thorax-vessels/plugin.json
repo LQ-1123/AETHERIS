@@ -3,6 +3,7 @@
   "id": "org.aetheris.thorax-vessels",
   "name": "胸部血管与气道",
   "version": "1.0.0",
+  "license": "Apache-2.0（TotalSegmentator 代码）/ 权重研究用途（商用前需核实）",
   "worker_protocol": 1,
   "launcher": {
     "kind": "python",

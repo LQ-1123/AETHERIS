@@ -3,6 +3,7 @@
   "id": "org.aetheris.lungmask",
   "name": "LungMask",
   "version": "0.3.0",
+  "license": "GPL-3.0（上游 lungmask 代码；再分发前请评估 copyleft 影响）",
   "worker_protocol": 1,
   "launcher": {
     "kind": "python",

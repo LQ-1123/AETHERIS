@@ -30,6 +30,15 @@ output but does not provide code signing or an operating-system network sandbox.
   vessels and trachea/bronchi. It has its own setup script and defaults to CPU
   so its larger runtime is never installed or loaded unless explicitly chosen.
 
+## Licenses
+
+- `lungmask`: upstream code is **GPL-3.0** (copyleft). Re-evaluate before
+  redistributing a build that bundles this plugin.
+- `thorax-vessels`: TotalSegmentator code is Apache-2.0; its model weights are
+  research-use only and must be verified before any commercial use.
+
+Each manifest carries a `license` field; treat it as a hint, not legal advice.
+
 Model weights are not committed to Git. Each worker downloads weights through
 its upstream runtime on first inference and exits after the result is written,
 which releases PyTorch/MPS memory before the next AI job.
