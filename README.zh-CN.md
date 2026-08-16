@@ -195,6 +195,23 @@ AETHERIS 不止于基础 2D 阅片，当前可视化能力包括：
 * 交互式测量
 * 标注叠加
 
+### GPU Oblique MPR（任意角度多平面重建）
+
+进入 MPR 后，阅片器会自动加载 GPU Volume，并将 Axial / Coronal / Sagittal 三视图升级为患者空间联动的斜切面重建：
+
+* 每个视图中的十字交叉线就是基准线，直接拖拽离中心稍远的十字线段即可旋转。
+* 旋转任意一个视图后，另外两个视图实时沿新方向重建；三个视图始终正交并通过同一患者空间中心点。
+* 双击任意视图恢复标准 Axial / Coronal / Sagittal 方向。
+* 光标靠近十字线时自动显示旋转光标，避免误触。
+* 每个视图右上角显示正方体与当前切面的交面；视图边缘显示动态 `R / L / A / P / S / I`；左上角显示偏转角度和 DICOM `Image Orientation (Patient)` 方向余弦。
+
+几何基础：
+
+* 所有 MPR 平面计算在 Patient Space 中完成，使用 `ImageOrientationPatient`、`ImagePositionPatient`、`PixelSpacing` 和 `Spacing Between Slices` 构建 4×4 仿射变换。
+* 斜切面分别计算 `spacingX` / `spacingY`，并根据平面与 Volume 的交集计算 physical FOV 与输出尺寸，支持各向异性体素。
+* MPR / MIP / MinIP 从 GPU 3D Texture 实时重采样；16-bit 纹理不可用时使用 RG8 双通道保留 HU 精度。
+* 长度和角度测量使用真实物理 spacing，同一解剖结构在不同 MPR 方向保持一致。
+
 <p align="center"><img src="doc/img/多角度MPR重建.png" alt="多角度 MPR 重建" width="760"/></p>
 
 体渲染鼠标手势：

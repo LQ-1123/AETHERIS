@@ -317,6 +317,10 @@ export interface MprPlaneMetadata {
   slice_count: number;
   pixel_spacing_mm: number;
   slice_spacing_mm: number;
+  /** MPR 图像列方向（planeXAxis）的物理采样间距，缺省时回退到 pixel_spacing_mm。 */
+  spacing_x_mm?: number;
+  /** MPR 图像行方向（planeYAxis）的物理采样间距，缺省时回退到 pixel_spacing_mm。 */
+  spacing_y_mm?: number;
   origin: [number, number, number];
   x_axis: [number, number, number];
   y_axis: [number, number, number];

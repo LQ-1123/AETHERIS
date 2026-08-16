@@ -393,7 +393,7 @@ export class Renderer {
       const caveat = frame.spacing.confidence === 'detector' ? '  探测器平面' : '';
       return `${distance.value.toFixed(distance.unit === 'mm' ? 1 : 0)} ${distance.unit}${caveat}`;
     }
-    if (annotation.kind === 'angle') return `${angleDegrees(annotation).toFixed(1)}°`;
+    if (annotation.kind === 'angle') return `${angleDegrees(annotation, frame.spacing).toFixed(1)}°`;
     if (annotation.measurementError) return annotation.measurementError;
     return annotation.syncState === 'error' ? '同步失败' : null;
   }

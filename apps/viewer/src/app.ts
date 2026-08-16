@@ -92,6 +92,12 @@ import {
 } from './masks';
 import { ByteLruCache } from './lru';
 import { LifecyclePanel } from './lifecycle-panel';
+import {
+  applyMat4,
+  computePlaneStackGeometry,
+  patientToPlaneMat4,
+  planeToPatientMat4,
+} from './patient-space';
 import { imageGeometry, Renderer } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
@@ -1777,6 +1783,7 @@ export class App {
     if (this.gpuMprRenderer) {
       this.mprObliqueMode = true;
       this.updateUi();
+      this.resizeViewport();
       this.renderAllMprPlanes();
       return;
     }
@@ -1786,6 +1793,7 @@ export class App {
       if (!this.gpuMprRenderer) return;
       this.mprObliqueMode = true;
       this.updateUi();
+      this.resizeViewport();
       this.renderAllMprPlanes();
     } catch (error) {
       console.warn('GPU Oblique MPR 不可用，使用标准 MPR', error);
@@ -1914,56 +1922,33 @@ export class App {
   private obliquePlaneMetadata(plane: MprPlane): MprPlaneMetadata {
     if (!this.mpr) throw new Error('MPR 尚未初始化');
     if (plane === 'oblique') throw new Error('Oblique 独立视口已移除');
-    const standard = requirePlane(this.mpr.metadata, plane);
     const state = this.mpr.obliquePlanes[plane];
-    const cols = standard.cols;
-    const rows = standard.rows;
-    const pixelSpacing = standard.pixel_spacing_mm;
-    const sliceSpacing = Math.min(...this.mpr.metadata.source_spacing_mm);
-    const boundsMin = this.mpr.metadata.patient_bounds_min;
-    const boundsMax = this.mpr.metadata.patient_bounds_max;
-    const center: PatientPoint3D = {
-      x: (boundsMin[0] + boundsMax[0]) / 2,
-      y: (boundsMin[1] + boundsMax[1]) / 2,
-      z: (boundsMin[2] + boundsMax[2]) / 2,
-    };
-    const projections: number[] = [];
-    for (const x of [boundsMin[0], boundsMax[0]]) {
-      for (const y of [boundsMin[1], boundsMax[1]]) {
-        for (const z of [boundsMin[2], boundsMax[2]]) {
-          projections.push(
-            (x - center.x) * state.normal[0]
-            + (y - center.y) * state.normal[1]
-            + (z - center.z) * state.normal[2],
-          );
-        }
-      }
-    }
-    const projectionMin = Math.min(...projections);
-    const projectionMax = Math.max(...projections);
-    const projectedLength = Math.max(0, projectionMax - projectionMin);
-    const sliceCount = Math.max(1, Math.floor(projectedLength / sliceSpacing) + 1);
-    const sliceZeroCenter: [number, number, number] = [
-      center.x + state.normal[0] * projectionMin,
-      center.y + state.normal[1] * projectionMin,
-      center.z + state.normal[2] * projectionMin,
-    ];
-    const origin = originFromCenterAndAxes(
-      point3(sliceZeroCenter),
+    const metadata = this.mpr.metadata;
+    const geometry = computePlaneStackGeometry(
+      {
+        origin: metadata.source_origin,
+        xAxis: metadata.source_x_axis,
+        yAxis: metadata.source_y_axis,
+        normal: metadata.source_normal,
+        spacingMm: metadata.source_spacing_mm,
+        dimensions: metadata.dimensions,
+      },
+      metadata.patient_bounds_min,
+      metadata.patient_bounds_max,
       state.xAxis,
       state.yAxis,
-      cols,
-      rows,
-      pixelSpacing,
+      state.normal,
     );
     return {
       plane,
-      rows,
-      cols,
-      slice_count: sliceCount,
-      pixel_spacing_mm: pixelSpacing,
-      slice_spacing_mm: sliceSpacing,
-      origin,
+      rows: geometry.rows,
+      cols: geometry.cols,
+      slice_count: geometry.sliceCount,
+      pixel_spacing_mm: Math.min(geometry.spacingXmm, geometry.spacingYmm),
+      slice_spacing_mm: geometry.sliceSpacingMm,
+      spacing_x_mm: geometry.spacingXmm,
+      spacing_y_mm: geometry.spacingYmm,
+      origin: geometry.origin,
       x_axis: state.xAxis,
       y_axis: state.yAxis,
       normal: state.normal,
@@ -2133,10 +2118,11 @@ export class App {
       spacing: {
         confidence: 'calibrated',
         source: 'mpr-patient-space',
-        description: `MPR 患者空间重采样 ${metadata.pixel_spacing_mm.toFixed(3)} mm`,
-        row_mm: metadata.pixel_spacing_mm,
-        col_mm: metadata.pixel_spacing_mm,
-        column_over_row: 1,
+        description: `MPR 患者空间重采样 ${(metadata.spacing_x_mm ?? metadata.pixel_spacing_mm).toFixed(3)} x ${(metadata.spacing_y_mm ?? metadata.pixel_spacing_mm).toFixed(3)} mm`,
+        row_mm: metadata.spacing_y_mm ?? metadata.pixel_spacing_mm,
+        col_mm: metadata.spacing_x_mm ?? metadata.pixel_spacing_mm,
+        column_over_row: (metadata.spacing_x_mm ?? metadata.pixel_spacing_mm)
+          / (metadata.spacing_y_mm ?? metadata.pixel_spacing_mm),
       },
     };
   }
@@ -5212,7 +5198,7 @@ export class App {
           crosshair = addPatientVector(
             crosshair,
             metadata.x_axis,
-            movement.x * metadata.pixel_spacing_mm,
+            movement.x * (metadata.spacing_x_mm ?? metadata.pixel_spacing_mm),
           );
         }
         this.setMprCrosshair(crosshair);
@@ -7203,16 +7189,14 @@ export function patientPointForMprImage(
   sliceIndex: number,
   plane: MprPlaneMetadata,
 ): PatientPoint3D {
-  const value = addArray(
-    addArray(
-      addArray(
-        plane.origin,
-        scaleArray(plane.normal, sliceIndex * plane.slice_spacing_mm),
-      ),
-      scaleArray(plane.x_axis, imagePoint.x * plane.pixel_spacing_mm),
+  const slicePlane: MprPlaneMetadata = {
+    ...plane,
+    origin: addArray(
+      plane.origin,
+      scaleArray(plane.normal, sliceIndex * plane.slice_spacing_mm),
     ),
-    scaleArray(plane.y_axis, imagePoint.y * plane.pixel_spacing_mm),
-  );
+  };
+  const value = applyMat4(planeToPatientMat4(slicePlane), [imagePoint.x, imagePoint.y, 0]);
   return point3(value);
 }
 
@@ -7221,15 +7205,15 @@ export function mprImageForPatient(
   sliceIndex: number,
   plane: MprPlaneMetadata,
 ): Point {
-  const sliceOrigin = addArray(
-    plane.origin,
-    scaleArray(plane.normal, sliceIndex * plane.slice_spacing_mm),
-  );
-  const relative = subtractPointArray(point, sliceOrigin);
-  return {
-    x: dotArray(relative, plane.x_axis) / plane.pixel_spacing_mm,
-    y: dotArray(relative, plane.y_axis) / plane.pixel_spacing_mm,
+  const slicePlane: MprPlaneMetadata = {
+    ...plane,
+    origin: addArray(
+      plane.origin,
+      scaleArray(plane.normal, sliceIndex * plane.slice_spacing_mm),
+    ),
   };
+  const value = applyMat4(patientToPlaneMat4(slicePlane), [point.x, point.y, point.z]);
+  return { x: value[0], y: value[1] };
 }
 
 export function consumeMprWheel(
@@ -7339,24 +7323,6 @@ function rotateVectorAroundAxis(
     value[0] * cosine + cross[0] * sine + normalized[0] * dot * (1 - cosine),
     value[1] * cosine + cross[1] * sine + normalized[1] * dot * (1 - cosine),
     value[2] * cosine + cross[2] * sine + normalized[2] * dot * (1 - cosine),
-  ];
-}
-
-function originFromCenterAndAxes(
-  center: PatientPoint3D,
-  xAxis: [number, number, number],
-  yAxis: [number, number, number],
-  cols: number,
-  rows: number,
-  pixelSpacing: number,
-): [number, number, number] {
-  const halfX = (cols / 2) * pixelSpacing;
-  const halfY = (rows / 2) * pixelSpacing;
-  const offset = addArray(scaleArray(xAxis, halfX), scaleArray(yAxis, halfY));
-  return [
-    center.x - offset[0],
-    center.y - offset[1],
-    center.z - offset[2],
   ];
 }
 

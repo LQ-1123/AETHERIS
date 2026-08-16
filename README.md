@@ -209,6 +209,23 @@ Current visualization capabilities include:
 * Interactive measurement
 * Annotation overlays
 
+### GPU Oblique MPR (arbitrary-angle multiplanar reconstruction)
+
+Entering MPR automatically loads the GPU volume and turns the Axial / Coronal / Sagittal viewports into patient-space linked oblique reconstructions:
+
+* The crosshair lines in each viewport are the reference lines; drag a crosshair arm away from its center to rotate it.
+* Rotating one viewport rebuilds the other two in real time; all three planes remain orthogonal and pass through the same patient-space center point.
+* Double-click any viewport to restore standard Axial / Coronal / Sagittal orientation.
+* The cursor changes to a rotation indicator near crosshair lines to prevent accidental interaction.
+* Each viewport shows a cube/plane intersection icon in the top-right corner, dynamic `R / L / A / P / S / I` labels on the edges, and tilt angle plus DICOM `Image Orientation (Patient)` direction cosines in the top-left.
+
+Geometry foundation:
+
+* All MPR plane calculations happen in Patient Space using 4×4 affine transforms derived from `ImageOrientationPatient`, `ImagePositionPatient`, `PixelSpacing`, and `Spacing Between Slices`.
+* Oblique planes compute independent `spacingX` / `spacingY` and a physical FOV/output size based on the plane-volume intersection, supporting anisotropic voxels.
+* MPR / MIP / MinIP resample the GPU 3D texture in real time; when 16-bit textures are unavailable, an RG8 dual-channel fallback preserves HU precision.
+* Length and angle measurements use true physical spacing so the same anatomy stays consistent across MPR orientations.
+
 <p align="center"><img src="doc/img/多角度MPR重建.png" alt="Multi-angle MPR reconstruction" width="760"/></p>
 
 Volume rendering mouse gestures:

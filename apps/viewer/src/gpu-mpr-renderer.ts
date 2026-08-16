@@ -9,6 +9,7 @@ import {
   OrthographicCamera,
   PlaneGeometry,
   RedFormat,
+  RGFormat,
   Scene,
   ShaderMaterial,
   UnsignedByteType,
@@ -17,6 +18,7 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
+import { physicalSpacingAlong, type VolumeGeometry } from './patient-space';
 import type { MprMetadata, MprPlaneMetadata, MprProjectionMode, ViewTransform, VoiFunction } from './types';
 
 export interface GpuMprSettings {
@@ -48,6 +50,7 @@ export class GpuMprRenderer {
   private readonly material: ShaderMaterial;
   private readonly mesh: Mesh;
   private readonly texture: Data3DTexture;
+  private readonly volumeGeometry: VolumeGeometry;
   private disposed = false;
 
   constructor(
@@ -66,16 +69,38 @@ export class GpuMprRenderer {
     if (data.byteLength !== volume.byte_length) {
       throw new Error(`体纹理长度异常: 收到 ${data.byteLength} 字节，预期 ${volume.byte_length} 字节`);
     }
+    this.volumeGeometry = {
+      origin: mpr.source_origin,
+      xAxis: mpr.source_x_axis,
+      yAxis: mpr.source_y_axis,
+      normal: mpr.source_normal,
+      spacingMm: mpr.source_spacing_mm,
+      dimensions: mpr.dimensions,
+    };
     const [width, height, depth] = volume.dimensions;
     const supportsNormalized16 = context.getExtension('EXT_texture_norm16') != null;
     const source = new Uint16Array(data);
-    const textureData = supportsNormalized16
-      ? source
-      : Uint8Array.from(source, (value) => Math.round(value / 257));
+    let textureData: Uint16Array | Uint8Array;
+    let textureFormat: typeof RedFormat | typeof RGFormat;
+    let packed8 = false;
+    if (supportsNormalized16) {
+      textureData = source;
+      textureFormat = RedFormat;
+    } else {
+      // 保留 16-bit 精度：高/低字节分两个 8-bit 通道上传。
+      packed8 = true;
+      textureData = new Uint8Array(width * height * depth * 2);
+      for (let index = 0; index < source.length; index += 1) {
+        const value = source[index];
+        textureData[index * 2] = value >> 8;
+        textureData[index * 2 + 1] = value & 0xff;
+      }
+      textureFormat = RGFormat;
+    }
     this.texture = new Data3DTexture(textureData, width, height, depth);
-    this.texture.format = RedFormat;
+    this.texture.format = textureFormat;
     this.texture.type = supportsNormalized16 ? UnsignedShortType : UnsignedByteType;
-    this.texture.normalized = supportsNormalized16;
+    this.texture.normalized = true;
     this.texture.minFilter = LinearFilter;
     this.texture.magFilter = LinearFilter;
     this.texture.wrapS = ClampToEdgeWrapping;
@@ -101,7 +126,11 @@ export class GpuMprRenderer {
         uPlaneYAxis: { value: new Vector3(0, 1, 0) },
         uPlaneNormal: { value: new Vector3(0, 0, 1) },
         uImageSize: { value: new Vector2(1, 1) },
-        uPixelSpacing: { value: 1 },
+        uSpacingX: { value: 1 },
+        uSpacingY: { value: 1 },
+        uPixelAspect: { value: 1 },
+        uNormalSpacingMm: { value: 1 },
+        uPacked8: { value: packed8 ? 1 : 0 },
         uViewportSize: { value: new Vector2(1, 1) },
         uCenter: { value: new Vector2(0, 0) },
         uScale: { value: 1 },
@@ -140,7 +169,15 @@ export class GpuMprRenderer {
     (this.material.uniforms.uPlaneYAxis.value as Vector3).set(...plane.y_axis);
     (this.material.uniforms.uPlaneNormal.value as Vector3).set(...plane.normal);
     (this.material.uniforms.uImageSize.value as Vector2).set(plane.cols, plane.rows);
-    this.material.uniforms.uPixelSpacing.value = plane.pixel_spacing_mm;
+    const spacingX = plane.spacing_x_mm ?? plane.pixel_spacing_mm;
+    const spacingY = plane.spacing_y_mm ?? plane.pixel_spacing_mm;
+    this.material.uniforms.uSpacingX.value = spacingX;
+    this.material.uniforms.uSpacingY.value = spacingY;
+    this.material.uniforms.uPixelAspect.value = Math.max(1e-6, spacingX / Math.max(1e-6, spacingY));
+    this.material.uniforms.uNormalSpacingMm.value = Math.max(
+      1e-6,
+      physicalSpacingAlong(plane.normal, this.volumeGeometry),
+    );
   }
 
   setView(view: ViewTransform, viewportWidth: number, viewportHeight: number): void {
@@ -149,9 +186,11 @@ export class GpuMprRenderer {
     const imageSize = this.material.uniforms.uImageSize.value as Vector2;
     const cols = Math.max(1, imageSize.x);
     const rows = Math.max(1, imageSize.y);
+    const pixelAspect = this.material.uniforms.uPixelAspect.value as number;
     const quarterTurn = view.rotation === 90 || view.rotation === 270;
-    const displayWidth = quarterTurn ? rows : cols;
-    const displayHeight = quarterTurn ? cols : rows;
+    const sourceWidth = cols * pixelAspect;
+    const displayWidth = quarterTurn ? rows : sourceWidth;
+    const displayHeight = quarterTurn ? sourceWidth : rows;
     const fitScale = Math.min(safeWidth / displayWidth, safeHeight / displayHeight);
     const scale = Math.max(0.0001, fitScale * view.zoom);
     const centerX = safeWidth / 2 + view.panX;
@@ -235,7 +274,11 @@ const FRAGMENT_SHADER = `
   uniform vec3 uPlaneYAxis;
   uniform vec3 uPlaneNormal;
   uniform vec2 uImageSize;
-  uniform float uPixelSpacing;
+  uniform float uSpacingX;
+  uniform float uSpacingY;
+  uniform float uPixelAspect;
+  uniform float uNormalSpacingMm;
+  uniform float uPacked8;
   uniform vec2 uViewportSize;
   uniform vec2 uCenter;
   uniform float uScale;
@@ -275,13 +318,18 @@ const FRAGMENT_SHADER = `
         texCoord.x > 1.0 || texCoord.y > 1.0 || texCoord.z > 1.0) {
       return -1.0;
     }
-    return texture(uVolume, texCoord).r;
+    vec4 texSample = texture(uVolume, texCoord);
+    if (uPacked8 > 0.5) {
+      // 高字节在 R，低字节在 G，恢复 16-bit 归一化值。
+      return dot(texSample.rg, vec2(65280.0, 255.0)) / 65535.0;
+    }
+    return texSample.r;
   }
 
   float samplePlane(vec2 imagePoint) {
     vec3 patient = uPlaneOrigin
-      + uPlaneXAxis * (imagePoint.x * uPixelSpacing)
-      + uPlaneYAxis * (imagePoint.y * uPixelSpacing);
+      + uPlaneXAxis * (imagePoint.x * uSpacingX)
+      + uPlaneYAxis * (imagePoint.y * uSpacingY);
     vec3 voxel = patientToVoxel(patient);
     vec3 texCoord = voxelToTexCoord(voxel);
     if (uProjection < 0.5) {
@@ -292,8 +340,7 @@ const FRAGMENT_SHADER = `
       dot(uPlaneNormal, uSourceYAxis) / (uSourceSpacing.y * uVolumeDimensions.y),
       dot(uPlaneNormal, uSourceNormal) / (uSourceSpacing.z * uVolumeDimensions.z)
     );
-    float minSpacing = min(uSourceSpacing.x, min(uSourceSpacing.y, uSourceSpacing.z));
-    float stepCount = max(1.0, min(512.0, floor(uSlabThicknessMm / minSpacing)));
+    float stepCount = max(1.0, min(512.0, ceil(uSlabThicknessMm / max(1e-6, uNormalSpacingMm))));
     float best = uProjection < 1.5 ? -1.0 : 1.0e30;
     for (int index = 0; index < 512; index += 1) {
       if (float(index) >= stepCount) break;
@@ -315,7 +362,7 @@ const FRAGMENT_SHADER = `
     vec2 local = (screen - uCenter) / uScale;
     local = rotate(local, -uRotationRadians);
     local *= uFlip;
-    vec2 imagePoint = local + uImageSize * 0.5;
+    vec2 imagePoint = vec2(local.x / uPixelAspect, local.y) + uImageSize * 0.5;
     float normalized = samplePlane(imagePoint);
     float physical = mix(uValueMin, uValueMax, normalized);
     float gray;

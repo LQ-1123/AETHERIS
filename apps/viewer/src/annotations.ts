@@ -155,10 +155,23 @@ export function annotationLabel(annotation: Annotation): string | null {
   return `均值 ${formatNumber(statistics.mean)}${unit}  SD ${formatNumber(statistics.standard_deviation)}\n最小 ${formatNumber(statistics.minimum)}  最大 ${formatNumber(statistics.maximum)}${area}`;
 }
 
-export function angleDegrees(annotation: Annotation): number {
+export function angleDegrees(annotation: Annotation, spacing?: import('./types').SpacingInfo): number {
   if (annotation.kind !== 'angle') return 0;
-  const first = Math.atan2(annotation.start.y - annotation.vertex.y, annotation.start.x - annotation.vertex.x);
-  const second = Math.atan2(annotation.end.y - annotation.vertex.y, annotation.end.x - annotation.vertex.x);
+  let first: number;
+  let second: number;
+  if (spacing?.row_mm != null && spacing.col_mm != null) {
+    first = Math.atan2(
+      (annotation.start.y - annotation.vertex.y) * spacing.row_mm,
+      (annotation.start.x - annotation.vertex.x) * spacing.col_mm,
+    );
+    second = Math.atan2(
+      (annotation.end.y - annotation.vertex.y) * spacing.row_mm,
+      (annotation.end.x - annotation.vertex.x) * spacing.col_mm,
+    );
+  } else {
+    first = Math.atan2(annotation.start.y - annotation.vertex.y, annotation.start.x - annotation.vertex.x);
+    second = Math.atan2(annotation.end.y - annotation.vertex.y, annotation.end.x - annotation.vertex.x);
+  }
   let degrees = Math.abs((second - first) * 180 / Math.PI) % 360;
   if (degrees > 180) degrees = 360 - degrees;
   return degrees;
