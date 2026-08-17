@@ -509,11 +509,11 @@ pub async fn list_worklist(
 
 #[tauri::command]
 pub async fn work_item_for_series(
-    seriesUid: String,
+    series_uid: String,
     state: State<'_, RemoteState>,
 ) -> Result<ClinicalWorkItem, String> {
     state
-        .work_item_for_series(&seriesUid)
+        .work_item_for_series(&series_uid)
         .await
         .map_err(|error| error.to_string())
 }
@@ -545,13 +545,13 @@ pub async fn release_work_item(
 #[tauri::command]
 pub async fn register_device(
     name: String,
-    callingAeTitle: String,
-    sourceIp: String,
-    modalityHint: Option<String>,
+    calling_ae_title: String,
+    source_ip: String,
+    modality_hint: Option<String>,
     state: State<'_, RemoteState>,
 ) -> Result<DicomDevice, String> {
     state
-        .register_device(&name, &callingAeTitle, &sourceIp, modalityHint.as_deref())
+        .register_device(&name, &calling_ae_title, &source_ip, modality_hint.as_deref())
         .await
         .map_err(|error| error.to_string())
 }
@@ -569,25 +569,25 @@ pub async fn list_devices(
 
 #[tauri::command]
 pub async fn approve_device(
-    deviceId: String,
+    device_id: String,
     name: String,
-    modalityHint: Option<String>,
+    modality_hint: Option<String>,
     state: State<'_, RemoteState>,
 ) -> Result<DicomDevice, String> {
     state
-        .approve_device(&deviceId, &name, modalityHint.as_deref())
+        .approve_device(&device_id, &name, modality_hint.as_deref())
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn set_device_status(
-    deviceId: String,
+    device_id: String,
     status: String,
     state: State<'_, RemoteState>,
 ) -> Result<(), String> {
     state
-        .set_device_status(&deviceId, &status)
+        .set_device_status(&device_id, &status)
         .await
         .map_err(|error| error.to_string())
 }
@@ -607,12 +607,12 @@ pub async fn list_series_sources(
 
 #[tauri::command]
 pub async fn resolve_series_source(
-    seriesUid: String,
-    deviceId: String,
+    series_uid: String,
+    device_id: String,
     state: State<'_, RemoteState>,
 ) -> Result<(), String> {
     state
-        .resolve_series_source(&seriesUid, &deviceId)
+        .resolve_series_source(&series_uid, &device_id)
         .await
         .map_err(|error| error.to_string())
 }
@@ -627,23 +627,23 @@ pub async fn list_users(state: State<'_, RemoteState>) -> Result<Vec<AdminUser>,
 
 #[tauri::command]
 pub async fn list_user_device_grants(
-    userId: i64,
+    user_id: i64,
     state: State<'_, RemoteState>,
 ) -> Result<Vec<String>, String> {
     state
-        .list_user_device_grants(userId)
+        .list_user_device_grants(user_id)
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn replace_user_device_grants(
-    userId: i64,
-    deviceIds: Vec<String>,
+    user_id: i64,
+    device_ids: Vec<String>,
     state: State<'_, RemoteState>,
 ) -> Result<Vec<String>, String> {
     state
-        .replace_user_device_grants(userId, deviceIds)
+        .replace_user_device_grants(user_id, device_ids)
         .await
         .map_err(|error| error.to_string())
 }
