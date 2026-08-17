@@ -361,6 +361,12 @@ interface SeriesPointerDrag {
 
 const SERIES_DRAG_MIME = 'application/x-aetheris-series';
 const SERIES_POINTER_DRAG_THRESHOLD = 6;
+const WORKLIST_WIDTH_STORAGE_KEY = 'remote-pacs.worklist-width';
+const WORKLIST_MIN_WIDTH = 280;
+const WORKLIST_MAX_WIDTH = 520;
+const DETAILS_WIDTH_STORAGE_KEY = 'remote-pacs.details-width';
+const DETAILS_MIN_WIDTH = 240;
+const DETAILS_MAX_WIDTH = 420;
 
 export class App {
   private panes: SeriesPane[] = [];
@@ -492,6 +498,10 @@ export class App {
   private syncScrollEnabled = true;
   private syncWindowEnabled = true;
   private syncPropagating = false;
+  private worklistResize: { pointerId: number; startX: number; startWidth: number } | null = null;
+  private worklistResizeFrame: number | null = null;
+  private detailsResize: { pointerId: number; startX: number; startWidth: number } | null = null;
+  private detailsResizeFrame: number | null = null;
 
   private get activePane(): SeriesPane {
     const pane = this.panes[this.activePaneIndex];
@@ -652,6 +662,8 @@ export class App {
       ),
     };
     this.setupEventListeners();
+    this.setupWorklistResizer();
+    this.setupDetailsResizer();
     this.setupSeriesDropFallback();
     this.setupRemoteProgress();
     this.setupImportDrop();
@@ -659,6 +671,138 @@ export class App {
     this.restoreConnectionFields();
     this.updateUi();
     void this.autoLoginLocal();
+  }
+
+  private setupWorklistResizer(): void {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const resizer = requiredElement<HTMLElement>('worklist-resizer');
+    const savedWidth = Number.parseInt(localStorage.getItem(WORKLIST_WIDTH_STORAGE_KEY) ?? '', 10);
+    this.setWorklistWidth(Number.isFinite(savedWidth) ? savedWidth : 330);
+
+    const stopResize = (event: PointerEvent): void => {
+      if (!this.worklistResize || this.worklistResize.pointerId !== event.pointerId) return;
+      if (resizer.hasPointerCapture(event.pointerId)) resizer.releasePointerCapture(event.pointerId);
+      this.worklistResize = null;
+      workspace.classList.remove('is-resizing');
+      if (this.worklistResizeFrame !== null) {
+        cancelAnimationFrame(this.worklistResizeFrame);
+        this.worklistResizeFrame = null;
+      }
+      localStorage.setItem(WORKLIST_WIDTH_STORAGE_KEY, String(this.worklistWidth()));
+      this.resizeViewport();
+    };
+
+    resizer.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || workspace.classList.contains('worklist-hidden')) return;
+      const width = this.worklistWidth();
+      this.worklistResize = { pointerId: event.pointerId, startX: event.clientX, startWidth: width };
+      workspace.classList.add('is-resizing');
+      resizer.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    resizer.addEventListener('pointermove', (event) => {
+      const drag = this.worklistResize;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const width = clampWorklistWidth(drag.startWidth + event.clientX - drag.startX);
+      if (this.worklistResizeFrame !== null) cancelAnimationFrame(this.worklistResizeFrame);
+      this.worklistResizeFrame = requestAnimationFrame(() => {
+        this.setWorklistWidth(width);
+        this.worklistResizeFrame = null;
+      });
+    });
+    resizer.addEventListener('pointerup', stopResize);
+    resizer.addEventListener('pointercancel', stopResize);
+    resizer.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
+      const current = this.worklistWidth();
+      const next = event.key === 'Home'
+        ? WORKLIST_MIN_WIDTH
+        : event.key === 'End'
+          ? WORKLIST_MAX_WIDTH
+          : current + (event.key === 'ArrowLeft' ? -16 : 16);
+      this.setWorklistWidth(next);
+      localStorage.setItem(WORKLIST_WIDTH_STORAGE_KEY, String(this.worklistWidth()));
+      event.preventDefault();
+    });
+  }
+
+  private setupDetailsResizer(): void {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const resizer = requiredElement<HTMLElement>('details-resizer');
+    const savedWidth = Number.parseInt(localStorage.getItem(DETAILS_WIDTH_STORAGE_KEY) ?? '', 10);
+    this.setDetailsWidth(Number.isFinite(savedWidth) ? savedWidth : 278);
+
+    const stopResize = (event: PointerEvent): void => {
+      if (!this.detailsResize || this.detailsResize.pointerId !== event.pointerId) return;
+      if (resizer.hasPointerCapture(event.pointerId)) resizer.releasePointerCapture(event.pointerId);
+      this.detailsResize = null;
+      workspace.classList.remove('is-resizing-details');
+      if (this.detailsResizeFrame !== null) {
+        cancelAnimationFrame(this.detailsResizeFrame);
+        this.detailsResizeFrame = null;
+      }
+      localStorage.setItem(DETAILS_WIDTH_STORAGE_KEY, String(this.detailsWidth()));
+      this.resizeViewport();
+    };
+
+    resizer.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || workspace.classList.contains('details-hidden')) return;
+      this.detailsResize = { pointerId: event.pointerId, startX: event.clientX, startWidth: this.detailsWidth() };
+      workspace.classList.add('is-resizing-details');
+      resizer.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    resizer.addEventListener('pointermove', (event) => {
+      const drag = this.detailsResize;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const width = clampDetailsWidth(drag.startWidth - (event.clientX - drag.startX));
+      if (this.detailsResizeFrame !== null) cancelAnimationFrame(this.detailsResizeFrame);
+      this.detailsResizeFrame = requestAnimationFrame(() => {
+        this.setDetailsWidth(width);
+        this.detailsResizeFrame = null;
+      });
+    });
+    resizer.addEventListener('pointerup', stopResize);
+    resizer.addEventListener('pointercancel', stopResize);
+    resizer.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
+      const current = this.detailsWidth();
+      const next = event.key === 'Home'
+        ? DETAILS_MIN_WIDTH
+        : event.key === 'End'
+          ? DETAILS_MAX_WIDTH
+          : current + (event.key === 'ArrowLeft' ? 16 : -16);
+      this.setDetailsWidth(next);
+      localStorage.setItem(DETAILS_WIDTH_STORAGE_KEY, String(this.detailsWidth()));
+      event.preventDefault();
+    });
+  }
+
+  private detailsWidth(): number {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const columns = getComputedStyle(workspace).gridTemplateColumns.split(' ');
+    const value = Number.parseFloat(columns.at(-1) ?? '');
+    return Number.isFinite(value) ? clampDetailsWidth(value) : 278;
+  }
+
+  private setDetailsWidth(width: number): void {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const next = clampDetailsWidth(width);
+    workspace.style.setProperty('--details-width', `${next}px`);
+    requiredElement<HTMLElement>('details-resizer').setAttribute('aria-valuenow', String(next));
+  }
+
+  private worklistWidth(): number {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const value = Number.parseFloat(getComputedStyle(workspace).getPropertyValue('--worklist-width'));
+    return Number.isFinite(value) ? clampWorklistWidth(value) : 330;
+  }
+
+  private setWorklistWidth(width: number): void {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const next = clampWorklistWidth(width);
+    workspace.style.setProperty('--worklist-width', `${next}px`);
+    requiredElement<HTMLElement>('worklist-resizer').setAttribute('aria-valuenow', String(next));
   }
 
   private initializePanes(): void {
@@ -7365,6 +7509,14 @@ function presetSignature(preset: WindowPreset): string {
 
 function userPresetSignature(preset: UserWindowPreset): string {
   return `${preset.id}:${preset.modality}:${preset.name}:${presetSignature(preset)}`;
+}
+
+function clampWorklistWidth(width: number): number {
+  return Math.min(WORKLIST_MAX_WIDTH, Math.max(WORKLIST_MIN_WIDTH, Math.round(width)));
+}
+
+function clampDetailsWidth(width: number): number {
+  return Math.min(DETAILS_MAX_WIDTH, Math.max(DETAILS_MIN_WIDTH, Math.round(width)));
 }
 
 function formatPersonName(value: string | null): string {

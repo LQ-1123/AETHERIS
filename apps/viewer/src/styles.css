@@ -1168,22 +1168,104 @@ button svg {
 }
 
 #workspace {
+  --worklist-width: 330px;
+  --details-width: 278px;
+  --worklist-resizer-width: 8px;
+  --details-resizer-width: 8px;
   grid-row: 3;
   display: grid;
-  grid-template-columns: 330px minmax(0, 1fr) 278px;
+  grid-template-columns: var(--worklist-width) var(--worklist-resizer-width) minmax(0, 1fr) var(--details-resizer-width) var(--details-width);
   min-height: 0;
 }
 
 #workspace.details-hidden {
-  grid-template-columns: 330px minmax(0, 1fr) 0;
+  grid-template-columns: var(--worklist-width) var(--worklist-resizer-width) minmax(0, 1fr) 0 0;
 }
 
 #workspace.worklist-hidden {
-  grid-template-columns: 0 minmax(0, 1fr) 278px;
+  grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
 }
 
 #workspace.worklist-hidden.details-hidden {
-  grid-template-columns: 0 minmax(0, 1fr) 0;
+  grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
+}
+
+#worklist-resizer {
+  position: relative;
+  z-index: 4;
+  cursor: col-resize;
+  border-right: 1px solid #34383b;
+  background: #15181a;
+  touch-action: none;
+}
+
+#worklist-resizer::after {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  background: #58666a;
+  content: '';
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+#worklist-resizer:hover::after,
+#worklist-resizer:focus-visible::after,
+#workspace.is-resizing #worklist-resizer::after {
+  background: #79d3dc;
+  opacity: 1;
+}
+
+#worklist-resizer:focus-visible,
+#details-resizer:focus-visible {
+  outline: 2px solid #58b8c7;
+  outline-offset: -2px;
+}
+
+#details-resizer {
+  position: relative;
+  z-index: 4;
+  cursor: col-resize;
+  border-left: 1px solid #34383b;
+  background: #15181a;
+  touch-action: none;
+}
+
+#details-resizer::after {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 3px;
+  height: 36px;
+  border-radius: 2px;
+  background: #58666a;
+  content: '';
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+#details-resizer:hover::after,
+#details-resizer:focus-visible::after,
+#workspace.is-resizing-details #details-resizer::after {
+  background: #79d3dc;
+  opacity: 1;
+}
+
+#workspace.is-resizing-details,
+#workspace.is-resizing-details * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+#workspace.is-resizing,
+#workspace.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 #worklist-panel {
@@ -1395,6 +1477,8 @@ button svg {
 
 .worklist-row-content {
   display: grid;
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   gap: 3px;
 }
@@ -3238,12 +3322,12 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 @media (max-width: 980px) {
   #workspace,
   #workspace.details-hidden {
-    grid-template-columns: 300px minmax(0, 1fr) 0;
+    grid-template-columns: var(--worklist-width) var(--worklist-resizer-width) minmax(0, 1fr) 0 0;
   }
 
   #workspace.worklist-hidden,
   #workspace.worklist-hidden.details-hidden {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
+    grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
   }
 
   #details-panel {
@@ -3254,8 +3338,12 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   .search-control,
   .worklist-status,
   .patient-list,
-  .worklist-pagination {
-    min-width: 300px;
+  .worklist-pagination,
+  .panel-heading,
+  .metadata-list,
+  .panel-section,
+  .panel-footer {
+    min-width: 0;
   }
 }
 
@@ -3653,6 +3741,7 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   padding: 8px 12px;
   border-bottom: 1px solid #2a3036;
   background: #1a1f23;
@@ -3660,15 +3749,20 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 }
 
 .rw-titlebar strong {
-  font-size: 13px;
   min-width: 0;
   overflow: hidden;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .rw-titlebar .report-status {
+  flex: 0 1 auto;
+  min-width: 0;
   margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rw-patient-strip {
@@ -3702,36 +3796,42 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 
 .rw-editor-block {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
   min-height: 0;
+  padding: 10px 12px;
 }
 
 .rw-editor-head {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   flex: 0 0 auto;
 }
 
 .rw-editor-head strong {
+  flex: 0 0 auto;
   font-size: 13px;
 }
 
 .rw-editor-head .report-editor-toolbar {
+  min-width: 0;
   margin-left: auto;
+  overflow-x: auto;
 }
 
 .rw-editor-block .report-editor {
-  min-height: 110px;
-  max-height: 40vh;
+  min-height: 72px;
+  height: 100%;
+  max-height: none;
   overflow-y: auto;
 }
 
 .rw-editor-block + .rw-editor-block .report-editor {
   min-height: 72px;
-  max-height: 30vh;
+  max-height: none;
 }
 
 .rw-signatures {
@@ -3751,14 +3851,47 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 }
 
 .rw-actions {
-  flex: 0 0 auto;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 12px;
+  min-height: 52px;
+  padding: 8px 12px;
   border-top: 1px solid #2a3036;
   background: #1a1f23;
 }
+
+.rw-actions #rw-versions-btn {
+  margin-left: auto;
+}
+
+@media (max-width: 420px) {
+  .rw-titlebar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .rw-titlebar .report-status {
+    max-width: 92px;
+  }
+
+  .rw-patient-strip,
+  .rw-workitem,
+  .rw-signatures,
+  .rw-actions {
+    padding-inline: 8px;
+  }
+
+  .rw-editor-block {
+    padding-inline: 8px;
+  }
+
+  .rw-actions #rw-versions-btn {
+    margin-left: 0;
+  }
+}
+
 
 .rw-drawer {
   position: fixed;
@@ -3808,12 +3941,18 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 /* ---- 报告状态徽标（病人/检查列表） ---- */
 
 .worklist-report-badge {
-  flex: 0 0 auto;
-  margin-left: auto;
+  position: static;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+  max-width: 100%;
+  margin-top: 2px;
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 10px;
   line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
   background: #22333c;
   color: #c6d4d9;
 }
