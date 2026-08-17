@@ -78,10 +78,14 @@ export class ReportWindow {
   }
 
   async init(): Promise<void> {
-    await listenReportContext((context) => void this.applyContext(context));
-    const context = await getReportContext();
-    if (context) await this.applyContext(context);
-    document.getElementById('report-window-root')!.hidden = false;
+    try {
+      await listenReportContext((context) => void this.applyContext(context));
+      const context = await getReportContext();
+      if (context) await this.applyContext(context);
+    } catch (error) {
+      console.error('报告窗初始化失败', error);
+      this.showError(`初始化失败：${errorMessage(error)}`);
+    }
   }
 
   private async applyContext(context: ReportWindowContext): Promise<void> {

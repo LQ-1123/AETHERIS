@@ -144,6 +144,8 @@ window.addEventListener('DOMContentLoaded', () => {
     const shell = document.getElementById('app-shell');
     if (login) login.hidden = true;
     if (shell) shell.style.display = 'none';
+    const root = document.getElementById('report-window-root');
+    if (root) root.hidden = false;
     void import('./report-window').then(({ ReportWindow }) => new ReportWindow().init());
     return;
   }
