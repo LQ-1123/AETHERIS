@@ -24,9 +24,10 @@
       "capabilities": [
         {
           "identifier": "main-capability",
-          "windows": ["main"],
+          "windows": ["main", "report"],
           "permissions": [
             "core:default",
+            "core:window:allow-set-focus",
             "dialog:allow-open",
             "dialog:allow-save",
             "dialog:allow-message",
