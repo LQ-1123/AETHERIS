@@ -1,0 +1,67 @@
+<div id="report-win-mock" style="display:flex;gap:16px;align-items:stretch;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
+  <!-- 屏1：阅片器（示意） -->
+  <div style="flex:1;min-width:280px;border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;background:var(--card);">
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted-foreground);display:flex;align-items:center;gap:8px;">
+      <span style="width:10px;height:10px;border-radius:50%;background:var(--primary);display:inline-block;"></span>
+      <strong style="color:var(--foreground);">屏 1 · 阅片器</strong><span>（主窗口，AETHERIS）</span>
+    </div>
+    <div style="flex:1;min-height:360px;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 45%, #1b2a33 0%, #0d1418 70%);">
+      <span style="color:var(--muted-foreground);font-size:13px;">CT 影像 · 翻层 / 测量 / MPR / VR</span>
+    </div>
+  </div>
+
+  <!-- 屏2：报告小窗 -->
+  <div style="width:440px;flex:0 0 440px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:0 12px 40px -12px rgba(0,0,0,0.5);display:flex;flex-direction:column;">
+    <!-- 窗口标题栏 -->
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);">
+      <span style="display:inline-flex;gap:5px;">
+        <span style="width:10px;height:10px;border-radius:50%;background:#ff5f57;"></span>
+        <span style="width:10px;height:10px;border-radius:50%;background:#febc2e;"></span>
+        <span style="width:10px;height:10px;border-radius:50%;background:#28c840;"></span>
+      </span>
+      <strong style="font-size:13px;color:var(--foreground);">诊断报告 · 孙钰林</strong>
+      <span class="viz-badge" style="margin-left:auto;">编辑中</span>
+    </div>
+
+    <!-- 紧凑患者信息条 -->
+    <div style="display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted-foreground);">
+      <span>ID 2608111111435</span><span>男</span><span>42 岁</span><span>CT</span><span>头颅</span><span>2026-08-08</span>
+    </div>
+
+    <!-- 所见 -->
+    <div style="padding:12px 14px;display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <strong style="font-size:13px;color:var(--foreground);">影像所见</strong>
+        <span style="display:inline-flex;gap:4px;">
+          <span style="font-weight:700;padding:1px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">B</span>
+          <span style="font-style:italic;padding:1px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">I</span>
+          <span style="text-decoration:underline;padding:1px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">U</span>
+          <span style="padding:1px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">☰</span>
+        </span>
+        <span style="margin-left:auto;font-size:11px;color:var(--muted-foreground);">模板 ▸</span>
+      </div>
+      <div style="min-height:110px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--background);font-size:13px;line-height:1.7;color:var(--foreground);">
+        <b>双肺纹理清晰</b>，未见明显实变影。<br>
+        · 肺实质：未见明显异常<br>
+        · 纵隔：未见明显异常
+      </div>
+    </div>
+
+    <!-- 意见 -->
+    <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <strong style="font-size:13px;color:var(--foreground);">意见</strong>
+        <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--foreground);"><input type="checkbox" checked> 阳性</label>
+        <span style="font-size:11px;color:var(--muted-foreground);">质控：无</span>
+      </div>
+      <div style="min-height:64px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--background);font-size:13px;line-height:1.7;color:var(--foreground);">胸部 CT 未见明显急性异常。</div>
+    </div>
+
+    <!-- 底部动作 -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--border);">
+      <button class="btn-primary">保存草稿</button>
+      <button class="btn">签发</button>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted-foreground);">Ctrl+S 保存 · Ctrl+Enter 签发</span>
+    </div>
+  </div>
+</div>
