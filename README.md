@@ -552,7 +552,7 @@ The long-term direction of AETHERIS includes:
 * [ ] Advanced MPR / VR workflows
 * [ ] More AI segmentation models
 * [ ] AI-assisted image analysis
-* [ ] Structured reporting
+* [x] Structured reporting (report workbench: findings/impression/recommendation, positive flag, sign/amend, version snapshots)
 * [ ] DICOM SR integration
 * [ ] Advanced worklist management
 * [ ] Distributed storage
