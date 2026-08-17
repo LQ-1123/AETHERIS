@@ -66,21 +66,21 @@ AETHERIS is intended to be both a usable PACS platform and an engineering founda
 
 ## Screenshots
 
-| Login                               | Worklist                                  | 2D Viewer                             |
-| ----------------------------------- | ----------------------------------------- | ------------------------------------- |
-| ![Login](doc/screenshots/login.png) | ![Worklist](doc/screenshots/worklist.png) | ![Viewer](doc/screenshots/viewer.png) |
+| Login                               | Main Workspace (Worklist + Viewer)                  | Multi-window Viewing                              |
+| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------- |
+| ![Login](doc/screenshots/login.png) | ![Main Workspace](doc/img/%E6%9B%B4%E6%96%B0%E7%9A%84%E4%B8%BB%E7%95%8C%E9%9D%A2.png) | ![Multi-window Viewing](doc/img/%E5%A4%9A%E7%AA%97%E5%8F%A3%E5%9B%BE%E5%83%8F.png) |
 
-| MPR                             | Volume Rendering                                          | AI Segmentation                                         |
-| ------------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| ![MPR](doc/screenshots/mpr.png) | ![Volume Rendering](doc/screenshots/volume-rendering.png) | ![AI Segmentation](doc/screenshots/ai-segmentation.png) |
+| MPR Reconstruction                             | Volume Rendering                                          | AI Segmentation                                         |
+| ---------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
+| ![MPR Reconstruction](doc/img/%E5%A4%9A%E8%A7%92%E5%BA%A6MPR%E9%87%8D%E5%BB%BA.png) | ![Volume Rendering](doc/screenshots/volume-rendering.png) | ![AI Segmentation](doc/screenshots/ai-segmentation.png) |
 
-| Annotations                                     | DICOM Tag Revision                                | Lifecycle                                   |
-| ----------------------------------------------- | ------------------------------------------------- | ------------------------------------------- |
-| ![Annotations](doc/screenshots/annotations.png) | ![Tag Revision](doc/screenshots/tag-revision.png) | ![Lifecycle](doc/screenshots/lifecycle.png) |
+| Report Workbench (Radiologist)                 | Annotations                                     | DICOM Tag Revision                                |
+| ---------------------------------------------- | ----------------------------------------------- | ------------------------------------------------- |
+| ![Report Workbench](doc/img/%E6%8A%A5%E5%91%8A%E4%B9%A6%E5%86%99%E7%95%8C%E9%9D%A2-%E5%8C%BB%E7%94%9F.png) | ![Annotations](doc/screenshots/annotations.png) | ![Tag Revision](doc/screenshots/tag-revision.png) |
 
-| DICOM Router                          |
-| ------------------------------------- |
-| ![Router](doc/screenshots/router.png) |
+| Admin Console                          | Lifecycle                                   | DICOM Router                          |
+| -------------------------------------- | ------------------------------------------- | ------------------------------------- |
+| ![Admin Console](doc/img/%E7%AE%A1%E7%90%86%E6%8E%A7%E5%88%B6%E5%8F%B0.png) | ![Lifecycle](doc/screenshots/lifecycle.png) | ![Router](doc/screenshots/router.png) |
 
 ---
 
