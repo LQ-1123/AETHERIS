@@ -768,6 +768,14 @@ button svg {
   margin-bottom: 12px;
 }
 
+/* 覆盖 .segmented button 的 32px 图标宽度：管理控制台 tab 是文字按钮 */
+.admin-console-tabs button {
+  width: auto;
+  height: auto;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
 .admin-console-body {
   display: flex;
   flex-direction: column;
