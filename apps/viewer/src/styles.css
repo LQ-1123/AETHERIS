@@ -3804,3 +3804,36 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
   font-size: 12px;
   color: #dbe7eb;
 }
+
+/* ---- 报告状态徽标（病人/检查列表） ---- */
+
+.worklist-report-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.6;
+  background: #22333c;
+  color: #c6d4d9;
+}
+
+.worklist-report-badge[data-status="pending"] {
+  background: #3a2f14;
+  color: #ffd98a;
+}
+
+.worklist-report-badge[data-status="writing"] {
+  background: #15364a;
+  color: #7fd6ff;
+}
+
+.worklist-report-badge[data-status="locked"] {
+  background: #3a2f14;
+  color: #ffab70;
+}
+
+.worklist-report-badge[data-status="signed"] {
+  background: #17382b;
+  color: #7fe3a8;
+}

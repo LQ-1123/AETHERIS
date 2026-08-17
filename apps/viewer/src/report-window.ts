@@ -1,20 +1,18 @@
 import {
   beginReportAmendment,
-  claimStudy,
   createReport,
   getReportContext,
   listenReportContext,
   listReportTemplates,
   listReports,
   listReportVersions,
-  releaseStudy,
+  listStudySeries,
   signReport,
-  studyWorkItems,
   updateReportDraft,
   type ReportWindowContext,
 } from './api';
 import { htmlToText, plainToHtml, sanitizeReportHtml } from './rich-text';
-import type { ClinicalWorkItem, DiagnosticReport, ReportTemplate, ReportVersion } from './types';
+import type { DiagnosticReport, ReportTemplate, ReportVersion } from './types';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -23,9 +21,10 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 }
 
 const STATUS_LABEL: Record<string, { text: string; status: string }> = {
-  draft: { text: '未锁定 · 编辑中', status: 'draft' },
-  signed: { text: '已锁定 · 已签发', status: 'signed' },
-  amending: { text: '修订中', status: 'amending' },
+  pending: { text: '待书写', status: 'pending' },
+  writing: { text: '书写中', status: 'writing' },
+  locked: { text: '已锁定', status: 'locked' },
+  signed: { text: '已签发', status: 'signed' },
 };
 
 /** 报告独立小窗：紧凑单栏，双屏工作流下拖到第二块屏边看边写。 */
@@ -34,7 +33,6 @@ export class ReportWindow {
   private report: DiagnosticReport | null = null;
   private versions: ReportVersion[] = [];
   private templates: ReportTemplate[] = [];
-  private workItems: ClinicalWorkItem[] = [];
   private busy = false;
   private lastEditor: 'findings' | 'impression' | null = null;
 
@@ -53,8 +51,6 @@ export class ReportWindow {
     el<HTMLButtonElement>('rw-save').addEventListener('click', () => void this.save());
     el<HTMLButtonElement>('rw-sign').addEventListener('click', () => void this.sign());
     el<HTMLButtonElement>('rw-amend').addEventListener('click', () => void this.amend());
-    el<HTMLButtonElement>('rw-claim').addEventListener('click', () => void this.claim());
-    el<HTMLButtonElement>('rw-release').addEventListener('click', () => void this.release());
     el<HTMLButtonElement>('rw-create').addEventListener('click', () => void this.create());
     el<HTMLButtonElement>('rw-template-btn').addEventListener('click', () => this.openTemplates());
     el<HTMLButtonElement>('rw-versions-btn').addEventListener('click', () => this.openVersions());
@@ -119,27 +115,17 @@ export class ReportWindow {
     return this.context?.user.role === 'radiologist';
   }
 
-  private claimedByMe(): boolean {
-    const userId = this.context?.user.id;
-    return this.workItems.length > 0
-      && this.workItems.every((item) =>
-        (item.status === 'claimed' || item.status === 'reporting' || item.status === 'completed')
-        && (item.status === 'completed' || item.assignee_id === userId));
-  }
-
   async refresh(): Promise<void> {
     if (!this.context) return;
     if (this.busy) return;
     this.busy = true;
     try {
       const { studyUid, modality } = this.context;
-      const [reports, templates, items] = await Promise.all([
+      const [reports, templates] = await Promise.all([
         listReports(studyUid),
         listReportTemplates(modality ?? undefined),
-        studyWorkItems(studyUid).catch(() => [] as ClinicalWorkItem[]),
       ]);
       this.templates = templates;
-      this.workItems = items;
       this.report = reports[0] ?? null;
       this.versions = [];
       if (this.report?.status === 'signed') {
@@ -159,54 +145,37 @@ export class ReportWindow {
   }
 
   private render(): void {
-    this.renderWorkItem();
+    this.renderStatus();
     const report = this.report;
     if (!report) {
       this.renderEmpty();
       return;
     }
-    this.renderStatus(report.status);
     this.renderDocument(report);
     this.renderSignature(report);
   }
 
-  private renderStatus(status: string): void {
-    const mapping = STATUS_LABEL[status] ?? STATUS_LABEL.draft;
+  private renderStatus(): void {
+    const report = this.report;
+    let key = 'pending';
+    if (report) {
+      if (report.status === 'signed') key = 'signed';
+      else if (report.author_id === this.context?.user.id) key = 'writing';
+      else key = 'locked';
+    }
+    const mapping = STATUS_LABEL[key];
     const badge = el('rw-status');
     badge.textContent = mapping.text;
     badge.dataset.status = mapping.status;
-  }
-
-  private renderWorkItem(): void {
-    const row = el('rw-workitem');
-    const text = el('rw-workitem-text');
-    const claim = el<HTMLButtonElement>('rw-claim');
-    const release = el<HTMLButtonElement>('rw-release');
-    const create = el<HTMLButtonElement>('rw-create');
-    claim.hidden = true;
-    release.hidden = true;
-    create.hidden = true;
-    const report = this.report;
-    if (!this.writable()) { row.hidden = true; return; }
-    row.hidden = false;
-    const items = this.workItems;
-    if (items.length === 0) {
-      text.textContent = '该检查没有待诊任务，无法创建报告';
-      return;
-    }
-    const userId = this.context?.user.id;
-    const anyPending = items.some((item) => item.status === 'pending');
-    const anyByOther = items.some((item) =>
-      (item.status === 'claimed' || item.status === 'reporting') && item.assignee_id !== userId);
-    if (anyPending) {
-      text.textContent = '待诊任务：领取后才能撰写';
-      claim.hidden = false;
-    } else if (anyByOther) {
-      text.textContent = '任务已由他人领取';
+    // 新建按钮：待书写且可写时显示
+    const showCreate = key === 'pending' && this.writable();
+    el<HTMLButtonElement>('rw-create').hidden = !showCreate;
+    const workItemRow = el('rw-workitem');
+    if (showCreate) {
+      workItemRow.hidden = false;
+      el('rw-workitem-text').textContent = '待书写';
     } else {
-      text.textContent = '已领取任务';
-      release.hidden = report?.status === 'draft' || report?.status === 'amending';
-      if (!report) create.hidden = false;
+      workItemRow.hidden = true;
     }
   }
 
@@ -222,11 +191,12 @@ export class ReportWindow {
     el<HTMLButtonElement>('rw-save').hidden = true;
     el<HTMLButtonElement>('rw-sign').hidden = true;
     el<HTMLButtonElement>('rw-amend').hidden = true;
-    this.renderStatus('draft');
   }
 
   private renderDocument(report: DiagnosticReport): void {
-    const editable = report.status === 'draft' || report.status === 'amending';
+    // 草稿即锁：只有作者本人能编辑 draft/amending。
+    const editable = (report.status === 'draft' || report.status === 'amending')
+      && report.author_id === this.context?.user.id;
     this.findings.innerHTML = sanitizeReportHtml(contentForEditor(report.findings, report.template_payload != null));
     this.impression.innerHTML = sanitizeReportHtml(contentForEditor(report.impression, report.template_payload != null));
     this.findings.contentEditable = editable ? 'true' : 'false';
@@ -324,11 +294,10 @@ export class ReportWindow {
 
   private async create(): Promise<void> {
     if (!this.context) return;
-    if (this.workItems.length === 0) { this.showError('该检查没有待诊任务，无法创建报告'); return; }
-    if (!this.claimedByMe()) { this.showError('请先领取任务再创建报告'); return; }
     try {
-      // 报告按检查一份：覆盖医生已领取的全部序列（study_work_items 已按授权过滤）
-      const seriesUids = this.workItems.map((item) => item.series_uid);
+      // 报告按检查一份：覆盖医生有访问权的全部序列（list_study_series 已按授权过滤）
+      const series = await listStudySeries(this.context.studyUid);
+      const seriesUids = series.map((entry) => entry.series_uid);
       const report = await createReport(this.context.studyUid, seriesUids, null, false);
       this.report = report;
       this.render();
@@ -393,18 +362,6 @@ export class ReportWindow {
       this.showError(errorMessage(error));
       await this.refresh();
     }
-  }
-
-  private async claim(): Promise<void> {
-    if (!this.context) return;
-    try { await claimStudy(this.context.studyUid); await this.refresh(); }
-    catch (error) { this.showError(errorMessage(error)); await this.refresh(); }
-  }
-
-  private async release(): Promise<void> {
-    if (!this.context) return;
-    try { await releaseStudy(this.context.studyUid); await this.refresh(); }
-    catch (error) { this.showError(errorMessage(error)); await this.refresh(); }
   }
 }
 

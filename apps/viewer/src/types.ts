@@ -620,6 +620,10 @@ export interface PatientSummary {
   series_count: number;
   instance_count: number;
   latest_study_date: string | null;
+  pending_studies: number;
+  writing_studies: number;
+  locked_studies: number;
+  signed_studies: number;
 }
 
 export interface StudySummary {
@@ -633,6 +637,7 @@ export interface StudySummary {
   modalities: string[];
   series_count: number;
   instance_count: number;
+  report_status: string;
 }
 
 export interface RemoteSeriesSummary {

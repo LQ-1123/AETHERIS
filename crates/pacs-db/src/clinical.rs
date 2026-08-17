@@ -715,14 +715,13 @@ pub async fn create_report(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(DbError::NotFound)?;
+    // 授权校验：覆盖的序列必须来源可信 + 设备已批准 + 医生有设备授权（不再要求领取）。
     let rows = sqlx::query(
-        r#"SELECT se.id,w.assignee_fk FROM series se
-           JOIN diagnostic_work_items w ON w.series_fk=se.id AND w.institution_id=$1
+        r#"SELECT se.id FROM series se
            JOIN dicom_devices d ON d.id=se.source_device_fk AND d.status='active'
            JOIN user_device_grants g ON g.device_fk=d.id AND g.user_fk=$3
            WHERE se.study_fk=$2 AND se.series_instance_uid=ANY($4)
-             AND se.source_status='trusted' AND w.assignee_fk=$3
-             AND w.status IN ('claimed','reporting')"#,
+             AND se.source_status='trusted'"#,
     )
     .bind(institution_id)
     .bind(study_id)
@@ -732,7 +731,7 @@ pub async fn create_report(
     .await?;
     if rows.len() != series_uids.len() {
         return Err(DbError::Invalid(
-            "序列未全部获权或未由当前医生领取".to_owned(),
+            "序列未全部获权".to_owned(),
         ));
     }
     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM series WHERE study_fk=$1")
@@ -757,7 +756,13 @@ pub async fn create_report(
     .bind(is_positive)
     .bind(study_uid)
     .fetch_one(&mut *tx)
-    .await?;
+    .await
+    .map_err(|error| match error {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            DbError::Conflict("该检查已有报告".to_owned())
+        }
+        other => DbError::from(other),
+    })?;
     for row in rows {
         let series_id: i64 = row.try_get("id")?;
         sqlx::query("INSERT INTO diagnostic_report_series(report_fk,series_fk) VALUES($1,$2)")
@@ -765,8 +770,6 @@ pub async fn create_report(
             .bind(series_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE diagnostic_work_items SET status='reporting',revision=revision+1 WHERE series_fk=$1")
-            .bind(series_id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(report)

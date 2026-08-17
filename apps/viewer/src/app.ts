@@ -4871,6 +4871,8 @@ export class App {
         this.expandedPatientId === patient.id,
       );
       row.classList.add('patient-row');
+      const patientStatus = patientReportStatus(patient);
+      row.append(reportStatusBadge(patientStatus.text, patientStatus.key));
       row.addEventListener('click', () => void this.togglePatient(patient.id));
       item.append(row);
       this.appendTagEditButton(item, {
@@ -4907,6 +4909,10 @@ export class App {
               this.expandedStudyUid === study.study_uid,
             );
             studyRow.classList.add('study-row');
+            studyRow.append(reportStatusBadge(
+              studyReportStatusText(study.report_status),
+              study.report_status,
+            ));
             studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
             studyItem.append(studyRow);
             this.appendShareButton(studyItem, study.study_uid, studyTitle);
@@ -7373,6 +7379,27 @@ function formatDicomDate(value: string | null): string {
 function formatApiDate(value: string | null): string {
   if (!value) return '';
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : formatDicomDate(value);
+}
+
+function reportStatusBadge(text: string, key: string): HTMLSpanElement {
+  const badge = document.createElement('span');
+  badge.className = 'worklist-report-badge';
+  badge.dataset.status = key;
+  badge.textContent = text;
+  return badge;
+}
+
+function patientReportStatus(patient: PatientSummary): { text: string; key: string } {
+  if (patient.locked_studies > 0) return { text: '已锁定', key: 'locked' };
+  if (patient.writing_studies > 0) return { text: '书写中', key: 'writing' };
+  if (patient.pending_studies > 0) return { text: `${patient.pending_studies} 个检查待书写`, key: 'pending' };
+  return { text: '已签发', key: 'signed' };
+}
+
+function studyReportStatusText(status: string): string {
+  if (status === 'signed') return '已签发';
+  if (status === 'writing') return '书写中';
+  return '待书写';
 }
 
 function worklistRow(

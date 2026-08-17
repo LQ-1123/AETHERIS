@@ -153,6 +153,10 @@ pub struct PatientSummary {
     pub series_count: i64,
     pub instance_count: i64,
     pub latest_study_date: Option<String>,
+    pub pending_studies: i64,
+    pub writing_studies: i64,
+    pub locked_studies: i64,
+    pub signed_studies: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +171,7 @@ pub struct StudySummary {
     pub modalities: Vec<String>,
     pub series_count: i32,
     pub instance_count: i32,
+    pub report_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

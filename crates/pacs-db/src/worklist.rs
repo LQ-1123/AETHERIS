@@ -20,6 +20,10 @@ type PatientRow = (
     i64,
     i64,
     Option<NaiveDate>,
+    i64,
+    i64,
+    i64,
+    i64,
 );
 type StudyRow = (
     String,
@@ -32,6 +36,7 @@ type StudyRow = (
     Vec<String>,
     i32,
     i32,
+    String,
 );
 type SeriesRow = (
     String,
@@ -55,6 +60,11 @@ pub struct PatientSummary {
     pub series_count: i64,
     pub instance_count: i64,
     pub latest_study_date: Option<NaiveDate>,
+    /// 报告状态计数（按检查）：待书写 / 我书写中 / 他人锁定 / 已签发。
+    pub pending_studies: i64,
+    pub writing_studies: i64,
+    pub locked_studies: i64,
+    pub signed_studies: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -69,6 +79,8 @@ pub struct StudySummary {
     pub modalities: Vec<String>,
     pub series_count: i32,
     pub instance_count: i32,
+    /// 报告状态：pending（待书写）| writing（书写中）| signed（已签发）。
+    pub report_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -100,12 +112,17 @@ pub async fn list_patients(
                 COUNT(DISTINCT st.id)::BIGINT,
                 COUNT(DISTINCT se.id)::BIGINT,
                 COALESCE(SUM(se.number_of_instances), 0)::BIGINT,
-                MAX(st.study_date)
+                MAX(st.study_date),
+                COUNT(DISTINCT st.id) FILTER (WHERE r.id IS NULL)::BIGINT,
+                COUNT(DISTINCT st.id) FILTER (WHERE r.status IN ('draft','amending') AND r.author_fk = $2)::BIGINT,
+                COUNT(DISTINCT st.id) FILTER (WHERE r.status IN ('draft','amending') AND r.author_fk <> $2)::BIGINT,
+                COUNT(DISTINCT st.id) FILTER (WHERE r.status = 'signed')::BIGINT
          FROM patients p
          JOIN studies st ON st.patient_fk = p.id AND st.institution_id = $1
               AND st.storage_tier <> 'quarantine'
          JOIN series se ON se.study_fk=st.id
          LEFT JOIN dicom_devices d ON d.id=se.source_device_fk
+         LEFT JOIN diagnostic_reports r ON r.study_fk=st.id
          WHERE p.institution_id = $1
            AND ($3 OR (d.status='active' AND se.source_status='trusted'
                 AND EXISTS(SELECT 1 FROM user_device_grants g
@@ -141,6 +158,10 @@ pub async fn list_patients(
                 series_count,
                 instance_count,
                 latest_study_date,
+                pending_studies,
+                writing_studies,
+                locked_studies,
+                signed_studies,
             )| PatientSummary {
                 id,
                 patient_id,
@@ -152,6 +173,10 @@ pub async fn list_patients(
                 series_count,
                 instance_count,
                 latest_study_date,
+                pending_studies,
+                writing_studies,
+                locked_studies,
+                signed_studies,
             },
         )
         .collect())
@@ -168,9 +193,13 @@ pub async fn list_patient_studies(
         "SELECT st.study_instance_uid, st.study_date, st.study_time,
                 st.accession_number, st.study_id, st.description,
                 st.referring_physician, st.modalities,
-                st.number_of_series, st.number_of_instances
+                st.number_of_series, st.number_of_instances,
+                CASE WHEN r.id IS NULL THEN 'pending'
+                     WHEN r.status = 'signed' THEN 'signed'
+                     ELSE 'writing' END
          FROM studies st
          JOIN patients p ON st.patient_fk = p.id
+         LEFT JOIN diagnostic_reports r ON r.study_fk = st.id
          WHERE p.id = $1
            AND p.institution_id = $2
            AND st.institution_id = $2
@@ -205,6 +234,7 @@ pub async fn list_patient_studies(
                 modalities,
                 series_count,
                 instance_count,
+                report_status,
             )| StudySummary {
                 study_uid,
                 study_date,
@@ -216,6 +246,7 @@ pub async fn list_patient_studies(
                 modalities,
                 series_count,
                 instance_count,
+                report_status,
             },
         )
         .collect())
