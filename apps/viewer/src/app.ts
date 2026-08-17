@@ -6777,8 +6777,8 @@ export class App {
     );
     appShell.classList.toggle('mpr-mode', this.viewerMode === 'mpr');
     appShell.classList.toggle('vr-mode', this.viewerMode === 'vr');
-    appShell.classList.toggle('report-mode', this.viewerMode === 'report');
     appShell.classList.toggle('multi-pane', this.multiPane);
+    requiredElement<HTMLElement>('workspace').classList.toggle('report-mode', this.viewerMode === 'report');
     requiredElement<HTMLElement>('report-workspace').hidden = this.viewerMode !== 'report';
     this.viewport.classList.toggle('mpr-active', this.viewerMode === 'mpr');
     this.viewport.classList.toggle('vr-active', this.viewerMode === 'vr');
