@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
@@ -24,7 +25,7 @@ async fn pool() -> Option<PgPool> {
         return None;
     };
     let slot = DB_SETUP.get_or_init(|| Mutex::new(()));
-    let _guard = slot.lock().unwrap();
+    let _guard = slot.lock().await;
     if !Postgres::database_exists(&url).await.unwrap_or(false) {
         Postgres::create_database(&url)
             .await

@@ -7,7 +7,8 @@
 //! - I2 规则：结构化报告草稿更新必须携带 template_payload，唯一例外是 clear
 //! - clear 只影响 payload，不影响本次提交的 findings/impression/is_positive
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -34,7 +35,7 @@ async fn pool() -> Option<PgPool> {
         return None;
     };
     let slot = DB_SETUP.get_or_init(|| Mutex::new(()));
-    let _guard = slot.lock().unwrap();
+    let _guard = slot.lock().await;
     if !Postgres::database_exists(&url).await.unwrap_or(false) {
         Postgres::create_database(&url)
             .await

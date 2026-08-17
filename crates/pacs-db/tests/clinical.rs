@@ -114,9 +114,17 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
             .is_err()
     );
 
-    let report = pacs_db::create_report(&pool, 1, doctor, &study, std::slice::from_ref(&series))
-        .await
-        .unwrap();
+    let report = pacs_db::create_report(
+        &pool,
+        1,
+        doctor,
+        &study,
+        std::slice::from_ref(&series),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
     let report = pacs_db::update_report_draft(
         &pool,
         1,
@@ -126,6 +134,9 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
         "双肺纹理清晰",
         "未见明确异常",
         None,
+        None,
+        false,
+        false,
     )
     .await
     .unwrap();
