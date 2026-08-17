@@ -425,10 +425,11 @@ pub async fn create_report(
     study_uid: String,
     series_uids: Vec<String>,
     template_payload: Option<serde_json::Value>,
+    is_positive: bool,
     state: State<'_, RemoteState>,
 ) -> Result<DiagnosticReport, String> {
     state
-        .create_report(&study_uid, series_uids, template_payload)
+        .create_report(&study_uid, series_uids, template_payload, is_positive)
         .await
         .map_err(|error| error.to_string())
 }
@@ -441,6 +442,8 @@ pub async fn update_report_draft(
     impression: String,
     recommendation: Option<String>,
     template_payload: Option<serde_json::Value>,
+    is_positive: bool,
+    clear_template_payload: bool,
     state: State<'_, RemoteState>,
 ) -> Result<DiagnosticReport, String> {
     state
@@ -451,6 +454,8 @@ pub async fn update_report_draft(
             &impression,
             recommendation.as_deref(),
             template_payload,
+            is_positive,
+            clear_template_payload,
         )
         .await
         .map_err(|error| error.to_string())

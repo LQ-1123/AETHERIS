@@ -8,7 +8,7 @@ export type AnnotationKind =
   | 'point_probe';
 export type MaskTool = 'mask_brush' | 'mask_eraser';
 export type ToolMode = 'window' | 'pan' | 'crosshair' | AnnotationKind | MaskTool;
-export type ViewerMode = '2d' | 'mpr' | 'vr';
+export type ViewerMode = '2d' | 'mpr' | 'vr' | 'report';
 export type MprPlane = 'axial' | 'coronal' | 'sagittal' | 'oblique';
 export type MprProjectionMode = 'slice' | 'mip' | 'minip';
 export type PixelFormat = 'gray8' | 'gray16' | 'rgb8';
@@ -16,6 +16,8 @@ export type PixelFormat = 'gray8' | 'gray16' | 'rgb8';
 export interface PatientStudyInfo {
   patient_name: string | null;
   patient_id: string | null;
+  patient_sex: string | null;
+  patient_birth_date: string | null;
   study_date: string | null;
   accession_number: string | null;
   modality: string | null;
@@ -384,6 +386,7 @@ export interface RemoteUser {
   display_name: string | null;
   role: string;
   institution_id: number;
+  institution_name: string;
 }
 
 export type RouteProtocol = 'dimse' | 'stow';
@@ -833,6 +836,7 @@ export interface DiagnosticReport {
   recommendation: string | null;
   revision: number;
   access_incomplete: boolean;
+  is_positive: boolean;
   template_payload: StructuredPayload | null;
   created_at: string;
   updated_at: string;
@@ -847,6 +851,7 @@ export interface ReportVersion {
   recommendation: string | null;
   covered_series_uids: string[];
   access_incomplete: boolean;
+  is_positive: boolean;
   amendment_reason: string | null;
   signed_by: number;
   signed_at: string;

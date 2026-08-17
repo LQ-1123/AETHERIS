@@ -32,6 +32,7 @@ pub struct RemoteUser {
     pub display_name: Option<String>,
     pub role: String,
     pub institution_id: i64,
+    pub institution_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +69,7 @@ pub struct DiagnosticReport {
     pub recommendation: Option<String>,
     pub revision: i32,
     pub access_incomplete: bool,
+    pub is_positive: bool,
     pub template_payload: Option<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
@@ -83,6 +85,7 @@ pub struct ReportVersion {
     pub recommendation: Option<String>,
     pub covered_series_uids: Vec<String>,
     pub access_incomplete: bool,
+    pub is_positive: bool,
     pub amendment_reason: Option<String>,
     pub signed_by: i64,
     pub signed_at: String,
@@ -377,6 +380,7 @@ impl RemoteState {
         study_uid: &str,
         series_uids: Vec<String>,
         template_payload: Option<serde_json::Value>,
+        is_positive: bool,
     ) -> Result<DiagnosticReport, RemoteError> {
         let url = self.session_url("api/v1/reports").await?;
         self.authorized_json(
@@ -386,6 +390,7 @@ impl RemoteState {
                 "study_uid": study_uid,
                 "covered_series_uids": series_uids,
                 "template_payload": template_payload,
+                "is_positive": is_positive,
             })),
         )
         .await
@@ -399,6 +404,8 @@ impl RemoteState {
         impression: &str,
         recommendation: Option<&str>,
         template_payload: Option<serde_json::Value>,
+        is_positive: bool,
+        clear_template_payload: bool,
     ) -> Result<DiagnosticReport, RemoteError> {
         let url = self
             .session_url(&format!("api/v1/reports/{report_id}/draft"))
@@ -412,6 +419,8 @@ impl RemoteState {
                 "impression": impression,
                 "recommendation": recommendation,
                 "template_payload": template_payload,
+                "is_positive": is_positive,
+                "clear_template_payload": clear_template_payload,
             })),
         )
         .await

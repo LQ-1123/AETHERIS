@@ -101,7 +101,7 @@ import {
 import { imageGeometry, Renderer, type CrossReferenceLine } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
-import { ReportPanel, type ReportContext } from './report-panel';
+import { ReportWorkspace, type ReportWorkspaceContext } from './report-workspace';
 import { AdminConsole } from './admin-console';
 import { volumeCapabilityReason } from './volume-capability';
 import { MAX_SERIES_PANES, seriesGridLayout } from './viewport-layout';
@@ -482,7 +482,7 @@ export class App {
   private selectedRollbackRevision: DicomRevision | null = null;
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
-  private reportPanel: ReportPanel;
+  private reportWorkspace: ReportWorkspace;
   private adminConsole: AdminConsole;
   private lifecyclePanel: LifecyclePanel;
   private shareStudyUid: string | null = null;
@@ -623,11 +623,20 @@ export class App {
 
   constructor() {
     this.routerPanel = new RouterPanel((message) => this.showError(message));
-    this.reportPanel = new ReportPanel(
+    this.reportWorkspace = new ReportWorkspace(
       (message) => this.showError(message),
       () => this.reportContext(),
-      () => ({ id: this.remoteUser?.id ?? null, role: this.remoteUser?.role ?? null }),
+      () => ({
+        id: this.remoteUser?.id ?? null,
+        role: this.remoteUser?.role ?? null,
+        displayName: this.remoteUser?.display_name ?? null,
+        username: this.remoteUser?.username ?? null,
+      }),
     );
+    this.reportWorkspace.onExit = () => void this.setViewerMode('2d');
+    requiredElement<HTMLButtonElement>('report-panel-btn').addEventListener('click', () => {
+      void this.openReportWorkspace();
+    });
     this.adminConsole = new AdminConsole((message) => this.showError(message));
     this.lifecyclePanel = new LifecyclePanel((message) => this.showError(message));
     this.initializePanes();
@@ -802,8 +811,8 @@ export class App {
     pane.element.addEventListener('drop', (event) => void this.paneDrop(pane, event));
   }
 
-  /** 当前活动窗格的检查上下文（报告面板与工作项领取用）。 */
-  private reportContext(): ReportContext | null {
+  /** 当前活动窗格的检查上下文（报告工作台与工作项领取用）。 */
+  private reportContext(): ReportWorkspaceContext | null {
     const state = this.state;
     if (!state) return null;
     const patient = state.metadata.patient;
@@ -812,8 +821,20 @@ export class App {
       seriesUid: state.metadata.series_uid ?? '',
       modality: patient.modality,
       patientName: formatPersonName(patient.patient_name) || patient.patient_id || '未提供',
+      patientId: patient.patient_id,
+      patientSex: patient.patient_sex,
+      patientBirthDate: patient.patient_birth_date,
+      studyDate: patient.study_date,
+      studyDescription: patient.study_description,
       seriesDescription: patient.series_description,
+      institutionName: this.remoteUser?.institution_name ?? '',
     };
+  }
+
+  private async openReportWorkspace(): Promise<void> {
+    if (!this.state) return;
+    await this.setViewerMode('report');
+    await this.reportWorkspace.open();
   }
 
   private bindSyncControls(): void {    const scrollButton = requiredElement<HTMLButtonElement>('sync-scroll-button');
@@ -1699,6 +1720,13 @@ export class App {
 
   private async setViewerMode(mode: ViewerMode): Promise<void> {
     if (!this.state || this.busy || mode === this.viewerMode) return;
+    if (mode === 'report') {
+      this.stopCine();
+      this.viewerMode = 'report';
+      this.updateUi();
+      this.resizeViewport();
+      return;
+    }
     if (mode !== '2d' && this.multiPane) {
       this.showError('多窗格对比模式下仅支持 2D 阅片，请先关闭其他窗格再使用 MPR / VR。');
       return;
@@ -6349,6 +6377,7 @@ export class App {
   }
 
   private render(): void {
+    if (this.viewerMode === 'report') return;
     if (this.viewerMode === 'vr') return;
     if (this.viewerMode === 'mpr' && this.mpr) {
       for (const plane of MPR_PLANES) this.renderMprPlane(plane);
@@ -6736,7 +6765,7 @@ export class App {
   private updateUi(): void {
     this.refreshSyncBadges();
     const hasSeries = this.state != null;
-    if (!hasSeries) this.reportPanel.close();
+    if (!hasSeries) this.reportWorkspace.close();
     requiredElement<HTMLButtonElement>('admin-console-btn').hidden = this.remoteUser?.role !== 'admin';
     if (this.remoteUser?.role !== 'admin') this.adminConsole.close();
     const workspaceHasSeries = this.panes.some((pane) => pane.state != null);
@@ -6748,7 +6777,9 @@ export class App {
     );
     appShell.classList.toggle('mpr-mode', this.viewerMode === 'mpr');
     appShell.classList.toggle('vr-mode', this.viewerMode === 'vr');
+    appShell.classList.toggle('report-mode', this.viewerMode === 'report');
     appShell.classList.toggle('multi-pane', this.multiPane);
+    requiredElement<HTMLElement>('report-workspace').hidden = this.viewerMode !== 'report';
     this.viewport.classList.toggle('mpr-active', this.viewerMode === 'mpr');
     this.viewport.classList.toggle('vr-active', this.viewerMode === 'vr');
     requiredElement<HTMLElement>('mpr-grid').hidden = this.viewerMode !== 'mpr';

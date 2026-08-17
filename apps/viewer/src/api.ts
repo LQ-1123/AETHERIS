@@ -307,12 +307,14 @@ export async function createReport(
   studyUid: string,
   seriesUids: string[],
   payload: StructuredPayload | null,
+  isPositive = false,
 ): Promise<DiagnosticReport> {
   const invoke = await getInvoke();
   return invoke<DiagnosticReport>('create_report', {
     studyUid,
     seriesUids,
     templatePayload: payload ?? null,
+    isPositive,
   });
 }
 
@@ -323,6 +325,8 @@ export async function updateReportDraft(
   impression: string,
   recommendation: string | null,
   payload: StructuredPayload | null,
+  isPositive = false,
+  clearTemplatePayload = false,
 ): Promise<DiagnosticReport> {
   const invoke = await getInvoke();
   return invoke<DiagnosticReport>('update_report_draft', {
@@ -332,6 +336,8 @@ export async function updateReportDraft(
     impression,
     recommendation,
     templatePayload: payload ?? null,
+    isPositive,
+    clearTemplatePayload,
   });
 }
 
