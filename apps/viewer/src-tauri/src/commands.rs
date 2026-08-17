@@ -519,6 +519,39 @@ pub async fn work_item_for_series(
 }
 
 #[tauri::command]
+pub async fn study_work_items(
+    study_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ClinicalWorkItem>, String> {
+    state
+        .study_work_items(&study_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn claim_study(
+    study_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<usize, String> {
+    state
+        .claim_study(&study_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn release_study(
+    study_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .release_study(&study_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn claim_work_item(
     work_id: String,
     revision: i32,

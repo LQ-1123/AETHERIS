@@ -574,3 +574,106 @@ async fn clear_flag_only_affects_payload_not_text() {
     assert_eq!(report["impression"], "新印象", "impression 应为本次提交文本");
     assert_eq!(report["is_positive"], true, "is_positive 应正常往返为 true");
 }
+
+/// 报告按检查一份：study 级领取/释放覆盖该检查下全部序列。
+#[tokio::test]
+async fn study_level_claim_and_release_cover_all_series() {
+    let Some(pool) = pool().await else { return };
+    let secret = b"report-study-test-secret-at-least-32";
+    let (admin_token, _admin_id) = admin_token(&pool, secret, "report-study").await;
+    let (doctor_token, doctor_id) = radiologist_token(&pool, secret, "report-study-doc").await;
+    let auth = Arc::new(AuthService::new(pool.clone(), secret).unwrap());
+    let app = pacs_web::clinical_routes(pacs_web::WebState::new(pool.clone()), auth);
+    let admin_bearer = format!("Bearer {admin_token}");
+    let doctor_bearer = format!("Bearer {doctor_token}");
+
+    // 一台设备 + 授权医生
+    let suffix = Uuid::new_v4();
+    let ae_suffix = suffix.to_string().replace('-', "");
+    let ae_title = format!("ST{}", &ae_suffix[..8]);
+    let device = app.clone().oneshot(Request::post("/devices")
+        .header(header::AUTHORIZATION, &admin_bearer)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"name":"study测试机","calling_ae_title":ae_title,"source_ip":"10.40.0.9"}).to_string())).unwrap()).await.unwrap();
+    let device_id = response_json(device).await["id"].as_str().unwrap().to_owned();
+    let approved = app.clone().oneshot(Request::post(format!("/devices/{device_id}/approve"))
+        .header(header::AUTHORIZATION, &admin_bearer)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"name":"study测试机"}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(approved.status(), StatusCode::OK);
+    let granted = app.clone().oneshot(Request::put(format!("/users/{doctor_id}/device-grants"))
+        .header(header::AUTHORIZATION, &admin_bearer)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"device_ids":[device_id]}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+
+    // 一个 study 下建 2 个 series
+    let patient_id: i64 = sqlx::query_scalar(
+        "INSERT INTO patients (institution_id, patient_id) VALUES (1, $1) RETURNING id",
+    ).bind(format!("study-patient-{suffix}")).fetch_one(&pool).await.unwrap();
+    let numeric = suffix.to_string().chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    let study_uid = format!("1.2.826.0.1.3680043.9.7451.{numeric}");
+    let study_id: i64 = sqlx::query_scalar(
+        "INSERT INTO studies (institution_id, patient_fk, study_instance_uid) VALUES (1, $1, $2) RETURNING id",
+    ).bind(patient_id).bind(&study_uid).fetch_one(&pool).await.unwrap();
+    let mut series_uids = Vec::new();
+    for index in 0..2 {
+        let series_uid = format!("1.2.826.0.1.3680043.9.7452.{numeric}.{index}");
+        let series_id: i64 = sqlx::query_scalar(
+            "INSERT INTO series (study_fk, series_instance_uid, modality) VALUES ($1, $2, 'CT') RETURNING id",
+        ).bind(study_id).bind(&series_uid).fetch_one(&pool).await.unwrap();
+        sqlx::query(r#"INSERT INTO instances (series_fk, sop_instance_uid, transfer_syntax_uid,
+            storage_path, file_size, file_sha256, logical_instance_id)
+            VALUES ($1, $2, '1.2.840.10008.1.2.1', '/test/legacy.dcm', 1, '\x00', gen_random_uuid())"#)
+            .bind(series_id).bind(format!("1.2.826.0.1.3680043.9.7453.{numeric}.{index}"))
+            .execute(&pool).await.unwrap();
+        series_uids.push(series_uid);
+    }
+    // 回填工作项
+    sqlx::query(r#"INSERT INTO diagnostic_work_items (id, institution_id, series_fk)
+        SELECT gen_random_uuid(), st.institution_id, se.id
+        FROM series se JOIN studies st ON st.id = se.study_fk
+        ON CONFLICT (institution_id, series_fk) DO NOTHING"#).execute(&pool).await.unwrap();
+    // 归属两个序列
+    for series_uid in &series_uids {
+        let resolved = app.clone().oneshot(Request::post(format!("/series/{series_uid}/resolve-source"))
+            .header(header::AUTHORIZATION, &admin_bearer)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"device_id": device_id}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(resolved.status(), StatusCode::NO_CONTENT);
+    }
+
+    // 1) study 工作项列表：2 个，均 pending
+    let list = app.clone().oneshot(Request::get(format!("/worklist/study/{study_uid}"))
+        .header(header::AUTHORIZATION, &doctor_bearer).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let items = response_json(list).await;
+    let items = items.as_array().unwrap();
+    assert_eq!(items.len(), 2, "study 下应有 2 个工作项");
+    assert!(items.iter().all(|i| i["status"] == "pending"));
+
+    // 2) study 领取：返回 2，两个都 claimed by doctor
+    let claim = app.clone().oneshot(Request::post(format!("/worklist/study/{study_uid}/claim"))
+        .header(header::AUTHORIZATION, &doctor_bearer)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(claim.status(), StatusCode::OK);
+    assert_eq!(response_json(claim).await, 2, "应领取 2 个工作项");
+
+    let list = app.clone().oneshot(Request::get(format!("/worklist/study/{study_uid}"))
+        .header(header::AUTHORIZATION, &doctor_bearer).body(Body::empty()).unwrap()).await.unwrap();
+    let items = response_json(list).await;
+    let items = items.as_array().unwrap();
+    assert!(items.iter().all(|i| i["status"] == "claimed" && i["assignee_id"] == doctor_id));
+
+    // 3) study 释放：204，回到 pending
+    let release = app.clone().oneshot(Request::post(format!("/worklist/study/{study_uid}/release"))
+        .header(header::AUTHORIZATION, &doctor_bearer)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(release.status(), StatusCode::NO_CONTENT);
+    let list = app.clone().oneshot(Request::get(format!("/worklist/study/{study_uid}"))
+        .header(header::AUTHORIZATION, &doctor_bearer).body(Body::empty()).unwrap()).await.unwrap();
+    let items = response_json(list).await;
+    assert!(items.as_array().unwrap().iter().all(|i| i["status"] == "pending"));
+}

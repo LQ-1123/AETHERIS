@@ -486,6 +486,31 @@ impl RemoteState {
         self.get_json(url).await
     }
 
+    pub async fn study_work_items(
+        &self,
+        study_uid: &str,
+    ) -> Result<Vec<ClinicalWorkItem>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/worklist/study/{study_uid}"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn claim_study(&self, study_uid: &str) -> Result<usize, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/worklist/study/{study_uid}/claim"))
+            .await?;
+        self.authorized_json(Method::POST, url, None).await
+    }
+
+    pub async fn release_study(&self, study_uid: &str) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/worklist/study/{study_uid}/release"))
+            .await?;
+        self.authorized_request(Method::POST, url, None).await?;
+        Ok(())
+    }
+
     pub async fn claim_work_item(&self, work_id: &str, revision: i32) -> Result<(), RemoteError> {
         let url = self
             .session_url(&format!("api/v1/worklist/{work_id}/claim"))

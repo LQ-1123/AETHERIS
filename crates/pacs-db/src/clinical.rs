@@ -491,6 +491,99 @@ pub async fn work_item_for_series(
     .await?)
 }
 
+/// 列出某检查（Study）下所有序列的工作项（报告按检查一份，领取也按检查）。
+/// 可见性与按序列版本一致：来源可信 + 设备已批准 + 用户有该设备授权（管理员除外）。
+pub async fn study_work_items(
+    pool: &PgPool,
+    institution_id: i64,
+    user_id: i64,
+    is_admin: bool,
+    study_uid: &str,
+) -> Result<Vec<ClinicalWorkItem>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT w.id,se.series_instance_uid series_uid,st.study_instance_uid study_uid,
+                  p.patient_id,p.name patient_name,se.modality,se.description series_description,
+                  d.id device_id,d.name device_name,(MIN(i.received_at) AT TIME ZONE ins.timezone)::date received_date,
+                  w.status,w.assignee_fk assignee_id,u.display_name assignee_name,w.revision
+           FROM diagnostic_work_items w JOIN series se ON se.id=w.series_fk
+           JOIN studies st ON st.id=se.study_fk JOIN patients p ON p.id=st.patient_fk
+           JOIN institutions ins ON ins.id=w.institution_id
+           JOIN dicom_devices d ON d.id=se.source_device_fk AND d.status='active'
+           JOIN instances i ON i.series_fk=se.id LEFT JOIN users u ON u.id=w.assignee_fk
+           WHERE w.institution_id=$1 AND st.study_instance_uid=$2 AND se.source_status='trusted'
+             AND ($4 OR EXISTS(SELECT 1 FROM user_device_grants g
+                               WHERE g.user_fk=$3 AND g.device_fk=d.id))
+           GROUP BY w.id,se.id,st.id,p.id,d.id,u.id,ins.timezone
+           ORDER BY se.id"#,
+    )
+    .bind(institution_id)
+    .bind(study_uid)
+    .bind(user_id)
+    .bind(is_admin)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// 领取检查下所有 pending 工作项（报告按检查，领取一次性覆盖全部序列）。
+/// 返回成功领取的数量。
+pub async fn claim_study(
+    pool: &PgPool,
+    institution_id: i64,
+    study_uid: &str,
+    user_id: i64,
+) -> Result<usize, DbError> {
+    let changed = sqlx::query(
+        r#"UPDATE diagnostic_work_items w SET status='claimed',assignee_fk=$3,
+                  claimed_at=now(),revision=revision+1
+           FROM series se,studies st,dicom_devices d
+           WHERE w.institution_id=$1 AND w.series_fk=se.id AND se.study_fk=st.id
+             AND st.study_instance_uid=$2 AND se.source_device_fk=d.id
+             AND se.source_status='trusted' AND d.status='active'
+             AND w.status='pending'
+             AND EXISTS(SELECT 1 FROM user_device_grants g
+                        WHERE g.user_fk=$3 AND g.device_fk=d.id)"#,
+    )
+    .bind(institution_id)
+    .bind(study_uid)
+    .bind(user_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(changed as usize)
+}
+
+/// 释放检查下所有由当前用户领取的工作项（存在草稿/修订中报告时整体拒绝）。
+pub async fn release_study(
+    pool: &PgPool,
+    institution_id: i64,
+    study_uid: &str,
+    actor_id: i64,
+) -> Result<(), DbError> {
+    let changed = sqlx::query(
+        r#"UPDATE diagnostic_work_items w SET status='pending',assignee_fk=NULL,claimed_at=NULL,
+                  revision=revision+1
+           FROM series se,studies st
+           WHERE w.institution_id=$1 AND w.series_fk=se.id AND se.study_fk=st.id
+             AND st.study_instance_uid=$2
+             AND w.status IN ('claimed','reporting') AND w.assignee_fk=$3
+             AND NOT EXISTS(SELECT 1 FROM diagnostic_reports r
+                            WHERE r.study_fk=st.id AND r.status IN ('draft','amending'))"#,
+    )
+    .bind(institution_id)
+    .bind(study_uid)
+    .bind(actor_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        Err(DbError::Conflict(
+            "无可释放的工作项，或存在草稿/修订中报告".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn claim_work_item(
     pool: &PgPool,
     institution_id: i64,

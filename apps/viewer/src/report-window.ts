@@ -1,16 +1,16 @@
 import {
   beginReportAmendment,
-  claimWorkItem,
+  claimStudy,
   createReport,
   getReportContext,
   listenReportContext,
   listReportTemplates,
   listReports,
   listReportVersions,
-  releaseWorkItem,
+  releaseStudy,
   signReport,
+  studyWorkItems,
   updateReportDraft,
-  workItemForSeries,
   type ReportWindowContext,
 } from './api';
 import { htmlToText, plainToHtml, sanitizeReportHtml } from './rich-text';
@@ -34,7 +34,7 @@ export class ReportWindow {
   private report: DiagnosticReport | null = null;
   private versions: ReportVersion[] = [];
   private templates: ReportTemplate[] = [];
-  private workItem: ClinicalWorkItem | null = null;
+  private workItems: ClinicalWorkItem[] = [];
   private busy = false;
   private lastEditor: 'findings' | 'impression' | null = null;
 
@@ -120,10 +120,11 @@ export class ReportWindow {
   }
 
   private claimedByMe(): boolean {
-    const item = this.workItem;
-    return !!item
-      && (item.status === 'claimed' || item.status === 'reporting')
-      && item.assignee_id === this.context?.user.id;
+    const userId = this.context?.user.id;
+    return this.workItems.length > 0
+      && this.workItems.every((item) =>
+        (item.status === 'claimed' || item.status === 'reporting' || item.status === 'completed')
+        && (item.status === 'completed' || item.assignee_id === userId));
   }
 
   async refresh(): Promise<void> {
@@ -131,14 +132,14 @@ export class ReportWindow {
     if (this.busy) return;
     this.busy = true;
     try {
-      const { studyUid, seriesUid, modality } = this.context;
-      const [reports, templates, item] = await Promise.all([
+      const { studyUid, modality } = this.context;
+      const [reports, templates, items] = await Promise.all([
         listReports(studyUid),
         listReportTemplates(modality ?? undefined),
-        workItemForSeries(seriesUid).catch(() => null),
+        studyWorkItems(studyUid).catch(() => [] as ClinicalWorkItem[]),
       ]);
       this.templates = templates;
-      this.workItem = item;
+      this.workItems = items;
       this.report = reports[0] ?? null;
       this.versions = [];
       if (this.report?.status === 'signed') {
@@ -185,20 +186,27 @@ export class ReportWindow {
     claim.hidden = true;
     release.hidden = true;
     create.hidden = true;
-    const item = this.workItem;
     const report = this.report;
     if (!this.writable()) { row.hidden = true; return; }
     row.hidden = false;
-    if (!item) { text.textContent = '该序列没有待诊任务，无法创建报告'; return; }
-    if (item.status === 'pending') {
+    const items = this.workItems;
+    if (items.length === 0) {
+      text.textContent = '该检查没有待诊任务，无法创建报告';
+      return;
+    }
+    const userId = this.context?.user.id;
+    const anyPending = items.some((item) => item.status === 'pending');
+    const anyByOther = items.some((item) =>
+      (item.status === 'claimed' || item.status === 'reporting') && item.assignee_id !== userId);
+    if (anyPending) {
       text.textContent = '待诊任务：领取后才能撰写';
       claim.hidden = false;
-    } else if (item.assignee_id === this.context?.user.id) {
+    } else if (anyByOther) {
+      text.textContent = '任务已由他人领取';
+    } else {
       text.textContent = '已领取任务';
       release.hidden = report?.status === 'draft' || report?.status === 'amending';
       if (!report) create.hidden = false;
-    } else {
-      text.textContent = `已由${item.assignee_name ?? '他人'}领取`;
     }
   }
 
@@ -316,10 +324,12 @@ export class ReportWindow {
 
   private async create(): Promise<void> {
     if (!this.context) return;
-    if (!this.workItem) { this.showError('该序列没有待诊任务，无法创建报告'); return; }
+    if (this.workItems.length === 0) { this.showError('该检查没有待诊任务，无法创建报告'); return; }
     if (!this.claimedByMe()) { this.showError('请先领取任务再创建报告'); return; }
     try {
-      const report = await createReport(this.context.studyUid, [this.context.seriesUid], null, false);
+      // 报告按检查一份：覆盖医生已领取的全部序列（study_work_items 已按授权过滤）
+      const seriesUids = this.workItems.map((item) => item.series_uid);
+      const report = await createReport(this.context.studyUid, seriesUids, null, false);
       this.report = report;
       this.render();
     } catch (error) {
@@ -386,14 +396,14 @@ export class ReportWindow {
   }
 
   private async claim(): Promise<void> {
-    if (!this.workItem) return;
-    try { await claimWorkItem(this.workItem.id, this.workItem.revision); await this.refresh(); }
+    if (!this.context) return;
+    try { await claimStudy(this.context.studyUid); await this.refresh(); }
     catch (error) { this.showError(errorMessage(error)); await this.refresh(); }
   }
 
   private async release(): Promise<void> {
-    if (!this.workItem) return;
-    try { await releaseWorkItem(this.workItem.id, this.workItem.revision); await this.refresh(); }
+    if (!this.context) return;
+    try { await releaseStudy(this.context.studyUid); await this.refresh(); }
     catch (error) { this.showError(errorMessage(error)); await this.refresh(); }
   }
 }

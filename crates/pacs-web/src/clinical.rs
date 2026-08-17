@@ -44,6 +44,9 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/worklist/{work_id}/claim", post(claim))
         .route("/worklist/{work_id}/release", post(release))
         .route("/worklist/series/{series_uid}", get(work_item_by_series))
+        .route("/worklist/study/{study_uid}", get(study_work_items))
+        .route("/worklist/study/{study_uid}/claim", post(claim_study))
+        .route("/worklist/study/{study_uid}/release", post(release_study))
         .route(
             "/studies/{study_uid}/clinical-context",
             get(clinical_context),
@@ -525,6 +528,78 @@ async fn work_item_by_series(
     .map_err(ApiError::db)?
     .ok_or(ApiError::not_found())?;
     Ok(Json(item))
+}
+
+/// 报告按检查一份：列出检查下所有序列的工作项。
+async fn study_work_items(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(study_uid): Path<String>,
+) -> Result<Json<Vec<pacs_db::ClinicalWorkItem>>, ApiError> {
+    pacs_core::Uid::parse(&study_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Study UID 无效"))?;
+    Ok(Json(
+        pacs_db::study_work_items(
+            &state.pool,
+            identity.institution_id,
+            identity.user_id,
+            identity.role == Role::Admin,
+            &study_uid,
+        )
+        .await
+        .map_err(ApiError::db)?,
+    ))
+}
+
+/// 领取检查下所有 pending 工作项（报告按检查，领取一次性覆盖全部序列）。
+async fn claim_study(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(study_uid): Path<String>,
+) -> Result<Json<usize>, ApiError> {
+    if identity.role != Role::Radiologist {
+        return Err(ApiError::forbidden("radiologist_required"));
+    }
+    pacs_core::Uid::parse(&study_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Study UID 无效"))?;
+    let count = pacs_db::claim_study(
+        &state.pool,
+        identity.institution_id,
+        &study_uid,
+        identity.user_id,
+    )
+    .await
+    .map_err(ApiError::db)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::WorkItemClaimed,
+        serde_json::json!({"study_uid":study_uid,"count":count}),
+    )
+    .await;
+    Ok(Json(count))
+}
+
+/// 释放检查下所有由当前用户领取的工作项。
+async fn release_study(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(study_uid): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    if identity.role != Role::Radiologist {
+        return Err(ApiError::forbidden("radiologist_required"));
+    }
+    pacs_core::Uid::parse(&study_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Study UID 无效"))?;
+    pacs_db::release_study(
+        &state.pool,
+        identity.institution_id,
+        &study_uid,
+        identity.user_id,
+    )
+    .await
+    .map_err(ApiError::db)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize, sqlx::FromRow)]

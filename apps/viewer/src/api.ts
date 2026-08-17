@@ -369,6 +369,21 @@ export async function workItemForSeries(seriesUid: string): Promise<ClinicalWork
   return invoke<ClinicalWorkItem>('work_item_for_series', { seriesUid });
 }
 
+export async function studyWorkItems(studyUid: string): Promise<ClinicalWorkItem[]> {
+  const invoke = await getInvoke();
+  return invoke<ClinicalWorkItem[]>('study_work_items', { studyUid });
+}
+
+export async function claimStudy(studyUid: string): Promise<number> {
+  const invoke = await getInvoke();
+  return invoke<number>('claim_study', { studyUid });
+}
+
+export async function releaseStudy(studyUid: string): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('release_study', { studyUid });
+}
+
 export interface ReportWindowContext {
   studyUid: string;
   seriesUid: string;

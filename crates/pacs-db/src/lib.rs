@@ -148,9 +148,9 @@ pub use annotations::{
 pub use clinical::{
     ApproveDevice, ClinicalWorkItem, DiagnosticReport, DicomDevice, ReportTemplate, ReportVersion,
     SeriesSourceEntry, approve_device, assign_work_item, begin_report_amendment, can_access_series,
-    can_access_study, claim_work_item, create_report, institution_today, list_clinical_work,
-    list_devices, list_report_templates, list_report_versions, list_reports, list_series_sources,
-    observe_device, record_dimse_origin, register_device, release_work_item,
-    replace_user_device_grants, resolve_series_source, set_device_status, sign_report,
-    update_report_draft, user_device_grants, work_item_for_series,
+    can_access_study, claim_study, claim_work_item, create_report, institution_today,
+    list_clinical_work, list_devices, list_report_templates, list_report_versions, list_reports,
+    list_series_sources, observe_device, record_dimse_origin, register_device, release_study,
+    release_work_item, replace_user_device_grants, resolve_series_source, set_device_status,
+    sign_report, study_work_items, update_report_draft, user_device_grants, work_item_for_series,
 };
