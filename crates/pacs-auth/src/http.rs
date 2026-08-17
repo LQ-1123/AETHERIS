@@ -40,16 +40,18 @@ struct UserInfo {
     display_name: Option<String>,
     role: String,
     institution_id: i64,
+    institution_name: String,
 }
 
-impl From<User> for UserInfo {
-    fn from(user: User) -> Self {
+impl UserInfo {
+    fn from_user(user: User, institution_name: String) -> Self {
         Self {
             id: user.id,
             username: user.username,
             display_name: user.display_name,
             role: user.role.to_string(),
             institution_id: user.institution_id,
+            institution_name,
         }
     }
 }
@@ -61,11 +63,16 @@ async fn login(
     let (access_token, refresh_token, user) = service
         .login(&req.username, &req.password, None, None)
         .await?;
+    let institution_name: String = sqlx::query_scalar("SELECT name FROM institutions WHERE id=$1")
+        .bind(user.institution_id)
+        .fetch_one(service.pool())
+        .await
+        .map_err(repository::RepoError::from)?;
 
     Ok(Json(LoginResponse {
         access_token,
         refresh_token,
-        user: user.into(),
+        user: UserInfo::from_user(user, institution_name),
     }))
 }
 

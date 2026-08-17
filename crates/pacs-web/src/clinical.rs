@@ -698,6 +698,7 @@ struct CreateReportRequest {
     study_uid: String,
     covered_series_uids: Vec<String>,
     template_payload: Option<serde_json::Value>,
+    is_positive: Option<bool>,
 }
 #[derive(Deserialize)]
 struct ReportsQuery {
@@ -770,6 +771,7 @@ async fn create_report(
         &req.study_uid,
         &req.covered_series_uids,
         req.template_payload,
+        req.is_positive.unwrap_or(false),
     )
     .await
     .map_err(ApiError::db)?;
@@ -841,6 +843,8 @@ struct DraftRequest {
     impression: String,
     recommendation: Option<String>,
     template_payload: Option<serde_json::Value>,
+    is_positive: Option<bool>,
+    clear_template_payload: Option<bool>,
 }
 async fn update_draft(
     State(state): State<WebState>,
@@ -863,6 +867,8 @@ async fn update_draft(
             &req.impression,
             req.recommendation.as_deref(),
             req.template_payload,
+            req.is_positive.unwrap_or(false),
+            req.clear_template_payload.unwrap_or(false),
         )
         .await
         .map_err(ApiError::db)?,
