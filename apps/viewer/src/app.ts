@@ -781,7 +781,7 @@ export class App {
   private detailsWidth(): number {
     const workspace = requiredElement<HTMLElement>('workspace');
     const columns = getComputedStyle(workspace).gridTemplateColumns.split(' ');
-    const value = Number.parseFloat(columns.at(-1) ?? '');
+    const value = Number.parseFloat(columns[columns.length - 1] ?? '');
     return Number.isFinite(value) ? clampDetailsWidth(value) : 278;
   }
 
