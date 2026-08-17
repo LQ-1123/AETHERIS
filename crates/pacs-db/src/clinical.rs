@@ -730,9 +730,7 @@ pub async fn create_report(
     .fetch_all(&mut *tx)
     .await?;
     if rows.len() != series_uids.len() {
-        return Err(DbError::Invalid(
-            "序列未全部获权".to_owned(),
-        ));
+        return Err(DbError::Invalid("序列未全部获权".to_owned()));
     }
     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM series WHERE study_fk=$1")
         .bind(study_id)

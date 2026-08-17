@@ -9,9 +9,9 @@
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use axum::Router;
 use chrono::Utc;
 use pacs_auth::{AccessTokenCodec, AuthService, Role};
 use serde_json::{Value, json};
@@ -243,7 +243,11 @@ async fn setup_claimed_series(
         )
         .await
         .unwrap();
-    assert_eq!(resolved.status(), StatusCode::NO_CONTENT, "resolve-source 应 204");
+    assert_eq!(
+        resolved.status(),
+        StatusCode::NO_CONTENT,
+        "resolve-source 应 204"
+    );
 
     // 医生领取工作项
     let item = app
@@ -313,7 +317,10 @@ async fn is_positive_roundtrips_through_create_and_draft() {
         .unwrap();
     assert_eq!(created.status(), StatusCode::CREATED, "创建报告应 201");
     let report = response_json(created).await;
-    assert_eq!(report["is_positive"], true, "create 返回 is_positive 应为 true");
+    assert_eq!(
+        report["is_positive"], true,
+        "create 返回 is_positive 应为 true"
+    );
     let report_id = report["id"].as_str().unwrap().to_owned();
     let revision = report["revision"].as_i64().unwrap();
 
@@ -339,7 +346,10 @@ async fn is_positive_roundtrips_through_create_and_draft() {
         .unwrap();
     assert_eq!(updated.status(), StatusCode::OK, "草稿更新应 200");
     let report = response_json(updated).await;
-    assert_eq!(report["is_positive"], false, "draft 返回 is_positive 应为 false");
+    assert_eq!(
+        report["is_positive"], false,
+        "draft 返回 is_positive 应为 false"
+    );
 }
 
 /// sign 把报告的 is_positive 写入不可变版本快照。
@@ -515,7 +525,11 @@ async fn structured_draft_requires_payload_unless_cleared() {
         .unwrap();
     let cleared_status = cleared.status();
     let report = response_json(cleared).await;
-    assert_eq!(cleared_status, StatusCode::OK, "clear 例外应 200，body={report}");
+    assert_eq!(
+        cleared_status,
+        StatusCode::OK,
+        "clear 例外应 200，body={report}"
+    );
     assert!(
         report["template_payload"].is_null(),
         "clear 后 template_payload 应为 null，实际 {}",
@@ -569,9 +583,15 @@ async fn clear_flag_only_affects_payload_not_text() {
         .unwrap();
     assert_eq!(updated.status(), StatusCode::OK);
     let report = response_json(updated).await;
-    assert!(report["template_payload"].is_null(), "clear 后 template_payload 应为 null");
+    assert!(
+        report["template_payload"].is_null(),
+        "clear 后 template_payload 应为 null"
+    );
     assert_eq!(report["findings"], "新所见", "findings 应为本次提交文本");
-    assert_eq!(report["impression"], "新印象", "impression 应为本次提交文本");
+    assert_eq!(
+        report["impression"], "新印象",
+        "impression 应为本次提交文本"
+    );
     assert_eq!(report["is_positive"], true, "is_positive 应正常往返为 true");
 }
 
@@ -595,23 +615,48 @@ async fn study_level_claim_and_release_cover_all_series() {
         .header(header::AUTHORIZATION, &admin_bearer)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(json!({"name":"study测试机","calling_ae_title":ae_title,"source_ip":"10.40.0.9"}).to_string())).unwrap()).await.unwrap();
-    let device_id = response_json(device).await["id"].as_str().unwrap().to_owned();
-    let approved = app.clone().oneshot(Request::post(format!("/devices/{device_id}/approve"))
-        .header(header::AUTHORIZATION, &admin_bearer)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({"name":"study测试机"}).to_string())).unwrap()).await.unwrap();
+    let device_id = response_json(device).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let approved = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/devices/{device_id}/approve"))
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"name":"study测试机"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(approved.status(), StatusCode::OK);
-    let granted = app.clone().oneshot(Request::put(format!("/users/{doctor_id}/device-grants"))
-        .header(header::AUTHORIZATION, &admin_bearer)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({"device_ids":[device_id]}).to_string())).unwrap()).await.unwrap();
+    let granted = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/users/{doctor_id}/device-grants"))
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"device_ids":[device_id]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(granted.status(), StatusCode::OK);
 
     // 一个 study 下建 2 个 series
     let patient_id: i64 = sqlx::query_scalar(
         "INSERT INTO patients (institution_id, patient_id) VALUES (1, $1) RETURNING id",
-    ).bind(format!("study-patient-{suffix}")).fetch_one(&pool).await.unwrap();
-    let numeric = suffix.to_string().chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    )
+    .bind(format!("study-patient-{suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let numeric = suffix
+        .to_string()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
     let study_uid = format!("1.2.826.0.1.3680043.9.7451.{numeric}");
     let study_id: i64 = sqlx::query_scalar(
         "INSERT INTO studies (institution_id, patient_fk, study_instance_uid) VALUES (1, $1, $2) RETURNING id",
@@ -630,22 +675,42 @@ async fn study_level_claim_and_release_cover_all_series() {
         series_uids.push(series_uid);
     }
     // 回填工作项
-    sqlx::query(r#"INSERT INTO diagnostic_work_items (id, institution_id, series_fk)
+    sqlx::query(
+        r#"INSERT INTO diagnostic_work_items (id, institution_id, series_fk)
         SELECT gen_random_uuid(), st.institution_id, se.id
         FROM series se JOIN studies st ON st.id = se.study_fk
-        ON CONFLICT (institution_id, series_fk) DO NOTHING"#).execute(&pool).await.unwrap();
+        ON CONFLICT (institution_id, series_fk) DO NOTHING"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     // 归属两个序列
     for series_uid in &series_uids {
-        let resolved = app.clone().oneshot(Request::post(format!("/series/{series_uid}/resolve-source"))
-            .header(header::AUTHORIZATION, &admin_bearer)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({"device_id": device_id}).to_string())).unwrap()).await.unwrap();
+        let resolved = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/series/{series_uid}/resolve-source"))
+                    .header(header::AUTHORIZATION, &admin_bearer)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json!({"device_id": device_id}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resolved.status(), StatusCode::NO_CONTENT);
     }
 
     // 1) study 工作项列表：2 个，均 pending
-    let list = app.clone().oneshot(Request::get(format!("/worklist/study/{study_uid}"))
-        .header(header::AUTHORIZATION, &doctor_bearer).body(Body::empty()).unwrap()).await.unwrap();
+    let list = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/worklist/study/{study_uid}"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
     let items = response_json(list).await;
     let items = items.as_array().unwrap();
@@ -653,27 +718,67 @@ async fn study_level_claim_and_release_cover_all_series() {
     assert!(items.iter().all(|i| i["status"] == "pending"));
 
     // 2) study 领取：返回 2，两个都 claimed by doctor
-    let claim = app.clone().oneshot(Request::post(format!("/worklist/study/{study_uid}/claim"))
-        .header(header::AUTHORIZATION, &doctor_bearer)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({}).to_string())).unwrap()).await.unwrap();
+    let claim = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/worklist/study/{study_uid}/claim"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(claim.status(), StatusCode::OK);
     assert_eq!(response_json(claim).await, 2, "应领取 2 个工作项");
 
-    let list = app.clone().oneshot(Request::get(format!("/worklist/study/{study_uid}"))
-        .header(header::AUTHORIZATION, &doctor_bearer).body(Body::empty()).unwrap()).await.unwrap();
+    let list = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/worklist/study/{study_uid}"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let items = response_json(list).await;
     let items = items.as_array().unwrap();
-    assert!(items.iter().all(|i| i["status"] == "claimed" && i["assignee_id"] == doctor_id));
+    assert!(
+        items
+            .iter()
+            .all(|i| i["status"] == "claimed" && i["assignee_id"] == doctor_id)
+    );
 
     // 3) study 释放：204，回到 pending
-    let release = app.clone().oneshot(Request::post(format!("/worklist/study/{study_uid}/release"))
-        .header(header::AUTHORIZATION, &doctor_bearer)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(json!({}).to_string())).unwrap()).await.unwrap();
+    let release = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/worklist/study/{study_uid}/release"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(release.status(), StatusCode::NO_CONTENT);
-    let list = app.clone().oneshot(Request::get(format!("/worklist/study/{study_uid}"))
-        .header(header::AUTHORIZATION, &doctor_bearer).body(Body::empty()).unwrap()).await.unwrap();
+    let list = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/worklist/study/{study_uid}"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let items = response_json(list).await;
-    assert!(items.as_array().unwrap().iter().all(|i| i["status"] == "pending"));
+    assert!(
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["status"] == "pending")
+    );
 }

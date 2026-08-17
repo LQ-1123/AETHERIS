@@ -87,7 +87,11 @@ async fn device_registration_approval_and_series_attribution() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let numeric = suffix.to_string().chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    let numeric = suffix
+        .to_string()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
     let series_uid = format!("1.2.826.0.1.3680043.9.7435.{numeric}");
     sqlx::query(
         "INSERT INTO series (study_fk, series_instance_uid, modality)
@@ -244,7 +248,10 @@ async fn work_item_backfill_statement_is_idempotent() {
     let after_once = total(&pool).await;
     sqlx::query(statement).execute(&pool).await.unwrap();
     let after_twice = total(&pool).await;
-    assert_eq!(after_once, after_twice, "回填语句重复执行不得产生重复工作项");
+    assert_eq!(
+        after_once, after_twice,
+        "回填语句重复执行不得产生重复工作项"
+    );
     assert!(after_once >= before, "回填只增不减");
 }
 
@@ -281,11 +288,14 @@ async fn work_item_for_series_ignores_date_but_respects_grants() {
             Request::post("/devices")
                 .header(header::AUTHORIZATION, &admin_bearer)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({
-                    "name": "历史设备",
-                    "calling_ae_title": ae,
-                    "source_ip": "10.1.1.9"
-                }).to_string()))
+                .body(Body::from(
+                    json!({
+                        "name": "历史设备",
+                        "calling_ae_title": ae,
+                        "source_ip": "10.1.1.9"
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -322,7 +332,11 @@ async fn work_item_for_series_ignores_date_but_respects_grants() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let numeric = suffix.to_string().chars().filter(|c| c.is_ascii_digit()).collect::<String>();
+    let numeric = suffix
+        .to_string()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
     let series_uid = format!("1.2.826.0.1.3680043.9.7437.{numeric}");
     let series_id: i64 = sqlx::query_scalar(
         "INSERT INTO series (study_fk, series_instance_uid, modality)
@@ -449,7 +463,9 @@ async fn user_device_grants_roundtrip() {
                 Request::post(format!("/devices/{device_id}/approve"))
                     .header(header::AUTHORIZATION, &bearer)
                     .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(json!({"name": format!("授权测试机 {index}")}).to_string()))
+                    .body(Body::from(
+                        json!({"name": format!("授权测试机 {index}")}).to_string(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -476,7 +492,9 @@ async fn user_device_grants_roundtrip() {
             Request::put(format!("/users/{doctor_id}/device-grants"))
                 .header(header::AUTHORIZATION, &bearer)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({"device_ids": [device_ids[0].clone()]}).to_string()))
+                .body(Body::from(
+                    json!({"device_ids": [device_ids[0].clone()]}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -510,7 +528,9 @@ async fn user_device_grants_roundtrip() {
             Request::put(format!("/users/{doctor_id}/device-grants"))
                 .header(header::AUTHORIZATION, &bearer)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({"device_ids": [device_ids[1].clone()]}).to_string()))
+                .body(Body::from(
+                    json!({"device_ids": [device_ids[1].clone()]}).to_string(),
+                ))
                 .unwrap(),
         )
         .await

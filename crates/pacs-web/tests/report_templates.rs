@@ -70,7 +70,11 @@ async fn report_templates_are_seeded_and_filterable() {
 
     let unauthorized = app
         .clone()
-        .oneshot(Request::get("/report-templates").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/report-templates")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);

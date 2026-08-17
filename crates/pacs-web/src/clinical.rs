@@ -791,7 +791,10 @@ fn validate_template_payload(payload: &Option<serde_json::Value>) -> Result<(), 
     let Some(payload) = payload else {
         return Ok(());
     };
-    if serde_json::to_vec(payload).map(|v| v.len()).unwrap_or(usize::MAX) > MAX_TEMPLATE_PAYLOAD_BYTES
+    if serde_json::to_vec(payload)
+        .map(|v| v.len())
+        .unwrap_or(usize::MAX)
+        > MAX_TEMPLATE_PAYLOAD_BYTES
     {
         return Err(ApiError::bad(
             "template_payload_too_large",
