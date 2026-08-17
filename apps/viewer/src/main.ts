@@ -137,5 +137,15 @@ window.addEventListener('DOMContentLoaded', () => {
       X,
     },
   });
+
+  if (new URLSearchParams(window.location.search).get('mode') === 'report') {
+    // 报告独立小窗：隐藏登录屏与主阅片器，只初始化报告 UI
+    const login = document.getElementById('login-screen');
+    const shell = document.getElementById('app-shell');
+    if (login) login.hidden = true;
+    if (shell) shell.style.display = 'none';
+    void import('./report-window').then(({ ReportWindow }) => new ReportWindow().init());
+    return;
+  }
   new App();
 });

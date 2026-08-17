@@ -13,10 +13,12 @@ mod local;
 mod mpr;
 mod protocol;
 mod remote;
+mod report_window;
 mod state;
 
 use ai::AiState;
 use remote::RemoteState;
+use report_window::ReportWindowState;
 use state::ViewerState;
 
 fn main() {
@@ -38,11 +40,27 @@ fn main() {
             app.manage(AiState::new(app.handle()));
             // 本地完整栈（内嵌 PostgreSQL + pacsd），双击即用模式
             app.manage(std::sync::Arc::new(local::LocalStack::new(app.handle())));
+            // 主窗销毁时联动关闭报告小窗，避免孤儿窗口
+            if let Some(main_window) = app.get_webview_window("main") {
+                let handle = app.handle().clone();
+                main_window.on_window_event(move |event| {
+                    use tauri::WindowEvent;
+                    if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                        if let Some(report) = handle.get_webview_window("report") {
+                            let _ = report.close();
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .manage(state)
         .manage(remote)
+        .manage(ReportWindowState::default())
         .invoke_handler(tauri::generate_handler![
+            report_window::open_report_window,
+            report_window::update_report_context,
+            report_window::get_report_context,
             commands::list_ai_models,
             commands::list_ai_catalog,
             commands::refresh_ai_plugins,

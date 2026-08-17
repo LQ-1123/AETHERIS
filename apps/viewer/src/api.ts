@@ -369,6 +369,43 @@ export async function workItemForSeries(seriesUid: string): Promise<ClinicalWork
   return invoke<ClinicalWorkItem>('work_item_for_series', { seriesUid });
 }
 
+export interface ReportWindowContext {
+  studyUid: string;
+  seriesUid: string;
+  modality: string | null;
+  patientName: string;
+  patientId: string | null;
+  patientSex: string | null;
+  patientBirthDate: string | null;
+  studyDate: string | null;
+  studyDescription: string | null;
+  seriesDescription: string | null;
+  institutionName: string;
+  user: { id: number | null; role: string | null; displayName: string | null; username: string | null };
+}
+
+export async function openReportWindow(context: ReportWindowContext): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('open_report_window', { context });
+}
+
+export async function updateReportContext(context: ReportWindowContext): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('update_report_context', { context });
+}
+
+export async function getReportContext(): Promise<ReportWindowContext | null> {
+  const invoke = await getInvoke();
+  return invoke<ReportWindowContext | null>('get_report_context');
+}
+
+export async function listenReportContext(
+  callback: (context: ReportWindowContext) => void,
+): Promise<() => void> {
+  const module = await import('@tauri-apps/api/event');
+  return module.listen<ReportWindowContext>('report-context', (event) => callback(event.payload));
+}
+
 export async function claimWorkItem(workId: string, revision: number): Promise<void> {
   const invoke = await getInvoke();
   await invoke('claim_work_item', { workId, revision });

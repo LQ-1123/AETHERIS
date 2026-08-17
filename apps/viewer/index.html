@@ -909,6 +909,60 @@
       <section id="admin-console-body" class="admin-console-body"></section>
     </dialog>
 
+    <div id="report-window-root" hidden>
+      <header class="rw-titlebar">
+        <strong id="rw-title">诊断报告</strong>
+        <span id="rw-status" class="report-status" data-status="draft">未锁定 · 编辑中</span>
+        <button id="rw-image" class="icon-button" type="button" title="切回影像" aria-label="切回影像"><i data-lucide="image"></i></button>
+      </header>
+      <div id="rw-patient-strip" class="rw-patient-strip"></div>
+      <div id="rw-workitem" class="rw-workitem" hidden>
+        <span id="rw-workitem-text"></span>
+        <button id="rw-claim" class="command-button" type="button" hidden>领取任务</button>
+        <button id="rw-release" class="command-button" type="button" hidden>释放任务</button>
+        <button id="rw-create" class="command-button" type="button" hidden>新建报告</button>
+      </div>
+      <section class="rw-editor-block">
+        <div class="rw-editor-head">
+          <strong>影像所见</strong>
+          <div class="report-editor-toolbar" role="toolbar" aria-label="所见格式">
+            <button type="button" data-rich="bold" title="加粗"><i data-lucide="bold"></i></button>
+            <button type="button" data-rich="italic" title="斜体"><i data-lucide="italic"></i></button>
+            <button type="button" data-rich="underline" title="下划线"><i data-lucide="underline"></i></button>
+            <button type="button" data-rich="insertUnorderedList" title="无序列表"><i data-lucide="list"></i></button>
+            <button type="button" data-rich="insertOrderedList" title="有序列表"><i data-lucide="list-ordered"></i></button>
+          </div>
+          <button id="rw-template-btn" class="icon-button" type="button" title="模板" aria-label="模板"><i data-lucide="layers-3"></i></button>
+        </div>
+        <div id="rw-findings" class="report-editor" contenteditable="true" placeholder="影像所见…"></div>
+      </section>
+      <section class="rw-editor-block">
+        <div class="rw-editor-head">
+          <strong>意见</strong>
+          <label class="report-positive"><input id="rw-positive" type="checkbox"> 阳性</label>
+          <span class="report-qc">质控：无</span>
+        </div>
+        <div id="rw-impression" class="report-editor" contenteditable="true" placeholder="诊断意见…"></div>
+      </section>
+      <div class="rw-signatures">
+        <span>报告医生 <strong id="rw-author">--</strong></span>
+        <span>审核医生 <strong id="rw-reviewer">--</strong></span>
+      </div>
+      <footer class="rw-actions">
+        <button id="rw-save" class="command-button" type="button" title="保存草稿（Ctrl+S）"><i data-lucide="save"></i><span>保存草稿</span></button>
+        <button id="rw-sign" class="command-button" type="button" title="签发（Ctrl+Enter）"><i data-lucide="check"></i><span>签发</span></button>
+        <button id="rw-amend" class="command-button" type="button" hidden>修订</button>
+        <button id="rw-versions-btn" class="icon-button" type="button" title="修改记录" aria-label="修改记录"><i data-lucide="history"></i></button>
+      </footer>
+      <aside id="rw-drawer" class="rw-drawer" hidden>
+        <div class="rw-drawer-head">
+          <span id="rw-drawer-title">模板</span>
+          <button id="rw-drawer-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        <div id="rw-drawer-body" class="rw-drawer-body"></div>
+      </aside>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
