@@ -40,7 +40,13 @@ datasets/
 *.zip
 *.tar.gz
 *.tgz
+packaging/windows/output/
 
 # 本机工具缓存与临时产物
 .dsh-*
 artifacts/
+viz/
+
+# 集中归档的本机构建缓存、打包成品与生成物
+temp/generated/
+temp/acceptance/
