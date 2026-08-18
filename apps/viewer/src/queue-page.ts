@@ -22,6 +22,8 @@ const STATUS_LABELS: Record<string, string> = {
   pending: '待书写',
   writing: '书写中',
   locked: '已锁定',
+  submitted: '待审核',
+  under_review: '审核中',
   signed: '已签发',
 };
 
@@ -271,6 +273,17 @@ export class QueuePage {
 
     const actions = document.createElement('td');
     actions.className = 'queue-action-cell';
+    if (row.report_status === 'submitted' || row.report_status === 'under_review') {
+      const review = document.createElement('button');
+      review.type = 'button';
+      review.className = 'queue-edit-button queue-review-button';
+      review.textContent = row.report_status === 'submitted' ? '去审核' : '查看审核';
+      review.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void this.openRow(row);
+      });
+      actions.append(review);
+    }
     if (this.canEditTags()) {
       const edit = document.createElement('button');
       edit.type = 'button';

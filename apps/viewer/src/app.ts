@@ -46,6 +46,7 @@ import {
   previewRollback,
   remoteLogin,
   remoteLogout,
+  requestPasswordReset,
   renameWindowPreset,
   renderMprSlice,
   runAiSegmentation,
@@ -365,6 +366,7 @@ const WORKLIST_MAX_WIDTH = 520;
 const DETAILS_WIDTH_STORAGE_KEY = 'remote-pacs.details-width';
 const DETAILS_MIN_WIDTH = 240;
 const DETAILS_MAX_WIDTH = 420;
+const STATUS_BANNER_TIMEOUT_MS = 5_000;
 
 export class App {
   private panes: SeriesPane[] = [];
@@ -463,6 +465,7 @@ export class App {
   private cinePlaying = false;
   private cineSpeed = 1;
   private cineTimer: number | null = null;
+  private statusBannerTimer: number | null = null;
   private busy = false;
   private remoteDownloadActive = false;
   private remoteUser: RemoteUser | null = null;
@@ -3894,6 +3897,19 @@ export class App {
       event.preventDefault();
       void this.login();
     });
+    requiredElement<HTMLButtonElement>('forgot-password-btn').addEventListener('click', () => {
+      this.openPasswordReset();
+    });
+    requiredElement<HTMLButtonElement>('password-reset-close').addEventListener('click', () => {
+      requiredElement<HTMLDialogElement>('password-reset-dialog').close();
+    });
+    requiredElement<HTMLButtonElement>('password-reset-cancel').addEventListener('click', () => {
+      requiredElement<HTMLDialogElement>('password-reset-dialog').close();
+    });
+    requiredElement<HTMLFormElement>('password-reset-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.submitPasswordReset();
+    });
     requiredElement<HTMLButtonElement>('choose-ca-btn').addEventListener('click', () => {
       void this.chooseCertificate();
     });
@@ -4166,7 +4182,7 @@ export class App {
       this.updateUi();
     });
     requiredElement<HTMLButtonElement>('error-close').addEventListener('click', () => {
-      this.errorBanner.hidden = true;
+      this.hideStatusBanner();
     });
 
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
@@ -4270,6 +4286,47 @@ export class App {
     if (selected) requiredElement<HTMLInputElement>('ca-cert-path').value = selected;
   }
 
+  private openPasswordReset(): void {
+    const dialog = requiredElement<HTMLDialogElement>('password-reset-dialog');
+    requiredElement<HTMLInputElement>('password-reset-username').value =
+      requiredElement<HTMLInputElement>('login-username').value.trim();
+    requiredElement<HTMLInputElement>('password-reset-password').value = '';
+    requiredElement<HTMLInputElement>('password-reset-confirm').value = '';
+    requiredElement<HTMLElement>('password-reset-error').hidden = true;
+    if (!dialog.open) dialog.showModal();
+    requiredElement<HTMLInputElement>('password-reset-username').focus();
+  }
+
+  private async submitPasswordReset(): Promise<void> {
+    const serverUrl = requiredElement<HTMLInputElement>('server-url').value.trim();
+    const caCertPath = requiredElement<HTMLInputElement>('ca-cert-path').value.trim();
+    const username = requiredElement<HTMLInputElement>('password-reset-username').value.trim();
+    const password = requiredElement<HTMLInputElement>('password-reset-password').value;
+    const confirmation = requiredElement<HTMLInputElement>('password-reset-confirm').value;
+    const error = requiredElement<HTMLElement>('password-reset-error');
+    const submit = requiredElement<HTMLButtonElement>('password-reset-submit');
+    error.hidden = true;
+    if (password !== confirmation) {
+      error.textContent = '两次输入的新密码不一致。';
+      error.hidden = false;
+      return;
+    }
+    submit.disabled = true;
+    try {
+      await requestPasswordReset(serverUrl, caCertPath, username, password);
+      requiredElement<HTMLDialogElement>('password-reset-dialog').close();
+      const notice = requiredElement<HTMLElement>('login-notice');
+      notice.textContent = '申请已提交。管理员审核通过后，即可使用新密码登录。';
+      notice.hidden = false;
+      requiredElement<HTMLInputElement>('login-username').value = username;
+    } catch (submitError) {
+      error.textContent = errorMessage(submitError);
+      error.hidden = false;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
   private async login(): Promise<void> {
     const serverUrl = requiredElement<HTMLInputElement>('server-url').value.trim();
     const caCertPath = requiredElement<HTMLInputElement>('ca-cert-path').value.trim();
@@ -4279,6 +4336,7 @@ export class App {
     const loginError = requiredElement<HTMLElement>('login-error');
     loginButton.disabled = true;
     loginError.hidden = true;
+    requiredElement<HTMLElement>('login-notice').hidden = true;
     try {
       const user = await remoteLogin(serverUrl, caCertPath, username, passwordInput.value);
       this.remoteUser = user;
@@ -4288,6 +4346,8 @@ export class App {
       setText('current-user', user.display_name?.trim() || user.username);
       this.routerPanel.setAvailable(user.role === 'admin');
       this.lifecyclePanel.setAvailable(user.role === 'admin');
+      // 角色相关入口不能等到打开检查后才刷新；首次登录成功时立即同步。
+      this.updateUi();
       requiredElement<HTMLElement>('login-screen').hidden = true;
       requiredElement<HTMLElement>('app-shell').removeAttribute('aria-hidden');
       await this.loadUserWindowPresets();
@@ -7419,8 +7479,21 @@ export class App {
   }
 
   private showError(message: string): void {
+    if (this.statusBannerTimer != null) window.clearTimeout(this.statusBannerTimer);
     setText('error-message', message);
     this.errorBanner.hidden = false;
+    this.statusBannerTimer = window.setTimeout(() => {
+      this.statusBannerTimer = null;
+      this.errorBanner.hidden = true;
+    }, STATUS_BANNER_TIMEOUT_MS);
+  }
+
+  private hideStatusBanner(): void {
+    if (this.statusBannerTimer != null) {
+      window.clearTimeout(this.statusBannerTimer);
+      this.statusBannerTimer = null;
+    }
+    this.errorBanner.hidden = true;
   }
 
   private showSeriesWarning(): void {
@@ -7608,6 +7681,8 @@ function patientReportStatus(patient: PatientSummary): { text: string; key: stri
 
 function studyReportStatusText(status: string): string {
   if (status === 'signed') return '已签发';
+  if (status === 'submitted') return '待审核';
+  if (status === 'under_review') return '审核中';
   if (status === 'writing') return '书写中';
   return '待书写';
 }

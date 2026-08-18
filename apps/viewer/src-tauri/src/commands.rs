@@ -3,9 +3,10 @@
 use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
-    AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress, PatientSummary,
-    QueueStudyRow, RemoteState, RemoteUser, ReportTemplate, ReportVersion, SeriesSourceEntry,
-    SeriesSummary, StudySummary, UserWindowPreset,
+    AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress,
+    PasswordResetRequest, PatientSummary, QueueStudyRow, RemoteState, RemoteUser,
+    ReportReviewEvent, ReportTemplate, ReportVersion, SeriesSourceEntry, SeriesSummary,
+    StudySummary, UserWindowPreset,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
@@ -346,6 +347,25 @@ pub async fn remote_login(
 }
 
 #[tauri::command]
+pub async fn request_password_reset(
+    server_url: String,
+    ca_cert_path: String,
+    username: String,
+    new_password: String,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .request_password_reset(
+            &server_url,
+            PathBuf::from(ca_cert_path).as_path(),
+            &username,
+            &new_password,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn remote_logout(state: State<'_, RemoteState>) -> Result<(), String> {
     state.logout().await.map_err(|error| error.to_string())
 }
@@ -474,6 +494,67 @@ pub async fn sign_report(
 }
 
 #[tauri::command]
+pub async fn submit_report(
+    report_id: String,
+    revision: i32,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .submit_report(&report_id, revision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn start_report_review(
+    report_id: String,
+    revision: i32,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .start_report_review(&report_id, revision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn approve_report(
+    report_id: String,
+    revision: i32,
+    modified: bool,
+    findings: Option<String>,
+    impression: Option<String>,
+    recommendation: Option<String>,
+    review_comment: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<(), String> {
+    state
+        .approve_report(
+            &report_id,
+            revision,
+            modified,
+            findings.as_deref(),
+            impression.as_deref(),
+            recommendation.as_deref(),
+            review_comment.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_report_review_events(
+    report_id: String,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ReportReviewEvent>, String> {
+    state
+        .list_report_review_events(&report_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn begin_report_amendment(
     report_id: String,
     reason: String,
@@ -541,10 +622,7 @@ pub async fn claim_study(
 }
 
 #[tauri::command]
-pub async fn release_study(
-    study_uid: String,
-    state: State<'_, RemoteState>,
-) -> Result<(), String> {
+pub async fn release_study(study_uid: String, state: State<'_, RemoteState>) -> Result<(), String> {
     state
         .release_study(&study_uid)
         .await
@@ -584,7 +662,12 @@ pub async fn register_device(
     state: State<'_, RemoteState>,
 ) -> Result<DicomDevice, String> {
     state
-        .register_device(&name, &calling_ae_title, &source_ip, modality_hint.as_deref())
+        .register_device(
+            &name,
+            &calling_ae_title,
+            &source_ip,
+            modality_hint.as_deref(),
+        )
         .await
         .map_err(|error| error.to_string())
 }
@@ -652,8 +735,83 @@ pub async fn resolve_series_source(
 
 #[tauri::command]
 pub async fn list_users(state: State<'_, RemoteState>) -> Result<Vec<AdminUser>, String> {
+    state.list_users().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn create_user(
+    username: String,
+    display_name: Option<String>,
+    role: String,
+    temporary_password: String,
+    state: State<'_, RemoteState>,
+) -> Result<AdminUser, String> {
     state
-        .list_users()
+        .create_user(
+            &username,
+            display_name.as_deref(),
+            &role,
+            &temporary_password,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn update_user(
+    user_id: i64,
+    display_name: Option<String>,
+    role: Option<String>,
+    is_active: Option<bool>,
+    state: State<'_, RemoteState>,
+) -> Result<AdminUser, String> {
+    state
+        .update_user(user_id, display_name.as_deref(), role.as_deref(), is_active)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_password_reset_requests(
+    state: State<'_, RemoteState>,
+) -> Result<Vec<PasswordResetRequest>, String> {
+    state
+        .list_password_reset_requests()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn review_password_reset_request(
+    request_id: i64,
+    approve: bool,
+    state: State<'_, RemoteState>,
+) -> Result<PasswordResetRequest, String> {
+    state
+        .review_password_reset_request(request_id, approve)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_user_permissions(
+    user_id: i64,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<String>, String> {
+    state
+        .list_user_permissions(user_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn replace_user_permissions(
+    user_id: i64,
+    permissions: Vec<String>,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<String>, String> {
+    state
+        .replace_user_permissions(user_id, permissions)
         .await
         .map_err(|error| error.to_string())
 }

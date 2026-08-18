@@ -9,11 +9,13 @@ import type {
   DicomDevice,
   DicomRevision,
   PatientSummary,
+  PasswordResetRequest,
   QueueStudyRow,
   MprMetadata,
   MprPlane,
   MprProjectionMode,
   ReportTemplate,
+  ReportReviewEvent,
   ReportVersion,
   RoiStatistics,
   RemoteSeriesSummary,
@@ -265,6 +267,16 @@ export async function remoteLogin(
   return invoke<RemoteUser>('remote_login', { serverUrl, caCertPath, username, password });
 }
 
+export async function requestPasswordReset(
+  serverUrl: string,
+  caCertPath: string,
+  username: string,
+  newPassword: string,
+): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('request_password_reset', { serverUrl, caCertPath, username, newPassword });
+}
+
 export async function remoteLogout(): Promise<void> {
   const invoke = await getInvoke();
   await invoke('remote_logout');
@@ -326,6 +338,40 @@ export async function updateReportDraft(
 export async function signReport(reportId: string, revision: number): Promise<void> {
   const invoke = await getInvoke();
   await invoke('sign_report', { reportId, revision });
+}
+
+export async function submitReport(reportId: string, revision: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('submit_report', { reportId, revision });
+}
+
+export async function startReportReview(reportId: string, revision: number): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('start_report_review', { reportId, revision });
+}
+
+export async function approveReport(
+  reportId: string,
+  revision: number,
+  modified: boolean,
+  content: { findings: string; impression: string; recommendation: string | null } | null,
+  reviewComment: string | null,
+): Promise<void> {
+  const invoke = await getInvoke();
+  await invoke('approve_report', {
+    reportId,
+    revision,
+    modified,
+    findings: content?.findings ?? null,
+    impression: content?.impression ?? null,
+    recommendation: content?.recommendation ?? null,
+    reviewComment,
+  });
+}
+
+export async function listReportReviewEvents(reportId: string): Promise<ReportReviewEvent[]> {
+  const invoke = await getInvoke();
+  return invoke<ReportReviewEvent[]>('list_report_review_events', { reportId });
 }
 
 export async function beginReportAmendment(
@@ -464,6 +510,47 @@ export async function resolveSeriesSource(seriesUid: string, deviceId: string): 
 export async function listUsers(): Promise<AdminUser[]> {
   const invoke = await getInvoke();
   return invoke<AdminUser[]>('list_users');
+}
+
+export async function createUser(input: {
+  username: string;
+  displayName: string | null;
+  role: string;
+  temporaryPassword: string;
+}): Promise<AdminUser> {
+  const invoke = await getInvoke();
+  return invoke<AdminUser>('create_user', input);
+}
+
+export async function updateUser(
+  userId: number,
+  input: { displayName?: string | null; role?: string | null; isActive?: boolean | null },
+): Promise<AdminUser> {
+  const invoke = await getInvoke();
+  return invoke<AdminUser>('update_user', { userId, ...input });
+}
+
+export async function listPasswordResetRequests(): Promise<PasswordResetRequest[]> {
+  const invoke = await getInvoke();
+  return invoke<PasswordResetRequest[]>('list_password_reset_requests');
+}
+
+export async function reviewPasswordResetRequest(
+  requestId: number,
+  approve: boolean,
+): Promise<PasswordResetRequest> {
+  const invoke = await getInvoke();
+  return invoke<PasswordResetRequest>('review_password_reset_request', { requestId, approve });
+}
+
+export async function listUserPermissions(userId: number): Promise<string[]> {
+  const invoke = await getInvoke();
+  return invoke<string[]>('list_user_permissions', { userId });
+}
+
+export async function replaceUserPermissions(userId: number, permissions: string[]): Promise<string[]> {
+  const invoke = await getInvoke();
+  return invoke<string[]>('replace_user_permissions', { userId, permissions });
 }
 
 export async function listUserDeviceGrants(userId: number): Promise<string[]> {

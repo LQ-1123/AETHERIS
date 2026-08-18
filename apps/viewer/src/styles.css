@@ -133,11 +133,100 @@ input:disabled {
   height: 34px;
 }
 
-#login-error {
+#login-error,
+#password-reset-error {
   margin: -3px 0 0;
   color: #f3a2a2;
   font-size: 11px;
   line-height: 1.45;
+}
+
+#login-notice {
+  margin: -3px 0 0;
+  color: #7fe3a8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.login-link {
+  justify-self: end;
+  margin: -8px 0 -4px;
+  padding: 0;
+  border: 0;
+  color: #78cddd;
+  background: transparent;
+  font-size: 11px;
+}
+
+.login-link:hover {
+  color: #b7edf4;
+  background: transparent;
+}
+
+.password-reset-dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid #3c555e;
+  border-radius: 8px;
+  color: #e6eef0;
+  background: #182024;
+  box-shadow: 0 20px 70px rgb(0 0 0 / 55%);
+}
+
+.password-reset-dialog::backdrop {
+  background: rgb(2 7 10 / 72%);
+}
+
+.password-reset-dialog form {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+}
+
+.password-reset-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.password-reset-heading h2,
+.password-reset-heading p {
+  margin: 0;
+}
+
+.password-reset-heading h2 {
+  font-size: 17px;
+}
+
+.password-reset-heading p {
+  margin-top: 6px;
+  color: #9fb2b8;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.password-reset-dialog label {
+  display: grid;
+  gap: 6px;
+  color: #bdc9cc;
+  font-size: 11px;
+}
+
+.password-reset-dialog input {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #47616a;
+  border-radius: 4px;
+  color: #eef4f5;
+  background: #10171a;
+}
+
+.password-reset-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 .login-submit {
@@ -768,6 +857,10 @@ button svg {
   margin-bottom: 12px;
 }
 
+.operational-dialog.admin-console-dialog {
+  width: min(1080px, calc(100vw - 32px));
+}
+
 /* 覆盖 .segmented button 的 32px 图标宽度：管理控制台 tab 是文字按钮 */
 .admin-console-tabs button {
   width: auto;
@@ -803,6 +896,75 @@ button svg {
 .admin-device-form .command-button {
   align-self: end;
   justify-self: start;
+}
+
+.admin-account-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 160px 1.25fr auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #33505c;
+  border-radius: 8px;
+  background: #111b20;
+}
+
+.admin-account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #9fc3cd;
+  font-size: 11px;
+}
+
+.admin-account-row {
+  align-items: flex-start;
+}
+
+.admin-account-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 140px auto repeat(2, auto);
+  align-items: center;
+  gap: 8px;
+  flex: 2;
+}
+
+.admin-section-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #33505c;
+  border-radius: 6px;
+  color: #b9cdd2;
+  background: #111b20;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-review-permission {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #c6d4d9;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.admin-account-form input,
+.admin-account-form select,
+.admin-account-controls input,
+.admin-account-controls select,
+.report-review-comment textarea,
+.rw-review-comment textarea {
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid #3b5964;
+  border-radius: 4px;
+  color: #e3eef1;
+  background: #0d161b;
+}
+
+.admin-account-controls .command-button {
+  white-space: nowrap;
 }
 
 .admin-list {
@@ -3597,7 +3759,7 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 /* ---- 报告工作台 ---- */
 
 #workspace.report-mode {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) !important;
 }
 
 #workspace.report-mode > :not(#report-workspace) {
@@ -3659,6 +3821,50 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 .report-status[data-status="amending"] {
   background: #3a2f14;
   color: #ffd98a;
+}
+
+.report-status[data-status="submitted"] {
+  background: rgba(139, 92, 246, 0.18);
+  color: #c4b5fd;
+}
+
+.report-status[data-status="under_review"] {
+  background: rgba(217, 119, 6, 0.18);
+  color: #fbbf24;
+}
+
+.report-review-comment,
+.rw-review-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  color: #9fc3cd;
+  font-size: 12px;
+}
+
+.report-review-comment textarea,
+.rw-review-comment textarea {
+  resize: vertical;
+  min-height: 58px;
+}
+
+.report-timeline-item {
+  padding: 8px 10px;
+  border-left: 2px solid #45b7c8;
+  color: #c6d4d9;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1050px) {
+  .admin-account-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-account-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .report-nav-right {
@@ -4193,6 +4399,18 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 .worklist-report-badge[data-status="locked"] {
   background: #3a2f14;
   color: #ffab70;
+}
+
+.worklist-report-badge[data-status="submitted"] {
+  color: #8b5cf6;
+  border-color: rgba(139, 92, 246, 0.38);
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.worklist-report-badge[data-status="under_review"] {
+  color: #d97706;
+  border-color: rgba(217, 119, 6, 0.38);
+  background: rgba(217, 119, 6, 0.12);
 }
 
 .worklist-report-badge[data-status="signed"] {

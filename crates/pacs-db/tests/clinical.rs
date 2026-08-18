@@ -140,9 +140,32 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
     )
     .await
     .unwrap();
-    pacs_db::sign_report(&pool, 1, report.id, doctor, report.revision)
+    assert!(
+        pacs_db::sign_report(&pool, 1, report.id, doctor, report.revision)
+            .await
+            .is_err(),
+        "作者直签必须被数据层拒绝"
+    );
+    pacs_db::submit_report(&pool, 1, report.id, doctor, report.revision)
         .await
         .unwrap();
+    pacs_db::start_report_review(&pool, 1, report.id, outsider, report.revision + 1)
+        .await
+        .unwrap();
+    pacs_db::approve_report(
+        &pool,
+        1,
+        report.id,
+        outsider,
+        report.revision + 2,
+        false,
+        None,
+        None,
+        None,
+        Some("审核通过"),
+    )
+    .await
+    .unwrap();
     let versions = pacs_db::list_report_versions(&pool, 1, report.id, doctor, false)
         .await
         .unwrap();
@@ -151,7 +174,7 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
     let audited: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM audit_log WHERE user_fk=$1 AND action='report_signed' AND detail->>'report_id'=$2)",
     )
-    .bind(doctor)
+    .bind(outsider)
     .bind(report.id.to_string())
     .fetch_one(&pool)
     .await

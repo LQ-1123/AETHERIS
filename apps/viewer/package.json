@@ -9,6 +9,7 @@
     "test:visual": "node scripts/visual-check.mjs",
     "test:visual:queue": "node scripts/queue-page-visual.mjs",
     "test:visual:report": "node scripts/report-workspace-visual.mjs",
+    "test:visual:password-reset": "node scripts/password-reset-acceptance.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -652,7 +652,7 @@ export interface QueueStudyRow {
   modalities: string[];
   description: string | null;
   body_parts: string[];
-  report_status: 'pending' | 'writing' | 'locked' | 'signed';
+  report_status: 'pending' | 'writing' | 'locked' | 'submitted' | 'under_review' | 'signed';
   institution_name: string | null;
   series_count: number;
 }
@@ -828,7 +828,10 @@ export interface DiagnosticReport {
   id: string;
   study_uid: string;
   author_id: number;
-  status: 'draft' | 'signed' | 'amending';
+  author_name: string;
+  reviewer_id: number | null;
+  reviewer_name: string | null;
+  status: 'draft' | 'submitted' | 'under_review' | 'signed' | 'amending';
   findings: string;
   impression: string;
   recommendation: string | null;
@@ -836,6 +839,12 @@ export interface DiagnosticReport {
   access_incomplete: boolean;
   is_positive: boolean;
   template_payload: StructuredPayload | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  reviewer_modified: boolean;
+  review_required: boolean;
+  can_review: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -853,6 +862,18 @@ export interface ReportVersion {
   amendment_reason: string | null;
   signed_by: number;
   signed_at: string;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+}
+
+export interface ReportReviewEvent {
+  id: number;
+  report_id: string;
+  actor_id: number;
+  actor_name: string;
+  action: 'submitted' | 'review_started' | 'reviewer_modified' | 'approved' | 'rejected';
+  comment: string | null;
+  created_at: string;
 }
 
 export interface ClinicalWorkItem {
@@ -899,4 +920,19 @@ export interface AdminUser {
   display_name: string | null;
   role: string;
   is_active: boolean;
+  must_change_password: boolean;
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface PasswordResetRequest {
+  id: number;
+  user_id: number;
+  username: string;
+  display_name: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  requested_at: string;
+  reviewed_by: number | null;
+  reviewer_name: string | null;
+  reviewed_at: string | null;
 }

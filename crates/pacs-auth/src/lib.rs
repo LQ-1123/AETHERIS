@@ -16,7 +16,9 @@ pub mod service_accounts;
 pub mod token;
 
 pub use middleware::{Identity, require};
-pub use model::{InvalidUsername, Permission, Role, User, normalize_username};
+pub use model::{
+    InvalidUsername, PasswordResetRequest, Permission, Role, User, normalize_username,
+};
 pub use password::{PasswordError, WeakPassword};
 pub use service::{AuthError, AuthService};
 pub use service_accounts::{ApiScope, ServiceIdentity};

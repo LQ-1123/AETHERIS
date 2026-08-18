@@ -17,6 +17,10 @@ pub fn routes(auth_service: Arc<AuthService>) -> Router {
         .route("/refresh", axum::routing::post(refresh))
         .route("/logout", axum::routing::post(logout))
         .route("/change-password", axum::routing::post(change_password))
+        .route(
+            "/password-reset-requests",
+            axum::routing::post(request_password_reset),
+        )
         .with_state(auth_service)
 }
 
@@ -154,6 +158,36 @@ async fn change_password(
     )
     .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize)]
+struct PasswordResetRequestBody {
+    username: String,
+    new_password: String,
+}
+
+async fn request_password_reset(
+    State(service): State<Arc<AuthService>>,
+    Json(req): Json<PasswordResetRequestBody>,
+) -> Result<StatusCode, ApiError> {
+    let username = crate::normalize_username(&req.username)
+        .map_err(|_| ApiError(AuthError::InvalidCredentials))?;
+    crate::password::check_strength(&req.new_password, &username).map_err(AuthError::from)?;
+    // 无论账号是否存在都执行 Argon2，避免用响应耗时枚举有效用户名。
+    let password_hash = crate::password::hash(&req.new_password).map_err(AuthError::from)?;
+    let request_id =
+        repository::submit_password_reset_request(service.pool(), &username, &password_hash)
+            .await?;
+    crate::audit::record(
+        service.pool(),
+        crate::audit::Action::PasswordResetRequested,
+        crate::audit::Outcome::Success,
+        crate::audit::Entry::for_attempted_username(&username).with_detail(
+            serde_json::json!({"queued": request_id.is_some(), "request_id": request_id}),
+        ),
+    )
+    .await;
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// API 错误响应。

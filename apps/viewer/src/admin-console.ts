@@ -1,15 +1,21 @@
 import {
   approveDevice,
+  createUser,
   listDevices,
+  listPasswordResetRequests,
   listSeriesSources,
   listUserDeviceGrants,
   listUsers,
+  listUserPermissions,
   registerDevice,
   replaceUserDeviceGrants,
+  replaceUserPermissions,
+  reviewPasswordResetRequest,
   resolveSeriesSource,
   setDeviceStatus,
+  updateUser,
 } from './api';
-import type { AdminUser, DicomDevice, SeriesSourceEntry } from './types';
+import type { AdminUser, DicomDevice, PasswordResetRequest, SeriesSourceEntry } from './types';
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -17,7 +23,7 @@ function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return found as T;
 }
 
-type AdminTab = 'devices' | 'sources' | 'grants';
+type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'sources' | 'grants';
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   legacy_unattributed: '历史未归属',
@@ -37,6 +43,7 @@ export class AdminConsole {
   private tab: AdminTab = 'devices';
   private devices: DicomDevice[] = [];
   private users: AdminUser[] = [];
+  private passwordResetRequests: PasswordResetRequest[] = [];
   private busy = false;
   private sourcesOffset = 0;
   /** 渲染代际：每次渲染自增；过期渲染不得写 DOM（防快速点击时的交错渲染）。 */
@@ -88,10 +95,17 @@ export class AdminConsole {
     this.busy = true;
     this.clearError();
     try {
-      const [devices, users] = await Promise.all([listDevices(), listUsers()]);
+      const [devices, users, passwordResetRequests] = await Promise.all([
+        listDevices(),
+        listUsers(),
+        listPasswordResetRequests(),
+      ]);
       this.devices = devices;
       this.users = users;
-      if (this.tab === 'devices') await this.renderDevices();
+      this.passwordResetRequests = passwordResetRequests;
+      if (this.tab === 'accounts') await this.renderAccounts();
+      else if (this.tab === 'password-resets') this.renderPasswordResetRequests();
+      else if (this.tab === 'devices') await this.renderDevices();
       else if (this.tab === 'sources') await this.renderSources();
       else await this.renderGrants();
     } catch (error) {
@@ -465,10 +479,223 @@ export class AdminConsole {
       this.showError(errorMessage(error));
     }
   }
+
+  private async renderAccounts(): Promise<void> {
+    const generation = ++this.renderGeneration;
+    const fragment = document.createDocumentFragment();
+    const form = document.createElement('form');
+    form.className = 'admin-account-form';
+    const username = accountInput('账号', '小写字母、数字、. _ -', 'text');
+    username.input.autocomplete = 'off';
+    const displayName = accountInput('姓名', '医生姓名', 'text');
+    const password = accountInput('临时密码', '至少 12 位，不能包含用户名', 'password');
+    password.input.autocomplete = 'new-password';
+    const roleLabel = document.createElement('label');
+    roleLabel.append(document.createTextNode('角色'));
+    const role = roleSelect('radiologist');
+    roleLabel.append(role);
+    const create = document.createElement('button');
+    create.type = 'submit';
+    create.className = 'command-button';
+    create.textContent = '创建账号';
+    form.append(username.label, displayName.label, roleLabel, password.label, create);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.createAccount(
+        username.input.value,
+        displayName.input.value,
+        role.value,
+        password.input.value,
+      );
+    });
+    fragment.append(form);
+
+    const permissionRows = await Promise.all(this.users.map(async (user) => ({
+      user,
+      permissions: await listUserPermissions(user.id),
+    })));
+    const list = document.createElement('div');
+    list.className = 'admin-list admin-account-list';
+    for (const { user, permissions } of permissionRows) {
+      const row = document.createElement('div');
+      row.className = 'admin-row admin-account-row';
+      const info = document.createElement('div');
+      info.className = 'admin-row-info';
+      const title = document.createElement('strong');
+      title.textContent = user.display_name || user.username;
+      const meta = document.createElement('span');
+      meta.textContent = `${user.username} · ${user.is_active ? '已启用' : '已停用'}${user.must_change_password ? ' · 待首次改密' : ''}`;
+      info.append(title, meta);
+
+      const controls = document.createElement('div');
+      controls.className = 'admin-account-controls';
+      const display = document.createElement('input');
+      display.type = 'text';
+      display.value = user.display_name ?? '';
+      display.placeholder = '姓名';
+      display.setAttribute('aria-label', `${user.username} 姓名`);
+      const selectedRole = roleSelect(user.role);
+      selectedRole.setAttribute('aria-label', `${user.username} 角色`);
+      const reviewLabel = document.createElement('label');
+      reviewLabel.className = 'admin-review-permission';
+      const review = document.createElement('input');
+      review.type = 'checkbox';
+      review.checked = permissions.includes('review_report');
+      review.disabled = !['admin', 'radiologist'].includes(user.role);
+      reviewLabel.append(review, document.createTextNode('可审核报告'));
+      const save = actionButton('保存', () => void this.saveAccount(user, display.value, selectedRole.value, review.checked));
+      const toggle = actionButton(user.is_active ? '停用' : '启用', () => void this.toggleAccount(user));
+      controls.append(display, selectedRole, reviewLabel, save, toggle);
+      row.append(info, controls);
+      list.append(row);
+    }
+    if (!this.users.length) {
+      const empty = document.createElement('p'); empty.className = 'admin-empty'; empty.textContent = '暂无账号。'; list.append(empty);
+    }
+    fragment.append(list);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
+  }
+
+  private async createAccount(
+    username: string,
+    displayName: string,
+    role: string,
+    temporaryPassword: string,
+  ): Promise<void> {
+    try {
+      await createUser({
+        username: username.trim(),
+        displayName: displayName.trim() || null,
+        role,
+        temporaryPassword,
+      });
+      this.showSuccess(`账号 ${username.trim()} 已创建，首次登录必须修改密码。`);
+      this.users = await listUsers();
+      await this.renderAccounts();
+    } catch (error) { this.showError(errorMessage(error)); }
+  }
+
+  private async saveAccount(
+    user: AdminUser,
+    displayName: string,
+    role: string,
+    reviewReport: boolean,
+  ): Promise<void> {
+    try {
+      await updateUser(user.id, { displayName: displayName.trim() || null, role });
+      const canReview = ['admin', 'radiologist'].includes(role) && reviewReport;
+      await replaceUserPermissions(user.id, canReview ? ['review_report'] : []);
+      this.showSuccess(`已保存 ${user.username} 的角色与审核权限。`);
+      this.users = await listUsers();
+      await this.renderAccounts();
+    } catch (error) { this.showError(errorMessage(error)); }
+  }
+
+  private async toggleAccount(user: AdminUser): Promise<void> {
+    if (user.is_active && !window.confirm(`确认停用账号 ${user.username}？其会话将被吊销。`)) return;
+    try {
+      await updateUser(user.id, { isActive: !user.is_active });
+      this.showSuccess(`账号 ${user.username} 已${user.is_active ? '停用' : '启用'}。`);
+      this.users = await listUsers();
+      await this.renderAccounts();
+    } catch (error) { this.showError(errorMessage(error)); }
+  }
+
+  private renderPasswordResetRequests(): void {
+    const generation = ++this.renderGeneration;
+    const fragment = document.createDocumentFragment();
+    const intro = document.createElement('p');
+    intro.className = 'admin-section-note';
+    intro.textContent = '用户在登录页提交希望使用的新密码。管理员只能批准或拒绝，无法查看或修改密码内容。';
+    fragment.append(intro);
+    const list = document.createElement('div');
+    list.className = 'admin-list password-reset-list';
+    for (const request of this.passwordResetRequests) {
+      const row = document.createElement('div');
+      row.className = 'admin-row';
+      const info = document.createElement('div');
+      info.className = 'admin-row-info';
+      const title = document.createElement('strong');
+      title.textContent = request.display_name || request.username;
+      const meta = document.createElement('span');
+      meta.textContent = `${request.username} · 申请于 ${formatDateTime(request.requested_at)}`;
+      info.append(title, meta);
+      const status = document.createElement('span');
+      status.className = 'admin-status';
+      status.dataset.status = 'pending';
+      status.textContent = '待审核';
+      const actions = document.createElement('div');
+      actions.className = 'admin-row-actions';
+      const reject = actionButton('拒绝', () => void this.reviewPasswordReset(request, false));
+      const approve = actionButton('批准重置', () => void this.reviewPasswordReset(request, true));
+      approve.classList.add('primary');
+      actions.append(reject, approve);
+      row.append(info, status, actions);
+      list.append(row);
+    }
+    if (!this.passwordResetRequests.length) {
+      const empty = document.createElement('p');
+      empty.className = 'admin-empty';
+      empty.textContent = '暂无待审核的密码重置申请。';
+      list.append(empty);
+    }
+    fragment.append(list);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
+  }
+
+  private async reviewPasswordReset(request: PasswordResetRequest, approve: boolean): Promise<void> {
+    const action = approve ? '批准' : '拒绝';
+    if (!window.confirm(`${action} ${request.username} 的密码重置申请？`)) return;
+    try {
+      await reviewPasswordResetRequest(request.id, approve);
+      this.showSuccess(approve
+        ? `已批准 ${request.username} 的申请，新密码现已生效。`
+        : `已拒绝 ${request.username} 的申请，原密码保持不变。`);
+      this.passwordResetRequests = await listPasswordResetRequests();
+      this.renderPasswordResetRequests();
+    } catch (error) { this.showError(errorMessage(error)); }
+  }
+}
+
+function accountInput(labelText: string, placeholder: string, type: string) {
+  const label = document.createElement('label');
+  label.append(document.createTextNode(labelText));
+  const input = document.createElement('input');
+  input.type = type;
+  input.placeholder = placeholder;
+  input.required = labelText !== '姓名';
+  label.append(input);
+  return { label, input };
+}
+
+function roleSelect(selected: string): HTMLSelectElement {
+  const select = document.createElement('select');
+  const roles: Array<[string, string]> = [
+    ['admin', '管理员'], ['radiologist', '放射科医师'], ['technician', '技师'], ['viewer', '只读'],
+  ];
+  for (const [value, label] of roles) {
+    const option = document.createElement('option');
+    option.value = value; option.textContent = label; option.selected = value === selected; select.append(option);
+  }
+  return select;
+}
+
+function actionButton(label: string, action: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'command-button'; button.textContent = label;
+  button.addEventListener('click', action);
+  return button;
 }
 
 function errorMessage(error: unknown): string {
   if (typeof error === 'string') return error;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
 }

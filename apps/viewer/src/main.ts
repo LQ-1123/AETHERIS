@@ -154,5 +154,12 @@ window.addEventListener('DOMContentLoaded', () => {
     });
     return;
   }
+  if (import.meta.env.DEV && import.meta.env.VITE_PASSWORD_RESET_ACCEPTANCE === '1') {
+    void import('./password-reset-acceptance').then(({ installPasswordResetAcceptanceMock }) => {
+      installPasswordResetAcceptanceMock();
+      new App();
+    });
+    return;
+  }
   new App();
 });

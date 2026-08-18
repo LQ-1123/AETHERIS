@@ -27,7 +27,7 @@
 <script>
 const $=id=>document.getElementById(id);const METHODS=['get','post','put','patch','delete'];let endpoints=[],selected=null,results=new Map();
 const supplemental=[
-['POST','/api/v1/auth/login','用户登录'],['POST','/api/v1/auth/refresh','刷新令牌'],['POST','/api/v1/auth/logout','退出登录'],['POST','/api/v1/auth/change-password','修改密码'],
+['POST','/api/v1/auth/login','用户登录'],['POST','/api/v1/auth/refresh','刷新令牌'],['POST','/api/v1/auth/logout','退出登录'],['POST','/api/v1/auth/change-password','修改密码'],['POST','/api/v1/auth/password-reset-requests','提交密码重置申请'],
 ['GET','/api/patients','病人工作列表'],['GET','/api/patients/{patient_id}/studies','病人检查'],['GET','/api/studies/{study_uid}/series','检查序列'],
 ['GET','/api/window-presets','个人窗预设'],['POST','/api/window-presets','保存个人窗预设'],['PATCH','/api/window-presets/{preset_id}','重命名个人窗预设'],['DELETE','/api/window-presets/{preset_id}','删除个人窗预设'],
 ['GET','/api/studies/{study_uid}/series/{series_uid}/annotations','共享标注'],['POST','/api/studies/{study_uid}/series/{series_uid}/annotations','创建共享标注'],['PATCH','/api/studies/{study_uid}/series/{series_uid}/annotations/{annotation_id}','更新共享标注'],

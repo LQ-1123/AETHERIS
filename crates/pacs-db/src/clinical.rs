@@ -193,7 +193,7 @@ pub async fn list_series_sources(
            LEFT JOIN dicom_devices d ON d.id=se.source_device_fk
            WHERE st.institution_id=$1
              AND (NOT $2 OR se.source_status IN ('needs_review','legacy_unattributed'))
-           ORDER BY st.study_date DESC NULLS LAST,se.id
+           ORDER BY se.id DESC,st.study_date DESC NULLS LAST
            LIMIT $3 OFFSET $4"#,
     )
     .bind(institution_id)
@@ -682,6 +682,9 @@ pub struct DiagnosticReport {
     pub id: Uuid,
     pub study_uid: String,
     pub author_id: i64,
+    pub author_name: String,
+    pub reviewer_id: Option<i64>,
+    pub reviewer_name: Option<String>,
     pub status: String,
     pub findings: String,
     pub impression: String,
@@ -690,6 +693,12 @@ pub struct DiagnosticReport {
     pub access_incomplete: bool,
     pub is_positive: bool,
     pub template_payload: Option<Value>,
+    pub submitted_at: Option<DateTime<Utc>>,
+    pub reviewed_at: Option<DateTime<Utc>>,
+    pub review_comment: Option<String>,
+    pub reviewer_modified: bool,
+    pub review_required: bool,
+    pub can_review: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -741,8 +750,13 @@ pub async fn create_report(
         r#"INSERT INTO diagnostic_reports(id,institution_id,study_fk,author_fk,access_incomplete,
                    template_payload,is_positive)
            VALUES($1,$2,$3,$4,$5,$6,$7)
-           RETURNING id,$8::TEXT study_uid,author_fk author_id,status,findings,impression,
+           RETURNING id,$8::TEXT study_uid,author_fk author_id,
+                     (SELECT COALESCE(display_name,username) FROM users WHERE id=author_fk) author_name,
+                     reviewer_fk reviewer_id,NULL::TEXT reviewer_name,status,findings,impression,
                      recommendation,revision,access_incomplete,is_positive,template_payload,
+                     submitted_at,reviewed_at,review_comment,false reviewer_modified,
+                     (SELECT review_required FROM institutions WHERE id=$2) review_required,
+                     false can_review,
                      created_at,updated_at"#,
     )
     .bind(id)
@@ -781,12 +795,27 @@ pub async fn list_reports(
     study_uid: &str,
 ) -> Result<Vec<DiagnosticReport>, DbError> {
     Ok(sqlx::query_as(
-        r#"SELECT r.id,st.study_instance_uid study_uid,r.author_fk author_id,r.status,
+        r#"SELECT r.id,st.study_instance_uid study_uid,r.author_fk author_id,
+                  COALESCE(au.display_name,au.username) author_name,
+                  r.reviewer_fk reviewer_id,COALESCE(ru.display_name,ru.username) reviewer_name,r.status,
                   r.findings,r.impression,r.recommendation,r.revision,r.access_incomplete,
-                  r.is_positive,r.template_payload,r.created_at,r.updated_at
+                  r.is_positive,r.template_payload,r.submitted_at,r.reviewed_at,r.review_comment,
+                  EXISTS(SELECT 1 FROM report_review_events e
+                         WHERE e.report_fk=r.id AND e.action='reviewer_modified') reviewer_modified,
+                  inst.review_required,
+                  EXISTS(SELECT 1 FROM user_permission_grants pg
+                         WHERE pg.user_fk=$3 AND pg.permission='review_report') can_review,
+                  r.created_at,r.updated_at
            FROM diagnostic_reports r JOIN studies st ON st.id=r.study_fk
+           JOIN institutions inst ON inst.id=r.institution_id
+           JOIN users au ON au.id=r.author_fk LEFT JOIN users ru ON ru.id=r.reviewer_fk
            WHERE r.institution_id=$1 AND st.study_instance_uid=$2
-             AND ($4 OR r.author_fk=$3 OR EXISTS(
+             AND ($4 OR r.author_fk=$3 OR (
+               r.status IN ('submitted','under_review') AND EXISTS(
+                 SELECT 1 FROM user_permission_grants pg
+                 WHERE pg.user_fk=$3 AND pg.permission='review_report'
+               )
+             ) OR EXISTS(
                SELECT 1 FROM diagnostic_report_series rs JOIN series se ON se.id=rs.series_fk
                JOIN dicom_devices d ON d.id=se.source_device_fk AND d.status='active'
                JOIN user_device_grants g ON g.device_fk=d.id AND g.user_fk=$3
@@ -815,6 +844,19 @@ pub struct ReportVersion {
     pub amendment_reason: Option<String>,
     pub signed_by: i64,
     pub signed_at: DateTime<Utc>,
+    pub reviewed_by: Option<i64>,
+    pub reviewed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ReportReviewEvent {
+    pub id: i64,
+    pub report_id: Uuid,
+    pub actor_id: i64,
+    pub actor_name: String,
+    pub action: String,
+    pub comment: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -857,13 +899,42 @@ pub async fn list_report_versions(
     Ok(sqlx::query_as(
         r#"SELECT v.id,v.report_fk report_id,v.version_number,v.findings,v.impression,
                   v.recommendation,v.covered_series_uids,v.access_incomplete,v.is_positive,
-                  v.amendment_reason,v.signed_by,v.signed_at
+                  v.amendment_reason,v.signed_by,v.signed_at,v.reviewed_by,v.reviewed_at
            FROM diagnostic_report_versions v JOIN diagnostic_reports r ON r.id=v.report_fk
            WHERE v.report_fk=$1 AND r.institution_id=$2 AND ($4 OR r.author_fk=$3 OR EXISTS(
              SELECT 1 FROM diagnostic_report_series rs JOIN series se ON se.id=rs.series_fk
              JOIN dicom_devices d ON d.id=se.source_device_fk AND d.status='active'
              JOIN user_device_grants g ON g.device_fk=d.id AND g.user_fk=$3
              WHERE rs.report_fk=r.id)) ORDER BY v.version_number"#,
+    )
+    .bind(report_id)
+    .bind(institution_id)
+    .bind(user_id)
+    .bind(is_admin)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn list_report_review_events(
+    pool: &PgPool,
+    institution_id: i64,
+    report_id: Uuid,
+    user_id: i64,
+    is_admin: bool,
+) -> Result<Vec<ReportReviewEvent>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT e.id,e.report_fk report_id,e.actor_fk actor_id,
+                  COALESCE(u.display_name,u.username) actor_name,e.action,e.comment,e.created_at
+           FROM report_review_events e
+           JOIN diagnostic_reports r ON r.id=e.report_fk
+           JOIN users u ON u.id=e.actor_fk
+           WHERE e.report_fk=$1 AND r.institution_id=$2 AND ($4 OR r.author_fk=$3
+             OR r.reviewer_fk=$3 OR EXISTS(
+               SELECT 1 FROM diagnostic_report_series rs JOIN series se ON se.id=rs.series_fk
+               JOIN dicom_devices d ON d.id=se.source_device_fk AND d.status='active'
+               JOIN user_device_grants g ON g.device_fk=d.id AND g.user_fk=$3
+               WHERE rs.report_fk=r.id))
+           ORDER BY e.created_at,e.id"#,
     )
     .bind(report_id)
     .bind(institution_id)
@@ -894,9 +965,17 @@ pub async fn begin_report_amendment(
                WHERE rs.report_fk=r.id AND (se.source_status<>'trusted' OR d.status<>'active'
                  OR NOT EXISTS(SELECT 1 FROM user_device_grants g
                                WHERE g.user_fk=$3 AND g.device_fk=d.id)))
-           RETURNING r.id,st.study_instance_uid study_uid,r.author_fk author_id,r.status,
+           RETURNING r.id,st.study_instance_uid study_uid,r.author_fk author_id,
+                     (SELECT COALESCE(display_name,username) FROM users WHERE id=r.author_fk) author_name,
+                     r.reviewer_fk reviewer_id,
+                     (SELECT COALESCE(display_name,username) FROM users WHERE id=r.reviewer_fk) reviewer_name,
+                     r.status,
                      r.findings,r.impression,r.recommendation,r.revision,r.access_incomplete,
-                     r.is_positive,r.template_payload,r.created_at,r.updated_at"#,
+                     r.is_positive,r.template_payload,r.submitted_at,r.reviewed_at,r.review_comment,
+                     EXISTS(SELECT 1 FROM report_review_events e
+                            WHERE e.report_fk=r.id AND e.action='reviewer_modified') reviewer_modified,
+                     (SELECT review_required FROM institutions WHERE id=$2) review_required,
+                     false can_review,r.created_at,r.updated_at"#,
     )
     .bind(report_id)
     .bind(institution_id)
@@ -943,9 +1022,17 @@ pub async fn update_report_draft(
                   revision=revision+1
            FROM studies st WHERE r.id=$2 AND r.institution_id=$1 AND r.author_fk=$3
              AND r.revision=$4 AND r.status IN ('draft','amending') AND st.id=r.study_fk
-           RETURNING r.id,st.study_instance_uid study_uid,r.author_fk author_id,r.status,
+           RETURNING r.id,st.study_instance_uid study_uid,r.author_fk author_id,
+                     (SELECT COALESCE(display_name,username) FROM users WHERE id=r.author_fk) author_name,
+                     r.reviewer_fk reviewer_id,
+                     (SELECT COALESCE(display_name,username) FROM users WHERE id=r.reviewer_fk) reviewer_name,
+                     r.status,
                      r.findings,r.impression,r.recommendation,r.revision,r.access_incomplete,
-                     r.is_positive,r.template_payload,r.created_at,r.updated_at"#,
+                     r.is_positive,r.template_payload,r.submitted_at,r.reviewed_at,r.review_comment,
+                     EXISTS(SELECT 1 FROM report_review_events e
+                            WHERE e.report_fk=r.id AND e.action='reviewer_modified') reviewer_modified,
+                     (SELECT review_required FROM institutions WHERE id=$1) review_required,
+                     false can_review,r.created_at,r.updated_at"#,
     )
     .bind(institution_id)
     .bind(report_id)
@@ -962,7 +1049,8 @@ pub async fn update_report_draft(
     .ok_or_else(|| DbError::Conflict("报告版本已变化或不可编辑".to_owned()))
 }
 
-pub async fn sign_report(
+/// 作者提交报告进入审核队列。提交与事件留痕必须同事务提交。
+pub async fn submit_report(
     pool: &PgPool,
     institution_id: i64,
     report_id: Uuid,
@@ -970,26 +1058,131 @@ pub async fn sign_report(
     revision: i32,
 ) -> Result<(), DbError> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query(
-        r#"SELECT r.findings,r.impression,r.recommendation,r.access_incomplete,r.is_positive,
-                  r.pending_amendment_reason,
-                  COALESCE(MAX(v.version_number),0)+1 version_number
-           FROM diagnostic_reports r LEFT JOIN diagnostic_report_versions v ON v.report_fk=r.id
+    let updated = sqlx::query(
+        r#"UPDATE diagnostic_reports r
+           SET status='submitted',submitted_at=now(),reviewer_fk=NULL,reviewed_at=NULL,
+               review_comment=NULL,revision=revision+1
            WHERE r.id=$1 AND r.institution_id=$2 AND r.author_fk=$3 AND r.revision=$4
              AND r.status IN ('draft','amending')
-             AND NOT EXISTS(
-               SELECT 1 FROM diagnostic_report_series rs JOIN series se ON se.id=rs.series_fk
-               JOIN dicom_devices d ON d.id=se.source_device_fk
-               JOIN diagnostic_work_items w ON w.series_fk=se.id AND w.institution_id=r.institution_id
-               WHERE rs.report_fk=r.id AND (se.source_status<>'trusted' OR d.status<>'active'
-                 OR w.assignee_fk<>$3 OR NOT EXISTS(
-                   SELECT 1 FROM user_device_grants g WHERE g.user_fk=$3 AND g.device_fk=d.id)))
-           GROUP BY r.id"#,
-    ).bind(report_id).bind(institution_id).bind(author_id).bind(revision)
-      .fetch_optional(&mut *tx).await?.ok_or_else(|| DbError::Conflict("报告版本已变化或不可签发".to_owned()))?;
-    let findings: String = row.try_get("findings")?;
-    let impression: String = row.try_get("impression")?;
-    if findings.trim().is_empty() || impression.trim().is_empty() {
+             AND btrim(r.findings)<>'' AND btrim(r.impression)<>''"#,
+    )
+    .bind(report_id)
+    .bind(institution_id)
+    .bind(author_id)
+    .bind(revision)
+    .execute(&mut *tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(DbError::Conflict(
+            "报告版本已变化、内容不完整或不可提交审核".to_owned(),
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO report_review_events(report_fk,actor_fk,action) VALUES($1,$2,'submitted')",
+    )
+    .bind(report_id)
+    .bind(author_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// 审核人领取一份待审核报告。数据库再次硬校验审核人不能是作者。
+pub async fn start_report_review(
+    pool: &PgPool,
+    institution_id: i64,
+    report_id: Uuid,
+    reviewer_id: i64,
+    revision: i32,
+) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    let updated = sqlx::query(
+        r#"UPDATE diagnostic_reports
+           SET status='under_review',reviewer_fk=$3,revision=revision+1
+           WHERE id=$1 AND institution_id=$2 AND revision=$4 AND status='submitted'
+             AND author_fk<>$3"#,
+    )
+    .bind(report_id)
+    .bind(institution_id)
+    .bind(reviewer_id)
+    .bind(revision)
+    .execute(&mut *tx)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(DbError::Conflict(
+            "报告已被领取、版本已变化或审核人与作者相同".to_owned(),
+        ));
+    }
+    sqlx::query(
+        r#"INSERT INTO report_review_events(report_fk,actor_fk,action)
+           VALUES($1,$2,'review_started')"#,
+    )
+    .bind(report_id)
+    .bind(reviewer_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// 审核通过并签发。若审核人修改内容，则内容、版本快照、事件与签发状态原子落库。
+#[allow(clippy::too_many_arguments)]
+pub async fn approve_report(
+    pool: &PgPool,
+    institution_id: i64,
+    report_id: Uuid,
+    reviewer_id: i64,
+    revision: i32,
+    modified: bool,
+    findings: Option<&str>,
+    impression: Option<&str>,
+    recommendation: Option<&str>,
+    review_comment: Option<&str>,
+) -> Result<(), DbError> {
+    if modified
+        && (findings.is_none_or(|value| value.trim().is_empty())
+            || impression.is_none_or(|value| value.trim().is_empty()))
+    {
+        return Err(DbError::Invalid(
+            "修改后签发必须提供影像所见和诊断意见".to_owned(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        r#"SELECT r.author_fk,r.findings,r.impression,r.recommendation,r.access_incomplete,
+                  r.is_positive,r.pending_amendment_reason,
+                  (SELECT COALESCE(MAX(v.version_number),0)+1
+                   FROM diagnostic_report_versions v WHERE v.report_fk=r.id) version_number
+           FROM diagnostic_reports r
+           WHERE r.id=$1 AND r.institution_id=$2 AND r.reviewer_fk=$3 AND r.revision=$4
+             AND r.status='under_review' AND r.author_fk<>$3
+           FOR UPDATE OF r"#,
+    )
+    .bind(report_id)
+    .bind(institution_id)
+    .bind(reviewer_id)
+    .bind(revision)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| DbError::Conflict("报告版本已变化、未由当前审核人领取或不可审核".to_owned()))?;
+
+    let final_findings = if modified {
+        findings.unwrap().to_owned()
+    } else {
+        row.try_get("findings")?
+    };
+    let final_impression = if modified {
+        impression.unwrap().to_owned()
+    } else {
+        row.try_get("impression")?
+    };
+    let final_recommendation = if modified {
+        recommendation.map(str::to_owned)
+    } else {
+        row.try_get::<Option<String>, _>("recommendation")?
+    };
+    if final_findings.trim().is_empty() || final_impression.trim().is_empty() {
         return Err(DbError::Invalid("影像所见和诊断意见不能为空".to_owned()));
     }
     let series_uids: Vec<String> = sqlx::query_scalar(
@@ -999,42 +1192,103 @@ pub async fn sign_report(
     .bind(report_id)
     .fetch_all(&mut *tx)
     .await?;
+
+    if modified {
+        sqlx::query(
+            r#"UPDATE diagnostic_reports SET findings=$2,impression=$3,recommendation=$4,
+                      template_payload=NULL WHERE id=$1"#,
+        )
+        .bind(report_id)
+        .bind(&final_findings)
+        .bind(&final_impression)
+        .bind(&final_recommendation)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query(
         r#"INSERT INTO diagnostic_report_versions
            (id,report_fk,version_number,findings,impression,recommendation,
-            covered_series_uids,access_incomplete,is_positive,amendment_reason,signed_by)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
+            covered_series_uids,access_incomplete,is_positive,amendment_reason,signed_by,
+            reviewed_by,reviewed_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,now())"#,
     )
     .bind(Uuid::new_v4())
     .bind(report_id)
     .bind(row.try_get::<i32, _>("version_number")?)
-    .bind(&findings)
-    .bind(&impression)
-    .bind(row.try_get::<Option<String>, _>("recommendation")?)
+    .bind(&final_findings)
+    .bind(&final_impression)
+    .bind(&final_recommendation)
     .bind(&series_uids)
     .bind(row.try_get::<bool, _>("access_incomplete")?)
     .bind(row.try_get::<bool, _>("is_positive")?)
     .bind(row.try_get::<Option<String>, _>("pending_amendment_reason")?)
-    .bind(author_id)
+    .bind(reviewer_id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("UPDATE diagnostic_reports SET status='signed',pending_amendment_reason=NULL,revision=revision+1 WHERE id=$1")
-        .bind(report_id).execute(&mut *tx).await?;
+
+    sqlx::query(
+        r#"UPDATE diagnostic_reports SET status='signed',reviewed_at=now(),review_comment=$2,
+                  pending_amendment_reason=NULL,revision=revision+1 WHERE id=$1"#,
+    )
+    .bind(report_id)
+    .bind(
+        review_comment
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    )
+    .execute(&mut *tx)
+    .await?;
+    if modified {
+        sqlx::query(
+            r#"INSERT INTO report_review_events(report_fk,actor_fk,action,comment)
+               VALUES($1,$2,'reviewer_modified',$3)"#,
+        )
+        .bind(report_id)
+        .bind(reviewer_id)
+        .bind(review_comment)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        r#"INSERT INTO report_review_events(report_fk,actor_fk,action,comment)
+           VALUES($1,$2,'approved',$3)"#,
+    )
+    .bind(report_id)
+    .bind(reviewer_id)
+    .bind(review_comment)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         r#"UPDATE diagnostic_work_items SET status='completed',completed_at=now(),revision=revision+1
            WHERE series_fk IN (SELECT series_fk FROM diagnostic_report_series WHERE report_fk=$1)"#,
-    ).bind(report_id).execute(&mut *tx).await?;
+    )
+    .bind(report_id)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         r#"INSERT INTO audit_log(user_fk,username,action,outcome,study_instance_uid,detail)
            SELECT u.id,u.username,'report_signed','success',st.study_instance_uid,
-                  jsonb_build_object('report_id',$1::TEXT)
-           FROM users u JOIN diagnostic_reports r ON r.author_fk=u.id
-           JOIN studies st ON st.id=r.study_fk WHERE r.id=$1 AND u.id=$2"#,
+                  jsonb_build_object('report_id',$1::TEXT,'reviewed',true,'modified',$3)
+           FROM users u JOIN diagnostic_reports r ON r.id=$1
+           JOIN studies st ON st.id=r.study_fk WHERE u.id=$2"#,
     )
     .bind(report_id)
-    .bind(author_id)
+    .bind(reviewer_id)
+    .bind(modified)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+pub async fn sign_report(
+    _pool: &PgPool,
+    _institution_id: i64,
+    _report_id: Uuid,
+    _author_id: i64,
+    _revision: i32,
+) -> Result<(), DbError> {
+    Err(DbError::Conflict(
+        "报告必须提交审核，并由非作者审核人签发".to_owned(),
+    ))
 }

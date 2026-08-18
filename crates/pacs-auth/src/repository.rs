@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use thiserror::Error;
 
-use crate::model::{Role, User};
+use crate::model::{PasswordResetRequest, Permission, Role, User};
 
 #[derive(Debug, Error)]
 pub enum RepoError {
@@ -105,6 +105,86 @@ pub async fn list_users_for_institution(
     .fetch_all(pool)
     .await?;
     rows.into_iter().map(user_from_row).collect()
+}
+
+/// 用户是否持有一个显式正向权限授予。
+pub async fn has_permission_grant(
+    pool: &PgPool,
+    user_id: i64,
+    permission: Permission,
+) -> Result<bool, RepoError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_permission_grants WHERE user_fk=$1 AND permission=$2)",
+    )
+    .bind(user_id)
+    .bind(permission.as_str())
+    .fetch_one(pool)
+    .await?)
+}
+
+/// 列出一个机构内用户的显式权限授予。
+pub async fn list_permission_grants(
+    pool: &PgPool,
+    institution_id: i64,
+    user_id: i64,
+) -> Result<Vec<String>, RepoError> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT g.permission FROM user_permission_grants g
+           JOIN users u ON u.id=g.user_fk
+           WHERE g.user_fk=$1 AND u.institution_id=$2
+           ORDER BY g.permission"#,
+    )
+    .bind(user_id)
+    .bind(institution_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// 原子替换用户的显式权限授予。当前仅开放报告审核权限。
+pub async fn replace_permission_grants(
+    pool: &PgPool,
+    institution_id: i64,
+    user_id: i64,
+    permissions: &[String],
+    granted_by: i64,
+) -> Result<Vec<String>, RepoError> {
+    let mut tx = pool.begin().await?;
+    let target_role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM users WHERE id=$1 AND institution_id=$2 FOR UPDATE")
+            .bind(user_id)
+            .bind(institution_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(target_role) = target_role else {
+        return Ok(Vec::new());
+    };
+    sqlx::query("DELETE FROM user_permission_grants WHERE user_fk=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    for permission in permissions {
+        if permission == Permission::ReviewReport.as_str()
+            && matches!(target_role.as_str(), "admin" | "radiologist")
+        {
+            sqlx::query(
+                r#"INSERT INTO user_permission_grants(user_fk,permission,granted_by)
+                   VALUES($1,$2,$3)"#,
+            )
+            .bind(user_id)
+            .bind(permission)
+            .bind(granted_by)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+    let grants = sqlx::query_scalar(
+        "SELECT permission FROM user_permission_grants WHERE user_fk=$1 ORDER BY permission",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(grants)
 }
 
 /// 带密码哈希的查询结果。
@@ -220,6 +300,146 @@ pub async fn set_password(
 
     tx.commit().await?;
     Ok(())
+}
+
+/// 提交或更新一条待审核密码重置申请。
+///
+/// 账号不存在或已停用时返回 `None`，调用方仍应向外返回相同的已受理响应，
+/// 避免公开接口被用来枚举账号。
+pub async fn submit_password_reset_request(
+    pool: &PgPool,
+    username: &str,
+    password_hash: &str,
+) -> Result<Option<i64>, RepoError> {
+    Ok(sqlx::query_scalar(
+        r#"WITH target AS (
+               SELECT id, institution_id
+               FROM users
+               WHERE username=$1 AND is_active
+               ORDER BY id
+               LIMIT 1
+           )
+           INSERT INTO password_reset_requests(institution_id,user_fk,password_hash)
+           SELECT institution_id,id,$2 FROM target
+           ON CONFLICT (user_fk) WHERE status='pending'
+           DO UPDATE SET password_hash=EXCLUDED.password_hash,
+                         requested_at=now(),reviewed_by=NULL,reviewed_at=NULL
+           RETURNING id"#,
+    )
+    .bind(username)
+    .bind(password_hash)
+    .fetch_optional(pool)
+    .await?)
+}
+
+type PasswordResetRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    String,
+    DateTime<Utc>,
+    Option<i64>,
+    Option<String>,
+    Option<DateTime<Utc>>,
+);
+
+fn password_reset_from_row(row: PasswordResetRow) -> PasswordResetRequest {
+    PasswordResetRequest {
+        id: row.0,
+        user_id: row.1,
+        username: row.2,
+        display_name: row.3,
+        status: row.4,
+        requested_at: row.5,
+        reviewed_by: row.6,
+        reviewer_name: row.7,
+        reviewed_at: row.8,
+    }
+}
+
+/// 列出机构内待管理员审核的密码重置申请。
+pub async fn list_pending_password_reset_requests(
+    pool: &PgPool,
+    institution_id: i64,
+) -> Result<Vec<PasswordResetRequest>, RepoError> {
+    let rows: Vec<PasswordResetRow> = sqlx::query_as(
+        r#"SELECT r.id,u.id,u.username,u.display_name,r.status,r.requested_at,
+                  r.reviewed_by,reviewer.username,r.reviewed_at
+           FROM password_reset_requests r
+           JOIN users u ON u.id=r.user_fk
+           LEFT JOIN users reviewer ON reviewer.id=r.reviewed_by
+           WHERE r.institution_id=$1 AND r.status='pending'
+           ORDER BY r.requested_at ASC"#,
+    )
+    .bind(institution_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(password_reset_from_row).collect())
+}
+
+/// 审核密码重置申请。批准时在同一事务内替换密码并吊销 refresh token；
+/// 拒绝时只关闭申请，不触碰当前密码。
+pub async fn review_password_reset_request(
+    pool: &PgPool,
+    institution_id: i64,
+    request_id: i64,
+    reviewer_id: i64,
+    approve: bool,
+) -> Result<Option<PasswordResetRequest>, RepoError> {
+    let mut tx = pool.begin().await?;
+    let pending: Option<(i64, String)> = sqlx::query_as(
+        r#"SELECT r.user_fk,r.password_hash
+           FROM password_reset_requests r
+           JOIN users u ON u.id=r.user_fk
+           WHERE r.id=$1 AND r.institution_id=$2 AND r.status='pending' AND u.is_active
+           FOR UPDATE OF r,u"#,
+    )
+    .bind(request_id)
+    .bind(institution_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((user_id, password_hash)) = pending else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+
+    let status = if approve { "approved" } else { "rejected" };
+    if approve {
+        sqlx::query("UPDATE users SET password_hash=$2,must_change_password=false WHERE id=$1")
+            .bind(user_id)
+            .bind(password_hash)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE refresh_tokens SET revoked_at=now() WHERE user_fk=$1 AND revoked_at IS NULL",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE password_reset_requests SET status=$2,reviewed_by=$3,reviewed_at=now() WHERE id=$1",
+    )
+    .bind(request_id)
+    .bind(status)
+    .bind(reviewer_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let row: PasswordResetRow = sqlx::query_as(
+        r#"SELECT r.id,u.id,u.username,u.display_name,r.status,r.requested_at,
+                  r.reviewed_by,reviewer.username,r.reviewed_at
+           FROM password_reset_requests r
+           JOIN users u ON u.id=r.user_fk
+           LEFT JOIN users reviewer ON reviewer.id=r.reviewed_by
+           WHERE r.id=$1"#,
+    )
+    .bind(request_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Some(password_reset_from_row(row)))
 }
 
 /// 停用/启用账号。停用时一并吊销会话,否则已登录的人还能继续用到令牌过期。

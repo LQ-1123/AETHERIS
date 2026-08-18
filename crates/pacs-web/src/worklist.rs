@@ -205,11 +205,15 @@ fn optional_report_status(raw: Option<&str>) -> Result<Option<&str>, WorklistErr
     let Some(value) = optional_queue_text(raw) else {
         return Ok(None);
     };
-    if matches!(value, "pending" | "writing" | "locked" | "signed") {
+    if matches!(
+        value,
+        "pending" | "writing" | "locked" | "submitted" | "under_review" | "signed"
+    ) {
         Ok(Some(value))
     } else {
         Err(WorklistError::BadRequest(
-            "report_status 必须是 pending、writing、locked 或 signed".to_owned(),
+            "report_status 必须是 pending、writing、locked、submitted、under_review 或 signed"
+                .to_owned(),
         ))
     }
 }

@@ -37,13 +37,44 @@
           <span>密码</span>
           <input id="login-password" name="password" type="password" autocomplete="current-password" required />
         </label>
+        <button id="forgot-password-btn" class="login-link" type="button">忘记密码？</button>
         <p id="login-error" role="alert" hidden></p>
+        <p id="login-notice" role="status" hidden></p>
         <button id="login-btn" class="command-button login-submit" type="submit">
           <i data-lucide="log-in"></i>
           <span>登录</span>
         </button>
       </form>
     </section>
+
+    <dialog id="password-reset-dialog" class="password-reset-dialog" aria-labelledby="password-reset-title">
+      <form id="password-reset-form">
+        <header class="password-reset-heading">
+          <div>
+            <h2 id="password-reset-title">申请重置密码</h2>
+            <p>提交希望使用的新密码，管理员审核通过后生效。管理员无法查看密码内容。</p>
+          </div>
+          <button id="password-reset-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </header>
+        <label>
+          <span>用户名</span>
+          <input id="password-reset-username" autocomplete="username" required />
+        </label>
+        <label>
+          <span>新密码</span>
+          <input id="password-reset-password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+        </label>
+        <label>
+          <span>确认新密码</span>
+          <input id="password-reset-confirm" type="password" autocomplete="new-password" minlength="12" maxlength="128" required />
+        </label>
+        <p id="password-reset-error" role="alert" hidden></p>
+        <footer>
+          <button id="password-reset-cancel" type="button">取消</button>
+          <button id="password-reset-submit" class="command-button" type="submit">提交审核</button>
+        </footer>
+      </form>
+    </dialog>
 
     <main id="app-shell">
       <header id="toolbar">
@@ -242,7 +273,7 @@
         <button id="lifecycle-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM 生命周期" hidden>
           <i data-lucide="archive-restore"></i><span>生命周期管理</span>
         </button>
-        <button id="admin-console-btn" class="toolbar-menu-item" type="button" role="menuitem" title="管理控制台：设备、来源归属与用户授权" hidden>
+        <button id="admin-console-btn" class="toolbar-menu-item" type="button" role="menuitem" title="管理控制台：账号、密码重置审核、设备与授权" hidden>
           <i data-lucide="shield-check"></i><span>管理控制台</span>
         </button>
         <button id="ai-plugins-manage-btn" class="toolbar-menu-item" type="button" role="menuitem" title="增加本地 AI 插件">
@@ -509,6 +540,7 @@
                   <button id="report-claim-btn" class="command-button" type="button" hidden>领取任务</button>
                   <button id="report-release-btn" class="command-button" type="button" hidden>释放任务</button>
                   <button id="report-create-btn" class="command-button" type="button" hidden>新建报告</button>
+                  <button id="report-review-start" class="command-button" type="button" hidden>开始审核</button>
                 </div>
               </section>
 
@@ -556,6 +588,10 @@
                 <span>审核医生：<strong id="report-reviewer">--</strong></span>
                 <span>审核时间：<strong id="report-signed-at">--</strong></span>
               </section>
+              <label id="report-review-comment-row" class="report-review-comment" hidden>
+                <span>审核意见（可选）</span>
+                <textarea id="report-review-comment" rows="3" maxlength="1024" placeholder="记录审核意见"></textarea>
+              </label>
             </main>
 
             <aside class="report-templates">
@@ -569,9 +605,9 @@
               <button id="report-save" class="command-button" type="button" title="保存草稿（Ctrl+S）">
                 <i data-lucide="save"></i><span>保存草稿</span>
               </button>
-              <button id="report-sign" class="command-button" type="button" title="签发（Ctrl+Enter）">
-                <i data-lucide="check"></i><span>签发</span>
-              </button>
+              <button id="report-submit" class="command-button" type="button" hidden>提交审核</button>
+              <button id="report-approve" class="command-button" type="button" hidden>无需修改，直接签发</button>
+              <button id="report-modify" class="command-button" type="button" hidden>修改后签发</button>
             </div>
             <button id="report-amend" class="command-button" type="button" title="发起修订" hidden>修订</button>
           </footer>
@@ -631,6 +667,8 @@
               <option value="pending">待书写</option>
               <option value="writing">书写中</option>
               <option value="locked">已锁定</option>
+              <option value="submitted">待审核</option>
+              <option value="under_review">审核中</option>
               <option value="signed">已签发</option>
             </select>
           </label>
@@ -970,7 +1008,7 @@
       <header class="dialog-heading">
         <div>
           <h2 id="admin-console-title">管理控制台</h2>
-          <span id="admin-console-subtitle">设备批准 · 来源归属 · 用户授权</span>
+          <span id="admin-console-subtitle">账号 · 密码重置审核 · 设备与授权</span>
         </div>
         <div class="dialog-heading-actions">
           <button id="admin-console-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
@@ -980,6 +1018,8 @@
       <p id="admin-console-error" class="dialog-error" role="alert" hidden></p>
       <nav class="segmented admin-console-tabs" aria-label="管理视图">
         <button class="active" data-admin-tab="devices" type="button">设备</button>
+        <button data-admin-tab="accounts" type="button">账号管理</button>
+        <button data-admin-tab="password-resets" type="button">密码重置审核</button>
         <button data-admin-tab="sources" type="button">来源归属</button>
         <button data-admin-tab="grants" type="button">用户授权</button>
       </nav>
@@ -996,6 +1036,7 @@
       <div id="rw-workitem" class="rw-workitem" hidden>
         <span id="rw-workitem-text"></span>
         <button id="rw-create" class="command-button" type="button" hidden>新建报告</button>
+        <button id="rw-review-start" class="command-button" type="button" hidden>开始审核</button>
       </div>
       <section class="rw-editor-block">
         <div class="rw-editor-head">
@@ -1023,9 +1064,15 @@
         <span>报告医生 <strong id="rw-author">--</strong></span>
         <span>审核医生 <strong id="rw-reviewer">--</strong></span>
       </div>
+      <label id="rw-review-comment-row" class="rw-review-comment" hidden>
+        <span>审核意见（可选）</span>
+        <textarea id="rw-review-comment" rows="2" maxlength="1024" placeholder="记录审核意见"></textarea>
+      </label>
       <footer class="rw-actions">
         <button id="rw-save" class="command-button" type="button" title="保存草稿（Ctrl+S）"><i data-lucide="save"></i><span>保存草稿</span></button>
-        <button id="rw-sign" class="command-button" type="button" title="签发（Ctrl+Enter）"><i data-lucide="check"></i><span>签发</span></button>
+        <button id="rw-submit" class="command-button" type="button" hidden>提交审核</button>
+        <button id="rw-approve" class="command-button" type="button" hidden>无需修改，直接签发</button>
+        <button id="rw-modify" class="command-button" type="button" hidden>修改后签发</button>
         <button id="rw-amend" class="command-button" type="button" hidden>修订</button>
         <button id="rw-versions-btn" class="icon-button" type="button" title="修改记录" aria-label="修改记录"><i data-lucide="history"></i></button>
       </footer>

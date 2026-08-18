@@ -21,10 +21,22 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/users", get(users).post(create_user))
         .route("/users/{user_id}", patch(update_user))
         .route(
+            "/users/{user_id}/permissions",
+            get(user_permissions).put(replace_user_permissions),
+        )
+        .route(
             "/users/{user_id}/device-grants",
             get(user_grants).put(replace_user_grants),
         )
-        .route("/users/{user_id}/reset-password", post(reset_password))
+        .route("/password-reset-requests", get(password_reset_requests))
+        .route(
+            "/password-reset-requests/{request_id}/approve",
+            post(approve_password_reset),
+        )
+        .route(
+            "/password-reset-requests/{request_id}/reject",
+            post(reject_password_reset),
+        )
         .route("/users/{user_id}/revoke-sessions", post(revoke_sessions))
         .route("/devices", get(devices).post(register_device))
         .route("/devices/{device_id}/approve", post(approve_device))
@@ -54,6 +66,13 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/reports", get(list_reports).post(create_report))
         .route("/reports/{report_id}/draft", put(update_draft))
         .route("/reports/{report_id}/sign", post(sign_report))
+        .route("/reports/{report_id}/submit", post(submit_report))
+        .route("/reports/{report_id}/review/start", post(review_start))
+        .route("/reports/{report_id}/review/approve", post(approve_report))
+        .route(
+            "/reports/{report_id}/review-events",
+            get(report_review_events),
+        )
         .route("/reports/{report_id}/amendments", post(begin_amendment))
         .route("/reports/{report_id}/versions", get(report_versions))
         .route("/report-templates", get(report_templates))
@@ -81,6 +100,7 @@ async fn roles() -> Json<Vec<RoleInfo>> {
         (Permission::DeleteImages, "delete_images"),
         (Permission::EditDicomTags, "edit_dicom_tags"),
         (Permission::ViewDicomRevisions, "view_dicom_revisions"),
+        (Permission::ReviewReport, "review_report"),
     ];
     Json(
         Role::ALL
@@ -104,6 +124,70 @@ async fn users(
         pacs_auth::repository::list_users_for_institution(&state.pool, identity.institution_id)
             .await
             .map_err(ApiError::auth_repo)?,
+    ))
+}
+
+async fn user_permissions(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(user_id): Path<i64>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    let user = pacs_auth::repository::find_by_id(&state.pool, user_id)
+        .await
+        .map_err(ApiError::auth_repo)?
+        .filter(|user| user.institution_id == identity.institution_id)
+        .ok_or_else(ApiError::not_found)?;
+    let permissions =
+        pacs_auth::repository::list_permission_grants(&state.pool, user.institution_id, user.id)
+            .await
+            .map_err(ApiError::auth_repo)?;
+    Ok(Json(permissions))
+}
+
+#[derive(Deserialize)]
+struct PermissionGrantsRequest {
+    permissions: Vec<String>,
+}
+
+async fn replace_user_permissions(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(user_id): Path<i64>,
+    Json(req): Json<PermissionGrantsRequest>,
+) -> Result<Json<Vec<String>>, ApiError> {
+    if req
+        .permissions
+        .iter()
+        .any(|permission| permission != Permission::ReviewReport.as_str())
+    {
+        return Err(ApiError::bad("unknown_permission", "包含不支持的权限位"));
+    }
+    let user = pacs_auth::repository::find_by_id(&state.pool, user_id)
+        .await
+        .map_err(ApiError::auth_repo)?
+        .filter(|user| user.institution_id == identity.institution_id)
+        .ok_or_else(ApiError::not_found)?;
+    if req
+        .permissions
+        .iter()
+        .any(|permission| permission == "review_report")
+        && !matches!(user.role, Role::Admin | Role::Radiologist)
+    {
+        return Err(ApiError::bad(
+            "role_cannot_review",
+            "仅管理员或放射科医师可获得报告审核权限",
+        ));
+    }
+    Ok(Json(
+        pacs_auth::repository::replace_permission_grants(
+            &state.pool,
+            identity.institution_id,
+            user_id,
+            &req.permissions,
+            identity.user_id,
+        )
+        .await
+        .map_err(ApiError::auth_repo)?,
     ))
 }
 
@@ -275,29 +359,64 @@ async fn replace_user_grants(
     Ok(Json(grants))
 }
 
-#[derive(Deserialize)]
-struct PasswordRequest {
-    temporary_password: String,
-}
-async fn reset_password(
+async fn password_reset_requests(
     State(state): State<WebState>,
     Extension(identity): Extension<Identity>,
-    Path(user_id): Path<i64>,
-    Json(req): Json<PasswordRequest>,
-) -> Result<StatusCode, ApiError> {
-    let user = pacs_auth::repository::find_by_id(&state.pool, user_id)
+) -> Result<Json<Vec<pacs_auth::PasswordResetRequest>>, ApiError> {
+    Ok(Json(
+        pacs_auth::repository::list_pending_password_reset_requests(
+            &state.pool,
+            identity.institution_id,
+        )
         .await
-        .map_err(ApiError::auth_repo)?
-        .filter(|u| u.institution_id == identity.institution_id)
-        .ok_or_else(ApiError::not_found)?;
-    pacs_auth::password::check_strength(&req.temporary_password, &user.username)
-        .map_err(|e| ApiError::bad("weak_password", e.to_string()))?;
-    let hash =
-        pacs_auth::password::hash(&req.temporary_password).map_err(|_| ApiError::internal())?;
-    pacs_auth::repository::set_password(&state.pool, user_id, &hash, true)
-        .await
-        .map_err(ApiError::auth_repo)?;
-    Ok(StatusCode::NO_CONTENT)
+        .map_err(ApiError::auth_repo)?,
+    ))
+}
+
+async fn approve_password_reset(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(request_id): Path<i64>,
+) -> Result<Json<pacs_auth::PasswordResetRequest>, ApiError> {
+    review_password_reset(&state, &identity, request_id, true).await
+}
+
+async fn reject_password_reset(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(request_id): Path<i64>,
+) -> Result<Json<pacs_auth::PasswordResetRequest>, ApiError> {
+    review_password_reset(&state, &identity, request_id, false).await
+}
+
+async fn review_password_reset(
+    state: &WebState,
+    identity: &Identity,
+    request_id: i64,
+    approve: bool,
+) -> Result<Json<pacs_auth::PasswordResetRequest>, ApiError> {
+    let reviewed = pacs_auth::repository::review_password_reset_request(
+        &state.pool,
+        identity.institution_id,
+        request_id,
+        identity.user_id,
+        approve,
+    )
+    .await
+    .map_err(ApiError::auth_repo)?
+    .ok_or_else(ApiError::not_found)?;
+    audit(
+        state,
+        identity,
+        if approve {
+            pacs_auth::audit::Action::PasswordResetApproved
+        } else {
+            pacs_auth::audit::Action::PasswordResetRejected
+        },
+        serde_json::json!({"request_id":request_id,"user_id":reviewed.user_id}),
+    )
+    .await;
+    Ok(Json(reviewed))
 }
 
 async fn revoke_sessions(
@@ -962,6 +1081,7 @@ async fn sign_report(
     if identity.role != Role::Radiologist {
         return Err(ApiError::forbidden("radiologist_required"));
     }
+    // 旧客户端仍可能调用该端点；数据层会明确拒绝作者直签，避免绕过审核流程。
     pacs_db::sign_report(
         &state.pool,
         identity.institution_id,
@@ -972,6 +1092,128 @@ async fn sign_report(
     .await
     .map_err(ApiError::db)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn submit_report(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(report_id): Path<Uuid>,
+    Json(req): Json<RevisionRequest>,
+) -> Result<StatusCode, ApiError> {
+    if identity.role != Role::Radiologist {
+        return Err(ApiError::forbidden("radiologist_required"));
+    }
+    pacs_db::submit_report(
+        &state.pool,
+        identity.institution_id,
+        report_id,
+        identity.user_id,
+        req.revision,
+    )
+    .await
+    .map_err(ApiError::db)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn require_review_permission(state: &WebState, identity: &Identity) -> Result<(), ApiError> {
+    if identity.role.can(Permission::ReviewReport)
+        || pacs_auth::repository::has_permission_grant(
+            &state.pool,
+            identity.user_id,
+            Permission::ReviewReport,
+        )
+        .await
+        .map_err(ApiError::auth_repo)?
+    {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("review_report_required"))
+    }
+}
+
+async fn review_start(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(report_id): Path<Uuid>,
+    Json(req): Json<RevisionRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_review_permission(&state, &identity).await?;
+    pacs_db::start_report_review(
+        &state.pool,
+        identity.institution_id,
+        report_id,
+        identity.user_id,
+        req.revision,
+    )
+    .await
+    .map_err(ApiError::db)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ReviewContentRequest {
+    findings: String,
+    impression: String,
+    #[serde(alias = "suggestion")]
+    recommendation: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ApproveReportRequest {
+    revision: i32,
+    #[serde(default)]
+    modified: bool,
+    content: Option<ReviewContentRequest>,
+    review_comment: Option<String>,
+}
+
+async fn approve_report(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(report_id): Path<Uuid>,
+    Json(req): Json<ApproveReportRequest>,
+) -> Result<StatusCode, ApiError> {
+    require_review_permission(&state, &identity).await?;
+    if req.modified && req.content.is_none() {
+        return Err(ApiError::bad(
+            "modified_content_required",
+            "修改后签发必须提供报告内容",
+        ));
+    }
+    let content = req.content.as_ref();
+    pacs_db::approve_report(
+        &state.pool,
+        identity.institution_id,
+        report_id,
+        identity.user_id,
+        req.revision,
+        req.modified,
+        content.map(|value| value.findings.as_str()),
+        content.map(|value| value.impression.as_str()),
+        content.and_then(|value| value.recommendation.as_deref()),
+        req.review_comment.as_deref(),
+    )
+    .await
+    .map_err(ApiError::db)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn report_review_events(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(report_id): Path<Uuid>,
+) -> Result<Json<Vec<pacs_db::ReportReviewEvent>>, ApiError> {
+    Ok(Json(
+        pacs_db::list_report_review_events(
+            &state.pool,
+            identity.institution_id,
+            report_id,
+            identity.user_id,
+            identity.role == Role::Admin,
+        )
+        .await
+        .map_err(ApiError::db)?,
+    ))
 }
 
 async fn audit(

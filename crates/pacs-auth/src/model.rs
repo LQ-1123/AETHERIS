@@ -41,6 +41,24 @@ pub enum Permission {
     EditDicomTags,
     /// 查看 DICOM 修订历史。
     ViewDicomRevisions,
+    /// 审核并签发其他医师提交的报告（必须显式授予）。
+    ReviewReport,
+}
+
+impl Permission {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ViewImages => "view_images",
+            Self::UploadImages => "upload_images",
+            Self::WriteReport => "write_report",
+            Self::ManageUsers => "manage_users",
+            Self::ViewAuditLog => "view_audit_log",
+            Self::DeleteImages => "delete_images",
+            Self::EditDicomTags => "edit_dicom_tags",
+            Self::ViewDicomRevisions => "view_dicom_revisions",
+            Self::ReviewReport => "review_report",
+        }
+    }
 }
 
 impl Role {
@@ -77,7 +95,8 @@ impl Role {
     pub fn can(self, permission: Permission) -> bool {
         use Permission::*;
         match self {
-            Self::Admin => true,
+            // 报告审核是临床签名权限，不随管理员角色自动获得。
+            Self::Admin => !matches!(permission, ReviewReport),
             // 医师读片写报告,但不管账号、不删影像。删除是不可逆的,
             // 且删影像属于数据生命周期管理,不是临床工作的一部分。
             Self::Radiologist => {
@@ -108,10 +127,24 @@ pub struct User {
     pub display_name: Option<String>,
     pub role: Role,
     pub is_active: bool,
-    /// 管理员重置密码后为 true,用户下次登录必须先改密。
+    /// 管理员创建账号并设置初始密码后为 true,用户下次登录必须先改密。
     pub must_change_password: bool,
     pub last_login_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+}
+
+/// 管理员可见的密码重置申请。不包含用户提交的新密码哈希。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PasswordResetRequest {
+    pub id: i64,
+    pub user_id: i64,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub status: String,
+    pub requested_at: DateTime<Utc>,
+    pub reviewed_by: Option<i64>,
+    pub reviewer_name: Option<String>,
+    pub reviewed_at: Option<DateTime<Utc>>,
 }
 
 /// 用户名规则。
@@ -192,9 +225,21 @@ mod tests {
             Permission::DeleteImages,
             Permission::EditDicomTags,
             Permission::ViewDicomRevisions,
+            Permission::ReviewReport,
         ] {
-            assert!(Role::Admin.can(permission));
+            assert_eq!(
+                Role::Admin.can(permission),
+                permission != Permission::ReviewReport,
+            );
         }
+    }
+
+    #[test]
+    fn report_review_requires_an_explicit_grant_for_every_role() {
+        for role in Role::ALL {
+            assert!(!role.can(Permission::ReviewReport));
+        }
+        assert_eq!(Permission::ReviewReport.as_str(), "review_report");
     }
 
     /// 账号管理和删影像只有管理员能做 —— 这两项写错的后果最重。

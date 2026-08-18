@@ -199,6 +199,8 @@ pub async fn list_queue_studies(
                   ) AS body_parts,
                   CASE WHEN r.id IS NULL THEN 'pending'
                        WHEN r.status = 'signed' THEN 'signed'
+                       WHEN r.status = 'submitted' THEN 'submitted'
+                       WHEN r.status = 'under_review' THEN 'under_review'
                        WHEN r.author_fk = "#,
     );
     query.push_bind(user_id);
@@ -381,10 +383,10 @@ pub async fn list_queue_studies(
         .await?)
 }
 
-/// Append the four-state report expression. Each occurrence binds the current
+/// Append the six-state report expression. Each occurrence binds the current
 /// user independently because `QueryBuilder` numbers parameters as it builds.
 fn push_report_status_case(query: &mut QueryBuilder<Postgres>, user_id: i64) {
-    query.push("CASE WHEN r.id IS NULL THEN 'pending' WHEN r.status = 'signed' THEN 'signed' WHEN r.author_fk = ");
+    query.push("CASE WHEN r.id IS NULL THEN 'pending' WHEN r.status = 'signed' THEN 'signed' WHEN r.status = 'submitted' THEN 'submitted' WHEN r.status = 'under_review' THEN 'under_review' WHEN r.author_fk = ");
     query.push_bind(user_id);
     query.push(" THEN 'writing' ELSE 'locked' END");
 }

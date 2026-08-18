@@ -63,6 +63,9 @@ pub struct DiagnosticReport {
     pub id: String,
     pub study_uid: String,
     pub author_id: i64,
+    pub author_name: String,
+    pub reviewer_id: Option<i64>,
+    pub reviewer_name: Option<String>,
     pub status: String,
     pub findings: String,
     pub impression: String,
@@ -71,6 +74,12 @@ pub struct DiagnosticReport {
     pub access_incomplete: bool,
     pub is_positive: bool,
     pub template_payload: Option<serde_json::Value>,
+    pub submitted_at: Option<String>,
+    pub reviewed_at: Option<String>,
+    pub review_comment: Option<String>,
+    pub reviewer_modified: bool,
+    pub review_required: bool,
+    pub can_review: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -89,6 +98,19 @@ pub struct ReportVersion {
     pub amendment_reason: Option<String>,
     pub signed_by: i64,
     pub signed_at: String,
+    pub reviewed_by: Option<i64>,
+    pub reviewed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportReviewEvent {
+    pub id: i64,
+    pub report_id: String,
+    pub actor_id: i64,
+    pub actor_name: String,
+    pub action: String,
+    pub comment: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +161,22 @@ pub struct AdminUser {
     pub display_name: Option<String>,
     pub role: String,
     pub is_active: bool,
+    pub must_change_password: bool,
+    pub last_login_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordResetRequest {
+    pub id: i64,
+    pub user_id: i64,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub status: String,
+    pub requested_at: String,
+    pub reviewed_by: Option<i64>,
+    pub reviewer_name: Option<String>,
+    pub reviewed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,21 +310,7 @@ impl RemoteState {
         username: &str,
         password: &str,
     ) -> Result<RemoteUser, RemoteError> {
-        let base_url = normalized_base_url(server_url)?;
-        let certificate_bytes =
-            std::fs::read(ca_cert_path).map_err(|source| RemoteError::CertificateIo {
-                path: ca_cert_path.to_owned(),
-                source,
-            })?;
-        let certificate = reqwest::Certificate::from_pem(&certificate_bytes)
-            .map_err(|error| RemoteError::InvalidCertificate(error.to_string()))?;
-        let client = Client::builder()
-            .https_only(true)
-            .add_root_certificate(certificate)
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|error| RemoteError::Request(error.to_string()))?;
+        let (client, base_url) = client_for(server_url, ca_cert_path)?;
 
         let response = client
             .post(endpoint(&base_url, "auth/login")?)
@@ -307,6 +331,28 @@ impl RemoteState {
             refresh_token: login.refresh_token,
         });
         Ok(user)
+    }
+
+    /// 未登录用户提交密码重置申请。新密码只发往服务端，管理员看不到明文。
+    pub async fn request_password_reset(
+        &self,
+        server_url: &str,
+        ca_cert_path: &Path,
+        username: &str,
+        new_password: &str,
+    ) -> Result<(), RemoteError> {
+        let (client, base_url) = client_for(server_url, ca_cert_path)?;
+        let response = client
+            .post(endpoint(&base_url, "auth/password-reset-requests")?)
+            .json(&serde_json::json!({
+                "username": username,
+                "new_password": new_password,
+            }))
+            .send()
+            .await
+            .map_err(request_error)?;
+        ensure_success(response).await?;
+        Ok(())
     }
 
     pub async fn logout(&self) -> Result<(), RemoteError> {
@@ -462,6 +508,81 @@ impl RemoteState {
         Ok(())
     }
 
+    pub async fn submit_report(&self, report_id: &str, revision: i32) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/submit"))
+            .await?;
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "revision": revision })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn start_report_review(
+        &self,
+        report_id: &str,
+        revision: i32,
+    ) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/review/start"))
+            .await?;
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({ "revision": revision })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn approve_report(
+        &self,
+        report_id: &str,
+        revision: i32,
+        modified: bool,
+        findings: Option<&str>,
+        impression: Option<&str>,
+        recommendation: Option<&str>,
+        review_comment: Option<&str>,
+    ) -> Result<(), RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/review/approve"))
+            .await?;
+        let content = modified.then(|| {
+            serde_json::json!({
+                "findings": findings,
+                "impression": impression,
+                "recommendation": recommendation,
+            })
+        });
+        self.authorized_request(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "revision": revision,
+                "modified": modified,
+                "content": content,
+                "review_comment": review_comment,
+            })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_report_review_events(
+        &self,
+        report_id: &str,
+    ) -> Result<Vec<ReportReviewEvent>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/reports/{report_id}/review-events"))
+            .await?;
+        self.get_json(url).await
+    }
+
     pub async fn begin_report_amendment(
         &self,
         report_id: &str,
@@ -581,7 +702,10 @@ impl RemoteState {
         .await
     }
 
-    pub async fn list_devices(&self, status: Option<&str>) -> Result<Vec<DicomDevice>, RemoteError> {
+    pub async fn list_devices(
+        &self,
+        status: Option<&str>,
+    ) -> Result<Vec<DicomDevice>, RemoteError> {
         let mut url = self.session_url("api/v1/devices").await?;
         if let Some(status) = status {
             url.query_pairs_mut().append_pair("status", status);
@@ -660,6 +784,91 @@ impl RemoteState {
     pub async fn list_users(&self) -> Result<Vec<AdminUser>, RemoteError> {
         let url = self.session_url("api/v1/users").await?;
         self.get_json(url).await
+    }
+
+    pub async fn create_user(
+        &self,
+        username: &str,
+        display_name: Option<&str>,
+        role: &str,
+        temporary_password: &str,
+    ) -> Result<AdminUser, RemoteError> {
+        let url = self.session_url("api/v1/users").await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "username": username,
+                "display_name": display_name,
+                "role": role,
+                "temporary_password": temporary_password,
+            })),
+        )
+        .await
+    }
+
+    pub async fn update_user(
+        &self,
+        user_id: i64,
+        display_name: Option<&str>,
+        role: Option<&str>,
+        is_active: Option<bool>,
+    ) -> Result<AdminUser, RemoteError> {
+        let url = self.session_url(&format!("api/v1/users/{user_id}")).await?;
+        self.authorized_json(
+            Method::PATCH,
+            url,
+            Some(serde_json::json!({
+                "display_name": display_name,
+                "role": role,
+                "is_active": is_active,
+            })),
+        )
+        .await
+    }
+
+    pub async fn list_password_reset_requests(
+        &self,
+    ) -> Result<Vec<PasswordResetRequest>, RemoteError> {
+        let url = self.session_url("api/v1/password-reset-requests").await?;
+        self.get_json(url).await
+    }
+
+    pub async fn review_password_reset_request(
+        &self,
+        request_id: i64,
+        approve: bool,
+    ) -> Result<PasswordResetRequest, RemoteError> {
+        let decision = if approve { "approve" } else { "reject" };
+        let url = self
+            .session_url(&format!(
+                "api/v1/password-reset-requests/{request_id}/{decision}"
+            ))
+            .await?;
+        self.authorized_json(Method::POST, url, None).await
+    }
+
+    pub async fn list_user_permissions(&self, user_id: i64) -> Result<Vec<String>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/users/{user_id}/permissions"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn replace_user_permissions(
+        &self,
+        user_id: i64,
+        permissions: Vec<String>,
+    ) -> Result<Vec<String>, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/users/{user_id}/permissions"))
+            .await?;
+        self.authorized_json(
+            Method::PUT,
+            url,
+            Some(serde_json::json!({ "permissions": permissions })),
+        )
+        .await
     }
 
     pub async fn list_user_device_grants(&self, user_id: i64) -> Result<Vec<String>, RemoteError> {
@@ -1339,7 +1548,6 @@ impl RemoteState {
         }
         ensure_success(response).await
     }
-
 }
 
 fn job_id(value: &serde_json::Value) -> Result<Uuid, RemoteError> {
@@ -1392,6 +1600,25 @@ fn normalized_base_url(raw: &str) -> Result<Url, RemoteError> {
     url.set_fragment(None);
     url.set_path("/");
     Ok(url)
+}
+
+fn client_for(server_url: &str, ca_cert_path: &Path) -> Result<(Client, Url), RemoteError> {
+    let base_url = normalized_base_url(server_url)?;
+    let certificate_bytes =
+        std::fs::read(ca_cert_path).map_err(|source| RemoteError::CertificateIo {
+            path: ca_cert_path.to_owned(),
+            source,
+        })?;
+    let certificate = reqwest::Certificate::from_pem(&certificate_bytes)
+        .map_err(|error| RemoteError::InvalidCertificate(error.to_string()))?;
+    let client = Client::builder()
+        .https_only(true)
+        .add_root_certificate(certificate)
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|error| RemoteError::Request(error.to_string()))?;
+    Ok((client, base_url))
 }
 
 fn endpoint(base: &Url, path: &str) -> Result<Url, RemoteError> {

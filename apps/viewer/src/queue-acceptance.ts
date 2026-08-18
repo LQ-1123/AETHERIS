@@ -20,7 +20,9 @@ declare global {
   }
 }
 
-const STATUSES: QueueStudyRow['report_status'][] = ['pending', 'writing', 'locked', 'signed'];
+const STATUSES: QueueStudyRow['report_status'][] = [
+  'pending', 'writing', 'locked', 'submitted', 'under_review', 'signed',
+];
 const MODALITIES = ['CT', 'MR', 'DX', 'US'];
 const BODY_PARTS = ['CHEST', 'HEAD', 'ABDOMEN', 'PELVIS'];
 const INSTITUTIONS = ['中心医院', '协作医院', '区域影像中心'];

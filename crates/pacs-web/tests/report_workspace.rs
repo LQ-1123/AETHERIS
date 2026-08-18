@@ -353,9 +353,9 @@ async fn is_positive_roundtrips_through_create_and_draft() {
     );
 }
 
-/// sign 把报告的 is_positive 写入不可变版本快照。
+/// 作者不能直签：即使旧客户端调用 /sign 也必须被拒绝，只能提交审核。
 #[tokio::test]
-async fn sign_report_snapshots_is_positive() {
+async fn author_cannot_sign_report_directly() {
     let Some(pool) = pool().await else { return };
     let secret = b"report-sign-secret-at-least-32-byte";
     let (admin_token, _admin_id) = admin_token(&pool, secret, "report-sign-admin").await;
@@ -416,8 +416,8 @@ async fn sign_report_snapshots_is_positive() {
     assert_eq!(report["is_positive"], true);
     let revision = report["revision"].as_i64().unwrap();
 
-    // 签发
-    let signed = app
+    // 旧的直签端点必须拒绝
+    let denied = app
         .clone()
         .oneshot(
             Request::post(format!("/reports/{report_id}/sign"))
@@ -428,28 +428,35 @@ async fn sign_report_snapshots_is_positive() {
         )
         .await
         .unwrap();
-    assert_eq!(signed.status(), StatusCode::NO_CONTENT, "签发应 204");
+    assert_eq!(denied.status(), StatusCode::CONFLICT, "作者直签应被拒绝");
 
-    // 版本快照应含 is_positive == true
-    let versions = app
+    // 作者仍可提交审核，且阳性标记保留在待审核报告中
+    let submitted = app
         .clone()
         .oneshot(
-            Request::get(format!("/reports/{report_id}/versions"))
+            Request::post(format!("/reports/{report_id}/submit"))
+                .header(header::AUTHORIZATION, &doctor_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"revision": revision}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::NO_CONTENT, "提交审核应 204");
+    let reports = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/reports?study_uid={study_uid}"))
                 .header(header::AUTHORIZATION, &doctor_bearer)
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(versions.status(), StatusCode::OK);
-    let versions = response_json(versions).await;
-    let v1 = versions
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|v| v["version_number"] == 1)
-        .expect("应存在 v1 版本快照");
-    assert_eq!(v1["is_positive"], true, "v1 快照的 is_positive 应为 true");
+    assert_eq!(reports.status(), StatusCode::OK);
+    let report = response_json(reports).await;
+    assert_eq!(report[0]["status"], "submitted");
+    assert_eq!(report[0]["is_positive"], true);
 }
 
 /// I2：结构化报告（template_payload 非空）草稿更新缺 payload → 422；
@@ -782,4 +789,231 @@ async fn study_level_claim_and_release_cover_all_series() {
             .iter()
             .all(|i| i["status"] == "pending")
     );
+}
+
+/// 完整审核闭环：显式权限、作者自审硬拒绝、审核人修改后签发与错误计数留痕。
+#[tokio::test]
+async fn review_workflow_requires_grant_and_snapshots_reviewer_changes() {
+    let Some(pool) = pool().await else { return };
+    let secret = b"report-review-secret-at-least-32-bytes";
+    let suffix = Uuid::new_v4();
+    let institution_id: i64 =
+        sqlx::query_scalar("INSERT INTO institutions(code,name) VALUES($1,$2) RETURNING id")
+            .bind(format!("review-{suffix}"))
+            .bind("审核测试机构")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let codec = AccessTokenCodec::new(secret).unwrap();
+    let make_user = |role: Role, prefix: &str| {
+        let pool = pool.clone();
+        let username = format!("{prefix}-{suffix}");
+        let codec = codec.clone();
+        async move {
+            let user_id: i64 = sqlx::query_scalar(
+                "INSERT INTO users(institution_id,username,password_hash,role) VALUES($1,$2,'x',$3) RETURNING id",
+            )
+            .bind(institution_id)
+            .bind(&username)
+            .bind(role.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            let token = codec
+                .issue(user_id, institution_id, &username, role, Utc::now())
+                .unwrap();
+            (user_id, format!("Bearer {token}"))
+        }
+    };
+    let (admin_id, admin_bearer) = make_user(Role::Admin, "review-admin").await;
+    let (author_id, author_bearer) = make_user(Role::Radiologist, "review-author").await;
+    let (reviewer_id, reviewer_bearer) = make_user(Role::Radiologist, "reviewer").await;
+
+    let patient_id: i64 = sqlx::query_scalar(
+        "INSERT INTO patients(institution_id,patient_id) VALUES($1,$2) RETURNING id",
+    )
+    .bind(institution_id)
+    .bind(format!("review-patient-{suffix}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let study_uid = format!("1.2.826.0.1.3680043.9.7499.{suffix}");
+    let study_id: i64 = sqlx::query_scalar(
+        "INSERT INTO studies(institution_id,patient_fk,study_instance_uid) VALUES($1,$2,$3) RETURNING id",
+    )
+    .bind(institution_id)
+    .bind(patient_id)
+    .bind(&study_uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let report_id = Uuid::new_v4();
+    sqlx::query(
+        r#"INSERT INTO diagnostic_reports
+           (id,institution_id,study_fk,author_fk,findings,impression)
+           VALUES($1,$2,$3,$4,'原始所见','原始诊断')"#,
+    )
+    .bind(report_id)
+    .bind(institution_id)
+    .bind(study_id)
+    .bind(author_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let auth = Arc::new(AuthService::new(pool.clone(), secret).unwrap());
+    let app = pacs_web::clinical_routes(pacs_web::WebState::new(pool.clone()), auth);
+    let request = |method: &str, path: String, bearer: &str, body: Value| {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::AUTHORIZATION, bearer)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    };
+
+    let submitted = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            format!("/reports/{report_id}/submit"),
+            &author_bearer,
+            json!({"revision": 1}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(submitted.status(), StatusCode::NO_CONTENT);
+
+    let no_grant = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            format!("/reports/{report_id}/review/start"),
+            &reviewer_bearer,
+            json!({"revision": 2}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(no_grant.status(), StatusCode::FORBIDDEN);
+
+    for user_id in [author_id, reviewer_id] {
+        let granted = app
+            .clone()
+            .oneshot(request(
+                "PUT",
+                format!("/users/{user_id}/permissions"),
+                &admin_bearer,
+                json!({"permissions":["review_report"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(granted.status(), StatusCode::OK);
+    }
+    let visible_reports = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/reports?study_uid={study_uid}"))
+                .header(header::AUTHORIZATION, &reviewer_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(visible_reports.status(), StatusCode::OK);
+    let visible_reports = response_json(visible_reports).await;
+    assert_eq!(
+        visible_reports[0]["can_review"], true,
+        "已授予审核权限的医生必须看到审核入口"
+    );
+    let self_review = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            format!("/reports/{report_id}/review/start"),
+            &author_bearer,
+            json!({"revision": 2}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(self_review.status(), StatusCode::CONFLICT);
+
+    let started = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            format!("/reports/{report_id}/review/start"),
+            &reviewer_bearer,
+            json!({"revision": 2}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(started.status(), StatusCode::NO_CONTENT);
+    let approved = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            format!("/reports/{report_id}/review/approve"),
+            &reviewer_bearer,
+            json!({
+                "revision":3,
+                "modified":true,
+                "content":{"findings":"审核修正所见","impression":"审核修正诊断","suggestion":"复查"},
+                "review_comment":"已修正原报告表述"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(approved.status(), StatusCode::NO_CONTENT);
+
+    let signed: (String, i64, Option<i64>, String) = sqlx::query_as(
+        "SELECT status,author_fk,reviewer_fk,findings FROM diagnostic_reports WHERE id=$1",
+    )
+    .bind(report_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(signed.0, "signed");
+    assert_eq!(signed.1, author_id, "作者署名必须保留原作者");
+    assert_eq!(signed.2, Some(reviewer_id));
+    assert_eq!(signed.3, "审核修正所见");
+    let snapshot: (i64, Option<i64>, String) = sqlx::query_as(
+        "SELECT signed_by,reviewed_by,findings FROM diagnostic_report_versions WHERE report_fk=$1",
+    )
+    .bind(report_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        snapshot,
+        (reviewer_id, Some(reviewer_id), "审核修正所见".into())
+    );
+    let error_count: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM report_review_events e
+           JOIN diagnostic_reports r ON r.id=e.report_fk
+           WHERE r.author_fk=$1 AND e.action='reviewer_modified'"#,
+    )
+    .bind(author_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(error_count, 1, "审核人修正应给原作者错误计数 +1");
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM report_review_events WHERE report_fk=$1 ORDER BY id",
+    )
+    .bind(report_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        actions,
+        [
+            "submitted",
+            "review_started",
+            "reviewer_modified",
+            "approved"
+        ]
+    );
+    assert_ne!(admin_id, reviewer_id);
 }

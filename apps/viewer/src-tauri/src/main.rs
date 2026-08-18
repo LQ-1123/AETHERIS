@@ -45,7 +45,10 @@ fn main() {
                 let handle = app.handle().clone();
                 main_window.on_window_event(move |event| {
                     use tauri::WindowEvent;
-                    if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+                    if matches!(
+                        event,
+                        WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+                    ) {
                         if let Some(report) = handle.get_webview_window("report") {
                             let _ = report.close();
                         }
@@ -83,6 +86,7 @@ fn main() {
             commands::close_mpr,
             commands::cancel_mpr_build,
             commands::remote_login,
+            commands::request_password_reset,
             commands::remote_logout,
             commands::list_window_presets,
             commands::create_window_preset,
@@ -93,6 +97,10 @@ fn main() {
             commands::create_report,
             commands::update_report_draft,
             commands::sign_report,
+            commands::submit_report,
+            commands::start_report_review,
+            commands::approve_report,
+            commands::list_report_review_events,
             commands::begin_report_amendment,
             commands::list_report_versions,
             commands::list_worklist,
@@ -109,6 +117,12 @@ fn main() {
             commands::list_series_sources,
             commands::resolve_series_source,
             commands::list_users,
+            commands::create_user,
+            commands::update_user,
+            commands::list_password_reset_requests,
+            commands::review_password_reset_request,
+            commands::list_user_permissions,
+            commands::replace_user_permissions,
             commands::list_user_device_grants,
             commands::replace_user_device_grants,
             commands::list_patients,

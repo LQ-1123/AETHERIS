@@ -500,8 +500,8 @@ async fn queue_filters_json_institution_and_report_states() {
     )
     .await
     .unwrap();
-    assert_eq!(submitted_for_author[0].report_status, "writing");
-    assert_eq!(submitted_for_other[0].report_status, "locked");
+    assert_eq!(submitted_for_author[0].report_status, "submitted");
+    assert_eq!(submitted_for_other[0].report_status, "submitted");
 
     sqlx::query(
         "UPDATE diagnostic_reports SET status='signed'
