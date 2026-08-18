@@ -1199,6 +1199,7 @@ button svg {
 }
 
 #worklist-resizer {
+  grid-column: 2;
   position: relative;
   z-index: 4;
   cursor: col-resize;
@@ -1235,6 +1236,7 @@ button svg {
 }
 
 #details-resizer {
+  grid-column: 4;
   position: relative;
   z-index: 4;
   cursor: col-resize;
@@ -1277,6 +1279,7 @@ button svg {
 }
 
 #worklist-panel {
+  grid-column: 1;
   min-width: 0;
   overflow: hidden;
   border-right: 1px solid #34383b;
@@ -1314,95 +1317,6 @@ button svg {
   gap: 5px;
 }
 
-.import-menu {
-  position: relative;
-}
-
-.worklist-command {
-  height: 30px;
-  gap: 5px;
-  padding: 0 8px;
-  color: #dce1e3;
-  font-size: 10px;
-  white-space: nowrap;
-}
-
-.worklist-command svg {
-  width: 14px;
-  height: 14px;
-}
-
-.worklist-command span {
-  color: inherit;
-  font-size: inherit;
-}
-
-.import-menu-panel {
-  position: absolute;
-  z-index: 30;
-  top: 35px;
-  right: 0;
-  display: grid;
-  width: 132px;
-  padding: 4px;
-  border: 1px solid #454b4e;
-  border-radius: 4px;
-  background: #202426;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 42%);
-}
-
-.import-menu-panel button {
-  justify-content: flex-start;
-  width: 100%;
-  height: 32px;
-  gap: 7px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
-  color: #dce1e3;
-  font-size: 10px;
-}
-
-.import-menu-panel button:hover:not(:disabled) {
-  border-color: transparent;
-  background: #303638;
-}
-
-.import-menu-panel svg {
-  width: 14px;
-  height: 14px;
-  color: #91cbd2;
-}
-
-.import-drop-overlay {
-  position: fixed;
-  z-index: 80;
-  inset: 70px 34px 34px;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 9px;
-  border: 2px dashed #70c9d3;
-  background: rgb(16 22 24 / 94%);
-  color: #eef7f8;
-  pointer-events: none;
-}
-
-.import-drop-overlay svg {
-  width: 34px;
-  height: 34px;
-  color: #7dd4dd;
-}
-
-.import-drop-overlay strong {
-  font-size: 16px;
-}
-
-.import-drop-overlay span {
-  color: #a7b4b8;
-  font-size: 11px;
-}
-
 .search-control {
   position: relative;
   min-width: 330px;
@@ -1431,6 +1345,305 @@ button svg {
   font-size: 10px;
 }
 
+/* 独立检查队列：占据阅片工作区的完整内容区域，沿用深色工作台变量。 */
+#queue-page {
+  grid-column: 1;
+  grid-row: 3 / -1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #15181a;
+}
+
+.queue-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 8px 18px;
+  border-bottom: 1px solid #34383b;
+  background: #1b1e20;
+}
+
+.queue-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.queue-nav-left > div {
+  display: grid;
+  gap: 3px;
+}
+
+.queue-nav-left strong {
+  color: #f0f3f4;
+  font-size: 15px;
+}
+
+.queue-nav-left span,
+#queue-count {
+  color: #8f9a9e;
+  font-size: 11px;
+}
+
+.queue-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) repeat(2, minmax(125px, 0.8fr)) minmax(92px, 0.6fr) minmax(130px, 0.9fr) minmax(120px, 0.8fr) minmax(150px, 1fr) auto;
+  gap: 9px;
+  align-items: end;
+  padding: 14px 18px;
+  border-bottom: 1px solid #34383b;
+  background: #181b1d;
+}
+
+.queue-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: #9aa4a8;
+  font-size: 10px;
+}
+
+.queue-filters input,
+.queue-filters select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid #454b4e;
+  border-radius: 4px;
+  padding: 0 8px;
+  color: #edf1f2;
+  background: #111416;
+}
+
+.queue-filter-submit {
+  height: 32px;
+  white-space: nowrap;
+}
+
+.queue-filter-submit svg {
+  width: 14px;
+  height: 14px;
+}
+
+.queue-table-wrap {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.queue-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  color: #dce2e4;
+  font-size: 12px;
+}
+
+.queue-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid #454b4e;
+  background: #202426;
+  color: #9da8ac;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.queue-table th button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.queue-table th button[data-active='true'] {
+  color: #8fdae2;
+}
+
+.queue-sort-indicator {
+  min-width: 9px;
+  color: #8fdae2;
+}
+
+.queue-table td {
+  height: 62px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #2d3335;
+  vertical-align: middle;
+}
+
+.queue-table tbody tr {
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.queue-table tbody tr:hover,
+.queue-table tbody tr.is-selected {
+  background: #242b2d;
+}
+
+.queue-table tbody tr:focus-visible {
+  outline: 2px solid #58b8c7;
+  outline-offset: -2px;
+}
+
+.queue-patient-cell,
+.queue-date-cell,
+.queue-study-cell {
+  display: table-cell;
+}
+
+.queue-patient-cell strong,
+.queue-patient-cell small,
+.queue-date-cell strong,
+.queue-date-cell small,
+.queue-study-cell strong,
+.queue-study-cell small {
+  display: block;
+}
+
+.queue-patient-cell strong,
+.queue-date-cell strong,
+.queue-study-cell strong {
+  color: #eef2f3;
+  font-weight: 600;
+}
+
+.queue-patient-cell small,
+.queue-date-cell small,
+.queue-study-cell small {
+  max-width: 260px;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #859195;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-modality-cell {
+  white-space: nowrap;
+}
+
+.queue-modality-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 28px;
+  height: 22px;
+  margin: 2px 4px 2px 0;
+  border: 1px solid #47747b;
+  border-radius: 3px;
+  padding: 0 6px;
+  color: #a4e2e7;
+  background: #1e3639;
+  font-size: 10px;
+  font-weight: 700;
+  justify-content: center;
+}
+
+.queue-institution-cell {
+  max-width: 190px;
+  overflow: hidden;
+  color: #cbd3d5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-count-cell {
+  color: #8f9a9e;
+  text-align: center;
+}
+
+.queue-action-cell {
+  width: 98px;
+  text-align: center;
+}
+
+.queue-edit-button {
+  min-height: 28px;
+  gap: 5px;
+  padding: 0 8px;
+  border-color: #405c60;
+  background: #202b2e;
+  color: #acd9de;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.queue-edit-button:hover:not(:disabled) {
+  border-color: #58aab4;
+  background: #203a3e;
+  color: #d1f2f5;
+}
+
+.queue-edit-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.queue-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 48px;
+  border-top: 1px solid #34383b;
+  background: #1b1e20;
+  color: #aeb8bb;
+  font-size: 11px;
+}
+
+@media (max-width: 1180px) {
+  .queue-filters {
+    grid-template-columns: repeat(4, minmax(130px, 1fr));
+  }
+
+  .queue-query-field,
+  .queue-institution-field {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 680px) {
+  .queue-nav {
+    min-height: 52px;
+    padding: 7px 12px;
+  }
+
+  .queue-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .queue-query-field,
+  .queue-institution-field,
+  .queue-filter-submit {
+    grid-column: 1 / -1;
+  }
+
+  .queue-table td {
+    height: 58px;
+    padding: 7px 9px;
+  }
+}
+
 .transfer-cancel {
   min-height: 30px;
   margin: 0 12px 8px;
@@ -1439,7 +1652,7 @@ button svg {
 
 .patient-list {
   min-width: 330px;
-  height: calc(100% - 164px);
+  height: calc(100% - 72px);
   overflow-y: auto;
   border-top: 1px solid #2c3032;
 }
@@ -1671,6 +1884,7 @@ button svg {
 }
 
 #viewport {
+  grid-column: 3;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -2186,6 +2400,7 @@ body[data-tool="crosshair"] .mpr-viewport canvas[id$="overlay-canvas"] {
 }
 
 #details-panel {
+  grid-column: 5;
   min-width: 0;
   overflow: auto;
   border-left: 1px solid #34383b;

@@ -4,15 +4,15 @@ use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
     AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress, PatientSummary,
-    RemoteState, RemoteUser, ReportTemplate, ReportVersion, SeriesSourceEntry, SeriesSummary,
-    StudySummary, UserWindowPreset,
+    QueueStudyRow, RemoteState, RemoteUser, ReportTemplate, ReportVersion, SeriesSourceEntry,
+    SeriesSummary, StudySummary, UserWindowPreset,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, State};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 #[tauri::command]
 pub async fn list_ai_models(
@@ -695,6 +695,39 @@ pub async fn list_patients(
 }
 
 #[tauri::command]
+pub async fn list_queue_studies(
+    query: String,
+    modality: Option<String>,
+    body_part: Option<String>,
+    report_status: Option<String>,
+    institution: Option<String>,
+    date_from: Option<String>,
+    date_to: Option<String>,
+    sort: String,
+    order: String,
+    limit: u32,
+    offset: u64,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<QueueStudyRow>, String> {
+    state
+        .list_queue_studies(
+            &query,
+            modality.as_deref(),
+            body_part.as_deref(),
+            report_status.as_deref(),
+            institution.as_deref(),
+            date_from.as_deref(),
+            date_to.as_deref(),
+            &sort,
+            &order,
+            limit,
+            offset,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn list_patient_studies(
     patient_id: i64,
     state: State<'_, RemoteState>,
@@ -1045,94 +1078,6 @@ pub struct TransferProgress {
 }
 
 #[tauri::command]
-pub async fn import_to_pacs(
-    paths: Vec<String>,
-    app: AppHandle,
-    state: State<'_, RemoteState>,
-) -> Result<serde_json::Value, String> {
-    let files = tauri::async_runtime::spawn_blocking(move || collect_upload_files(paths))
-        .await
-        .map_err(|error| format!("扫描导入文件失败: {error}"))??;
-    if files.is_empty() {
-        return Err("没有可上传的文件".to_owned());
-    }
-    let total_bytes = files
-        .iter()
-        .map(|(_, path)| std::fs::metadata(path).map(|v| v.len()).unwrap_or(0))
-        .sum();
-    let job = state.create_import().await.map_err(|e| e.to_string())?;
-    state.begin_transfer(job).await;
-    let result = async {
-        let mut completed_bytes = 0u64;
-        for (index, (name, path)) in files.iter().enumerate() {
-            let size = tokio::fs::metadata(path)
-                .await
-                .map_err(|e| e.to_string())?
-                .len();
-            let upload = state
-                .create_upload(job, name, size)
-                .await
-                .map_err(|e| e.to_string())?;
-            let mut file = tokio::fs::File::open(path)
-                .await
-                .map_err(|e| e.to_string())?;
-            let mut offset = 0u64;
-            let mut buffer = vec![0u8; 8 * 1024 * 1024];
-            loop {
-                let read = file.read(&mut buffer).await.map_err(|e| e.to_string())?;
-                if read == 0 {
-                    break;
-                }
-                let chunk = buffer[..read].to_vec();
-                let mut attempts = 0;
-                loop {
-                    match state.upload_chunk(job, upload, offset, chunk.clone()).await {
-                        Ok(()) => break,
-                        Err(_) if attempts < 3 => {
-                            attempts += 1;
-                            let server_offset = state
-                                .upload_offset(job, upload)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            if server_offset == offset + read as u64 {
-                                break;
-                            }
-                            if server_offset != offset {
-                                return Err(format!("服务端上传偏移异常: {server_offset}"));
-                            }
-                            tokio::time::sleep(std::time::Duration::from_millis(250 * attempts))
-                                .await;
-                        }
-                        Err(error) => return Err(error.to_string()),
-                    }
-                }
-                offset += read as u64;
-                completed_bytes += read as u64;
-                let _ = app.emit(
-                    "transfer-progress",
-                    TransferProgress {
-                        phase: "upload".to_owned(),
-                        completed_bytes,
-                        total_bytes,
-                        completed_files: index,
-                        total_files: files.len(),
-                        status: None,
-                    },
-                );
-            }
-        }
-        state
-            .complete_import(job)
-            .await
-            .map_err(|e| e.to_string())?;
-        poll_transfer(&state, "imports", job, &app, total_bytes, files.len()).await
-    }
-    .await;
-    state.end_transfer().await;
-    result
-}
-
-#[tauri::command]
 pub async fn export_from_pacs(
     study_uid: String,
     series_uid: Option<String>,
@@ -1298,51 +1243,6 @@ async fn poll_transfer(
             _ => tokio::time::sleep(std::time::Duration::from_millis(750)).await,
         }
     }
-}
-
-fn collect_upload_files(paths: Vec<String>) -> Result<Vec<(String, PathBuf)>, String> {
-    let mut result = Vec::new();
-    for raw in paths {
-        let path = PathBuf::from(raw);
-        if path.is_file() {
-            let name = path
-                .file_name()
-                .and_then(|v| v.to_str())
-                .ok_or("文件名不是 UTF-8")?
-                .to_owned();
-            result.push((name, path));
-        } else if path.is_dir() {
-            collect_directory(&path, &path, &mut result)?;
-        }
-    }
-    result.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(result)
-}
-
-fn collect_directory(
-    root: &std::path::Path,
-    directory: &std::path::Path,
-    files: &mut Vec<(String, PathBuf)>,
-) -> Result<(), String> {
-    for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let kind = entry.file_type().map_err(|e| e.to_string())?;
-        if kind.is_symlink() {
-            continue;
-        }
-        if kind.is_dir() {
-            collect_directory(root, &entry.path(), files)?;
-        } else if kind.is_file() {
-            let relative = entry
-                .path()
-                .strip_prefix(root)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .replace('\\', "/");
-            files.push((relative, entry.path()));
-        }
-    }
-    Ok(())
 }
 
 #[tauri::command]

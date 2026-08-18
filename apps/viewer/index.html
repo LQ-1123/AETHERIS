@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/aetheris-logo.jpg" type="image/jpeg" />
     <title>AETHERIS | Medical Imaging Cloud</title>
   </head>
   <body>
@@ -51,12 +52,12 @@
           <span class="brand-name">AETHERIS</span>
         </div>
         <div class="toolbar-divider"></div>
-        <button id="worklist-toggle" class="icon-button" type="button" title="病人列表" aria-label="显示或隐藏病人列表">
-          <i data-lucide="users"></i>
+        <button id="queue-btn" class="icon-button" type="button" title="工作队列" aria-label="打开工作队列">
+          <i data-lucide="clipboard-list"></i>
         </button>
-        <button id="open-btn" class="command-button" type="button" title="打开 DICOM 文件">
+        <button id="open-btn" class="command-button" type="button" title="打开本地 DICOM 文件，仅用于阅片且不会上传服务器">
           <i data-lucide="folder-open"></i>
-          <span>打开序列</span>
+          <span>本地打开</span>
         </button>
         <div class="segmented view-mode-control" role="group" aria-label="显示模式">
           <button data-view-mode="2d" data-requires-series type="button" title="二维阅片" aria-label="二维阅片">2D</button>
@@ -229,9 +230,6 @@
 
       <section id="more-menu-panel" class="toolbar-menu-panel" role="menu" aria-label="更多功能" hidden>
         <span class="toolbar-menu-heading">工作区</span>
-        <button id="panel-toggle" class="toolbar-menu-item" type="button" role="menuitem" title="检查信息">
-          <i data-lucide="panel-right-close"></i><span>检查信息</span>
-        </button>
         <button id="transform-tasks-btn" class="toolbar-menu-item" type="button" role="menuitem" title="DICOM 转换任务" hidden>
           <i data-lucide="list-checks"></i><span>转换任务</span>
         </button>
@@ -328,46 +326,27 @@
         </button>
       </div>
 
-      <div id="import-drop-overlay" class="import-drop-overlay" hidden>
-        <i data-lucide="upload"></i>
-        <strong>释放以导入</strong>
-        <span id="import-drop-detail">DICOM、ZIP/RAR 或文件夹</span>
-      </div>
-
-      <section id="workspace">
-        <aside id="worklist-panel" aria-label="病人列表">
+      <section id="workspace" class="worklist-hidden details-hidden">
+        <aside id="worklist-panel" aria-label="当前患者的检查与序列" hidden>
           <div class="worklist-heading">
             <div>
-              <h2>病人列表</h2>
-              <span id="worklist-count">本页 0 位</span>
+              <h2>检查与序列</h2>
+              <span id="worklist-count">未选择患者</span>
             </div>
             <div class="worklist-heading-actions">
-              <div id="import-menu" class="import-menu">
-                <button id="import-menu-button" class="worklist-command" type="button" title="导入 DICOM、ZIP/RAR 或文件夹" aria-haspopup="menu" aria-expanded="false">
-                  <i data-lucide="upload"></i><span>导入</span><i data-lucide="chevron-down"></i>
-                </button>
-                <div id="import-menu-panel" class="import-menu-panel" role="menu" hidden>
-                  <button id="import-files" type="button" role="menuitem">
-                    <i data-lucide="file-archive"></i><span>文件或归档</span>
-                  </button>
-                  <button id="import-folder" type="button" role="menuitem">
-                    <i data-lucide="folder-up"></i><span>文件夹</span>
-                  </button>
-                </div>
-              </div>
-              <button id="refresh-worklist" class="icon-button" type="button" title="刷新病人列表" aria-label="刷新病人列表">
+              <button id="refresh-worklist" class="icon-button" type="button" title="刷新当前患者的检查与序列" aria-label="刷新当前患者的检查与序列">
                 <i data-lucide="refresh-cw"></i>
               </button>
             </div>
           </div>
-          <form id="patient-search" class="search-control" role="search">
+          <form id="patient-search" class="search-control" role="search" hidden>
             <i data-lucide="search"></i>
             <input id="patient-query" type="search" placeholder="姓名或 Patient ID" aria-label="搜索病人" />
           </form>
           <div id="worklist-status" class="worklist-status" aria-live="polite"></div>
           <button id="cancel-transfer" class="transfer-cancel" type="button" hidden>取消任务</button>
           <div id="patient-list" class="patient-list"></div>
-          <div class="worklist-pagination">
+          <div class="worklist-pagination" hidden>
             <button id="patients-previous" class="icon-button" type="button" title="上一页" aria-label="上一页">
               <i data-lucide="chevron-left"></i>
             </button>
@@ -378,7 +357,7 @@
           </div>
         </aside>
 
-        <div id="worklist-resizer" role="separator" aria-label="调整病人列表宽度" aria-valuemin="280" aria-valuemax="520" aria-valuenow="330" tabindex="0"></div>
+        <div id="worklist-resizer" role="separator" aria-label="调整检查与序列列表宽度" aria-valuemin="280" aria-valuemax="520" aria-valuenow="330" tabindex="-1" hidden></div>
 
         <div id="viewport">
           <div id="series-grid" class="series-grid" aria-label="序列阅片窗格">
@@ -453,7 +432,7 @@
             <h1>AETHERIS</h1>
             <button id="empty-open-btn" type="button" class="command-button">
               <i data-lucide="folder-open"></i>
-              <span>打开序列</span>
+              <span>本地打开</span>
             </button>
           </div>
           <div id="loading" class="loading-state" hidden>
@@ -463,9 +442,9 @@
           </div>
         </div>
 
-        <div id="details-resizer" role="separator" aria-label="调整检查信息宽度" aria-valuemin="240" aria-valuemax="420" aria-valuenow="278" tabindex="0"></div>
+        <div id="details-resizer" role="separator" aria-label="调整检查信息宽度" aria-valuemin="240" aria-valuemax="420" aria-valuenow="278" tabindex="-1" hidden></div>
 
-        <aside id="details-panel" aria-label="检查信息">
+        <aside id="details-panel" aria-label="检查信息" hidden>
           <div class="panel-heading">
             <h2>检查信息</h2>
             <span id="spacing-badge" data-confidence="none">仅像素</span>
@@ -597,6 +576,100 @@
             <button id="report-amend" class="command-button" type="button" title="发起修订" hidden>修订</button>
           </footer>
         </section>
+      </section>
+
+      <section id="queue-page" hidden aria-label="患者队列">
+        <header class="queue-nav">
+          <div class="queue-nav-left">
+            <button id="queue-back" class="icon-button" type="button" title="返回阅片" aria-label="返回阅片">
+              <i data-lucide="arrow-left"></i>
+            </button>
+            <div>
+              <strong>患者队列</strong>
+              <span id="queue-count">本页 0 项</span>
+            </div>
+          </div>
+          <button id="queue-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新队列">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+        </header>
+
+        <form id="queue-filters" class="queue-filters" role="search">
+          <label class="queue-query-field">
+            <span>姓名 / Patient ID</span>
+            <input id="queue-query" type="search" placeholder="搜索姓名或 ID" autocomplete="off" />
+          </label>
+          <label>
+            <span>起始日期</span>
+            <input id="queue-date-from" type="date" />
+          </label>
+          <label>
+            <span>结束日期</span>
+            <input id="queue-date-to" type="date" />
+          </label>
+          <label>
+            <span>模态</span>
+            <select id="queue-modality">
+              <option value="">全部</option>
+              <option value="CT">CT</option>
+              <option value="MR">MR</option>
+              <option value="CR">CR</option>
+              <option value="DX">DX</option>
+              <option value="US">US</option>
+              <option value="XA">XA</option>
+              <option value="MG">MG</option>
+            </select>
+          </label>
+          <label>
+            <span>部位</span>
+            <input id="queue-body-part" type="search" placeholder="检查部位" />
+          </label>
+          <label>
+            <span>报告状态</span>
+            <select id="queue-report-status">
+              <option value="">全部</option>
+              <option value="pending">待书写</option>
+              <option value="writing">书写中</option>
+              <option value="locked">已锁定</option>
+              <option value="signed">已签发</option>
+            </select>
+          </label>
+          <label class="queue-institution-field">
+            <span>来源医院</span>
+            <input id="queue-institution" type="search" placeholder="机构名称" />
+          </label>
+          <button class="command-button queue-filter-submit" type="submit">
+            <i data-lucide="search"></i><span>查询</span>
+          </button>
+        </form>
+
+        <div class="queue-table-wrap">
+          <table class="queue-table">
+            <thead>
+              <tr>
+                <th scope="col"><button type="button" data-queue-sort="patient_name">患者 <span class="queue-sort-indicator"></span></button></th>
+                <th scope="col"><button type="button" data-queue-sort="study_date">检查日期 <span class="queue-sort-indicator"></span></button></th>
+                <th scope="col"><button type="button" data-queue-sort="modality">模态 <span class="queue-sort-indicator"></span></button></th>
+                <th scope="col">部位 / 描述</th>
+                <th scope="col"><button type="button" data-queue-sort="report_status">报告状态 <span class="queue-sort-indicator"></span></button></th>
+                <th scope="col"><button type="button" data-queue-sort="institution">来源医院 <span class="queue-sort-indicator"></span></button></th>
+                <th scope="col">序列</th>
+                <th scope="col" class="queue-actions-heading">操作</th>
+              </tr>
+            </thead>
+            <tbody id="queue-body"></tbody>
+          </table>
+          <div id="queue-status" class="worklist-status" aria-live="polite"></div>
+        </div>
+        <footer class="queue-pagination">
+          <button id="queue-previous" class="icon-button" type="button" title="上一页" aria-label="上一页">
+            <i data-lucide="chevron-left"></i>
+          </button>
+          <span id="queue-page-label">第 1 页</span>
+          <button id="queue-next" class="icon-button" type="button" title="下一页" aria-label="下一页">
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </footer>
       </section>
 
       <footer id="series-navigator">

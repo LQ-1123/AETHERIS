@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import {
   ArchiveRestore,
   ArrowLeft,
@@ -7,6 +9,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Crosshair,
   Circle,
   Contrast,
@@ -16,10 +19,8 @@ import {
   Eraser,
   FlipHorizontal2,
   FlipVertical2,
-  FileArchive,
   FileText,
   FolderOpen,
-  FolderUp,
   History,
   Image,
   Info,
@@ -60,7 +61,6 @@ import {
   Trash2,
   Underline,
   Undo2,
-  Upload,
   Users,
   X,
   createIcons,
@@ -79,6 +79,7 @@ window.addEventListener('DOMContentLoaded', () => {
       ChevronDown,
       ChevronLeft,
       ChevronRight,
+      ClipboardList,
       Crosshair,
       Circle,
       Contrast,
@@ -88,10 +89,8 @@ window.addEventListener('DOMContentLoaded', () => {
       Eraser,
       FlipHorizontal2,
       FlipVertical2,
-      FileArchive,
       FileText,
       FolderOpen,
-      FolderUp,
       History,
       Image,
       Info,
@@ -132,7 +131,6 @@ window.addEventListener('DOMContentLoaded', () => {
       Trash2,
       Underline,
       Undo2,
-      Upload,
       Users,
       X,
     },
@@ -147,6 +145,13 @@ window.addEventListener('DOMContentLoaded', () => {
     const root = document.getElementById('report-window-root');
     if (root) root.hidden = false;
     void import('./report-window').then(({ ReportWindow }) => new ReportWindow().init());
+    return;
+  }
+  if (import.meta.env.DEV && import.meta.env.VITE_QUEUE_ACCEPTANCE === '1') {
+    void import('./queue-acceptance').then(({ installQueueAcceptanceMock }) => {
+      installQueueAcceptanceMock();
+      new App();
+    });
     return;
   }
   new App();

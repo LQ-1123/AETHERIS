@@ -8,8 +8,8 @@ import type {
   DiagnosticReport,
   DicomDevice,
   DicomRevision,
-  ImportTransferResponse,
   PatientSummary,
+  QueueStudyRow,
   MprMetadata,
   MprPlane,
   MprProjectionMode,
@@ -75,24 +75,6 @@ export async function chooseDicomFiles(): Promise<string[] | null> {
   return Array.isArray(selected) ? selected : [selected];
 }
 
-export async function chooseImportFiles(): Promise<string[] | null> {
-  const { open } = await import('@tauri-apps/plugin-dialog');
-  const selected = await open({ multiple: true, directory: false,
-    filters: [{ name: 'DICOM 或归档', extensions: ['dcm', 'dicom', 'zip', 'rar', '*'] }] });
-  if (!selected) return null;
-  return Array.isArray(selected) ? selected : [selected];
-}
-
-export async function chooseImportFolder(): Promise<string[] | null> {
-  const { open } = await import('@tauri-apps/plugin-dialog');
-  const selected = await open({ multiple: false, directory: true });
-  return typeof selected === 'string' ? [selected] : null;
-}
-
-export async function importToPacs(paths: string[]): Promise<ImportTransferResponse> {
-  const invoke = await getInvoke(); return invoke<ImportTransferResponse>('import_to_pacs', { paths });
-}
-
 export async function exportFromPacs(studyUid: string, seriesUid?: string): Promise<Record<string, unknown> | null> {
   const { save } = await import('@tauri-apps/plugin-dialog');
   const destination = await save({ defaultPath: `${seriesUid ? `series-${seriesUid}` : `study-${studyUid}`}.zip`,
@@ -102,7 +84,7 @@ export async function exportFromPacs(studyUid: string, seriesUid?: string): Prom
   return invoke('export_from_pacs', { studyUid, seriesUid, destination });
 }
 
-export async function cancelTransfer(kind: 'imports' | 'exports'): Promise<void> {
+export async function cancelTransfer(kind: 'exports'): Promise<void> {
   const invoke = await getInvoke(); await invoke('cancel_transfer', { kind });
 }
 
@@ -544,6 +526,39 @@ export async function listPatients(
 ): Promise<PatientSummary[]> {
   const invoke = await getInvoke();
   return invoke<PatientSummary[]>('list_patients', { query, limit, offset });
+}
+
+export interface QueueStudyFilters {
+  query?: string;
+  modality?: string;
+  bodyPart?: string;
+  reportStatus?: string;
+  institution?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  sort?: 'study_date' | 'patient_name' | 'modality' | 'report_status' | 'institution';
+  order?: 'asc' | 'desc';
+}
+
+export async function listQueueStudies(
+  filters: QueueStudyFilters,
+  limit: number,
+  offset: number,
+): Promise<QueueStudyRow[]> {
+  const invoke = await getInvoke();
+  return invoke<QueueStudyRow[]>('list_queue_studies', {
+    query: filters.query ?? '',
+    modality: filters.modality || null,
+    bodyPart: filters.bodyPart || null,
+    reportStatus: filters.reportStatus || null,
+    institution: filters.institution || null,
+    dateFrom: filters.dateFrom || null,
+    dateTo: filters.dateTo || null,
+    sort: filters.sort ?? 'study_date',
+    order: filters.order ?? 'desc',
+    limit,
+    offset,
+  });
 }
 
 export async function listPatientStudies(patientId: number): Promise<StudySummary[]> {

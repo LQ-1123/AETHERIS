@@ -7,6 +7,7 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "test:visual": "node scripts/visual-check.mjs",
+    "test:visual:queue": "node scripts/queue-page-visual.mjs",
     "test:visual:report": "node scripts/report-workspace-visual.mjs",
     "preview": "vite preview",
     "tauri": "tauri"

@@ -100,8 +100,8 @@ pub use window_presets::{
     list_user_window_presets, rename_user_window_preset,
 };
 pub use worklist::{
-    PatientSummary, SeriesSummary, StudySummary, list_patient_studies, list_patients,
-    list_study_series,
+    PatientSummary, QueueFilter, QueueSort, QueueStudyRow, SeriesSummary, StudySummary,
+    list_patient_studies, list_patients, list_queue_studies, list_study_series,
 };
 
 #[derive(Debug, Error)]

@@ -10,8 +10,6 @@ import {
   chooseCaCertificate,
   chooseAiPluginFolder,
   chooseDicomFiles,
-  chooseImportFiles,
-  chooseImportFolder,
   closeSeries,
   closeMpr,
   checkAiPlugin,
@@ -42,7 +40,6 @@ import {
   measureMprRoi,
   openRemoteSeries,
   openSeries,
-  importToPacs,
   prepareMpr,
   prefetchMprSlices,
   previewClinicalTransform,
@@ -104,6 +101,7 @@ import {
 import { imageGeometry, Renderer, type CrossReferenceLine } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
+import { QueuePage } from './queue-page';
 
 import { AdminConsole } from './admin-console';
 import { volumeCapabilityReason } from './volume-capability';
@@ -124,7 +122,6 @@ import {
   windowPresetMatchesState,
 } from './window-presets';
 import type { VolumeRenderer, VolumePreset, VolumeQuality } from './volume-renderer';
-import { importConflictMessage, importSummary } from './transfer-report';
 
 /** 扫描定位线配色：按序列 pane 索引取色，与多窗格序列体系保持区分度。 */
 const SYNC_LINE_COLORS = [
@@ -160,6 +157,7 @@ import type {
   PatientSummary,
   PatientPoint3D,
   Point,
+  QueueStudyRow,
   RemoteSeriesSummary,
   RemoteUser,
   SegmentationProject,
@@ -473,6 +471,7 @@ export class App {
   private windowPresetEditingId: number | null = null;
   private windowPresetBusy = false;
   private patients: PatientSummary[] = [];
+  private patientContext: { key: number; patientId: string; name: string | null } | null = null;
   private patientPage = 0;
   private hasNextPatientPage = false;
   private expandedPatientId: number | null = null;
@@ -481,7 +480,7 @@ export class App {
   private series = new Map<string, RemoteSeriesSummary[]>();
   private worklistBusy = false;
   private transferActive = false;
-  private transferKind: 'imports' | 'exports' | null = null;
+  private transferKind: 'exports' | null = null;
   private transformSchema: TransformSchema | null = null;
   private tagEditorContext: TagEditorContext | null = null;
   private transformPreview: TransformPreviewResponse | null = null;
@@ -491,6 +490,7 @@ export class App {
   private selectedRollbackRevision: DicomRevision | null = null;
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
+  private queuePage: QueuePage;
 
   private adminConsole: AdminConsole;
   private lifecyclePanel: LifecyclePanel;
@@ -642,6 +642,13 @@ export class App {
     });
     this.adminConsole = new AdminConsole((message) => this.showError(message));
     this.lifecyclePanel = new LifecyclePanel((message) => this.showError(message));
+    this.queuePage = new QueuePage({
+      openStudy: (row, seriesUid, series) => this.openQueueStudy(row, seriesUid, series),
+      recommendSeries: recommendMprSeries,
+      canEditTags: () => this.canEditDicomTags(),
+      editStudyTags: (row) => this.editQueueStudyTags(row),
+      canReturnToViewer: () => this.panes.some((pane) => pane.state != null),
+    });
     this.initializePanes();
     this.mprRenderers = {
       axial: new Renderer(
@@ -666,7 +673,6 @@ export class App {
     this.setupDetailsResizer();
     this.setupSeriesDropFallback();
     this.setupRemoteProgress();
-    this.setupImportDrop();
     this.setupResizeObserver();
     this.restoreConnectionFields();
     this.updateUi();
@@ -951,7 +957,7 @@ export class App {
   /** 当前活动窗格的检查上下文（报告小窗用）。 */
   private reportContext(): ReportWindowContext | null {
     const state = this.state;
-    if (!state) return null;
+    if (!state || !this.remoteSeriesOpen) return null;
     const patient = state.metadata.patient;
     return {
       studyUid: state.metadata.study_uid ?? '',
@@ -1469,6 +1475,8 @@ export class App {
       const paths = await chooseDicomFiles();
       if (!paths?.length) return;
       await this.activateSeries(() => openSeries(paths), '正在解析序列...');
+      this.hidePatientContext();
+      if (this.queuePage.isOpen()) this.queuePage.close();
     } catch (error) {
       this.showError(errorMessage(error));
     }
@@ -3917,36 +3925,9 @@ export class App {
     for (const id of ['study-share-close', 'study-share-cancel']) {
       requiredElement<HTMLButtonElement>(id).addEventListener('click', () => this.closeStudyShare());
     }
-    requiredElement<HTMLButtonElement>('worklist-toggle').addEventListener('click', () => {
-      document.getElementById('worklist-panel')?.classList.toggle('collapsed');
-      document.getElementById('workspace')?.classList.toggle('worklist-hidden');
-      setTimeout(() => this.resizeViewport(), 0);
-    });
+    requiredElement<HTMLButtonElement>('queue-btn').addEventListener('click', () => this.queuePage.open());
     requiredElement<HTMLButtonElement>('refresh-worklist').addEventListener('click', () => {
-      void this.loadPatients();
-    });
-    const importMenu = requiredElement<HTMLElement>('import-menu');
-    const importMenuButton = requiredElement<HTMLButtonElement>('import-menu-button');
-    const importMenuPanel = requiredElement<HTMLElement>('import-menu-panel');
-    const closeImportMenu = (): void => {
-      importMenuPanel.hidden = true;
-      importMenuButton.setAttribute('aria-expanded', 'false');
-    };
-    importMenuButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      importMenuPanel.hidden = !importMenuPanel.hidden;
-      importMenuButton.setAttribute('aria-expanded', String(!importMenuPanel.hidden));
-    });
-    requiredElement<HTMLButtonElement>('import-files').addEventListener('click', () => {
-      closeImportMenu();
-      void this.chooseAndImport(false);
-    });
-    requiredElement<HTMLButtonElement>('import-folder').addEventListener('click', () => {
-      closeImportMenu();
-      void this.chooseAndImport(true);
-    });
-    document.addEventListener('click', (event) => {
-      if (!importMenu.contains(event.target as Node)) closeImportMenu();
+      void this.refreshPatientContext();
     });
     const maskMenuButton = requiredElement<HTMLButtonElement>('mask-menu-button');
     const maskMenuPanel = requiredElement<HTMLElement>('mask-menu-panel');
@@ -4184,11 +4165,6 @@ export class App {
       }
       this.updateUi();
     });
-    requiredElement<HTMLButtonElement>('panel-toggle').addEventListener('click', () => {
-      document.getElementById('details-panel')?.classList.toggle('collapsed');
-      document.getElementById('workspace')?.classList.toggle('details-hidden');
-      setTimeout(() => this.resizeViewport(), 0);
-    });
     requiredElement<HTMLButtonElement>('error-close').addEventListener('click', () => {
       this.errorBanner.hidden = true;
     });
@@ -4317,7 +4293,7 @@ export class App {
       await this.loadUserWindowPresets();
       await this.initializeTransformTools();
       this.resizeViewport();
-      await this.loadPatients();
+      this.queuePage.open();
     } catch (error) {
       loginError.textContent = errorMessage(error);
       loginError.hidden = false;
@@ -4351,12 +4327,14 @@ export class App {
     } catch (error) {
       this.showError(errorMessage(error));
     } finally {
+      this.queuePage.close();
       this.remoteUser = null;
       this.userWindowPresets = [];
       this.closeWindowPresetDialog();
       this.stopAnnotationSync();
       this.closeAllPanes();
       this.patients = [];
+      this.hidePatientContext();
       this.studies.clear();
       this.series.clear();
       this.expandedPatientId = null;
@@ -4410,61 +4388,6 @@ export class App {
         setText('ai-model-status', message);
       }),
     );
-  }
-
-  private setupImportDrop(): void {
-    void import('@tauri-apps/api/webview').then(({ getCurrentWebview }) =>
-      getCurrentWebview().onDragDropEvent(({ payload }) => {
-        if (this.seriesDragActive || this.seriesPointerDrag) return;
-        const overlay = requiredElement<HTMLElement>('import-drop-overlay');
-        if (payload.type === 'enter') {
-          if (!this.canEditDicomTags() || this.transferActive) return;
-          setText(
-            'import-drop-detail',
-            `${payload.paths.length} 个项目 · DICOM、ZIP/RAR 或文件夹`,
-          );
-          overlay.hidden = false;
-          return;
-        }
-        if (payload.type === 'leave') {
-          overlay.hidden = true;
-          return;
-        }
-        if (payload.type !== 'drop') return;
-        overlay.hidden = true;
-        if (!this.canEditDicomTags()) {
-          if (this.remoteUser) this.showError('当前账号没有导入 DICOM 的权限');
-          return;
-        }
-        if (this.transferActive) {
-          this.showError('已有导入或导出任务正在进行');
-          return;
-        }
-        if (payload.paths.length) void this.importPaths(payload.paths);
-      }),
-    ).catch((error) => console.warn('无法启用拖拽导入', error));
-  }
-
-  private async chooseAndImport(folder: boolean): Promise<void> {
-    if (!this.canEditDicomTags() || this.transferActive) return;
-    const paths = folder ? await chooseImportFolder() : await chooseImportFiles();
-    if (!paths?.length) return;
-    await this.importPaths(paths);
-  }
-
-  private async importPaths(paths: string[]): Promise<void> {
-    this.transferActive = true; this.transferKind = 'imports'; this.setWorklistBusy(true, '准备上传...');
-    try {
-      const response = await importToPacs(paths);
-      const summary = importSummary(response);
-      setText('worklist-status', summary);
-      const conflict = importConflictMessage(response);
-      if (conflict) this.showError(conflict);
-      this.setWorklistBusy(false);
-      await this.loadPatients();
-      setText('worklist-status', summary);
-    } catch (error) { this.showError(errorMessage(error)); setText('worklist-status', errorMessage(error)); }
-    finally { this.transferActive = false; this.transferKind = null; this.setWorklistBusy(false); }
   }
 
   private async exportSelection(studyUid: string, seriesUid?: string): Promise<void> {
@@ -4523,17 +4446,17 @@ export class App {
   private async toggleStudy(studyUid: string): Promise<void> {
     if (this.expandedStudyUid === studyUid) {
       this.expandedStudyUid = null;
-      this.renderPatients();
+      this.renderActiveWorklist();
       return;
     }
     this.expandedStudyUid = studyUid;
-    this.renderPatients();
+    this.renderActiveWorklist();
     if (this.series.has(studyUid)) return;
     this.setWorklistBusy(true, '正在加载序列...');
     try {
       this.series.set(studyUid, await listStudySeries(studyUid));
       setText('worklist-status', '');
-      this.renderPatients();
+      this.renderActiveWorklist();
     } catch (error) {
       this.showError(errorMessage(error));
     } finally {
@@ -4541,13 +4464,107 @@ export class App {
     }
   }
 
-  private async openRemote(studyUid: string, seriesUid: string): Promise<void> {
+  private async openRemote(studyUid: string, seriesUid: string): Promise<boolean> {
     try {
       await this.activateSeries(
         () => openRemoteSeries(studyUid, seriesUid),
         '正在准备远程序列...',
         true,
       );
+      return true;
+    } catch (error) {
+      this.showError(errorMessage(error));
+      return false;
+    }
+  }
+
+  private async openQueueStudy(
+    row: QueueStudyRow,
+    seriesUid: string,
+    series: RemoteSeriesSummary[],
+  ): Promise<boolean> {
+    const opened = await this.openRemote(row.study_uid, seriesUid);
+    if (!opened) return false;
+
+    this.patientContext = {
+      key: row.patient_key,
+      patientId: row.patient_id,
+      name: row.patient_name,
+    };
+    this.expandedPatientId = row.patient_key;
+    this.expandedStudyUid = row.study_uid;
+    this.studies.delete(row.patient_key);
+    this.series.set(row.study_uid, series);
+    this.showPatientContext();
+    this.renderPatientContext();
+    await this.refreshPatientContext();
+    return true;
+  }
+
+  private showPatientContext(): void {
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const panel = requiredElement<HTMLElement>('worklist-panel');
+    const resizer = requiredElement<HTMLElement>('worklist-resizer');
+    panel.hidden = false;
+    resizer.hidden = false;
+    resizer.tabIndex = 0;
+    workspace.classList.remove('worklist-hidden');
+    setTimeout(() => this.resizeViewport(), 0);
+  }
+
+  private hidePatientContext(): void {
+    this.patientContext = null;
+    this.expandedPatientId = null;
+    this.expandedStudyUid = null;
+    const workspace = requiredElement<HTMLElement>('workspace');
+    const panel = requiredElement<HTMLElement>('worklist-panel');
+    const resizer = requiredElement<HTMLElement>('worklist-resizer');
+    panel.hidden = true;
+    resizer.hidden = true;
+    resizer.tabIndex = -1;
+    workspace.classList.add('worklist-hidden');
+    requiredElement<HTMLElement>('patient-list').replaceChildren();
+  }
+
+  private async refreshPatientContext(): Promise<void> {
+    const context = this.patientContext;
+    if (!context || !this.remoteUser || this.worklistBusy) return;
+    this.setWorklistBusy(true, '正在加载检查...');
+    try {
+      this.studies.set(context.key, await listPatientStudies(context.key));
+      setText('worklist-status', '');
+      this.renderPatientContext();
+    } catch (error) {
+      setText('worklist-status', errorMessage(error));
+      this.showError(errorMessage(error));
+      this.renderPatientContext();
+    } finally {
+      this.setWorklistBusy(false);
+    }
+  }
+
+  private async editQueueStudyTags(row: QueueStudyRow): Promise<void> {
+    if (!this.canEditDicomTags()) return;
+    try {
+      let studies = this.studies.get(row.patient_key);
+      if (!studies) {
+        studies = await listPatientStudies(row.patient_key);
+        this.studies.set(row.patient_key, studies);
+      }
+      const study = studies.find((entry) => entry.study_uid === row.study_uid);
+      if (!study) throw new Error('没有找到该检查的标签信息');
+      await this.openTagEditor({
+        targetType: 'study',
+        targetKey: study.study_uid,
+        scope: 'study',
+        title: `${study.description?.trim() || '未命名检查'} · ${study.study_uid}`,
+        values: {
+          AccessionNumber: study.accession_number,
+          StudyID: study.study_id,
+          StudyDescription: study.description,
+          ReferringPhysicianName: study.referring_physician,
+        },
+      });
     } catch (error) {
       this.showError(errorMessage(error));
     }
@@ -4942,7 +4959,7 @@ export class App {
         this.studies.clear();
         this.series.clear();
         this.expandedStudyUid = null;
-        await this.loadPatients();
+        this.queuePage.refresh();
       }
     } catch (error) {
       status.textContent = errorMessage(error);
@@ -5002,6 +5019,147 @@ export class App {
     container.append(button);
   }
 
+  private renderActiveWorklist(): void {
+    if (this.patientContext) this.renderPatientContext();
+    else this.renderPatients();
+  }
+
+  private renderPatientContext(): void {
+    const container = requiredElement<HTMLElement>('patient-list');
+    container.replaceChildren();
+    const context = this.patientContext;
+    if (!context) {
+      setText('worklist-count', '未选择患者');
+      return;
+    }
+
+    const studies = this.studies.get(context.key);
+    const studyList = document.createElement('div');
+    studyList.className = 'study-list patient-context-study-list';
+    if (!studies) {
+      studyList.append(emptyWorklistMessage('正在读取检查...'));
+    } else if (!studies.length) {
+      studyList.append(emptyWorklistMessage('没有可见检查'));
+    } else {
+      studyList.append(...studies.map((study) => this.renderStudyItem(study)));
+    }
+    container.append(studyList);
+    const patientName = formatPersonName(context.name) || '未提供姓名';
+    setText(
+      'worklist-count',
+      `${patientName} · ${context.patientId || '未提供 Patient ID'} · ${studies?.length ?? 0} 检查`,
+    );
+    createIcons({ icons: { Download, Edit3, Share2 } });
+  }
+
+  private renderStudyItem(study: StudySummary): HTMLElement {
+    const studyItem = document.createElement('div');
+    studyItem.className = 'study-item';
+    const modality = study.modalities.join(' / ') || '未知模态';
+    const studyTitle = study.description?.trim() || '未命名检查';
+    const studyRow = worklistRow(
+      studyTitle,
+      `${formatApiDate(study.study_date) || '无日期'} · ${modality}`,
+      `${study.series_count} 序列 · ${study.instance_count} 实例`,
+      this.expandedStudyUid === study.study_uid,
+    );
+    studyRow.classList.add('study-row');
+    studyRow.append(reportStatusBadge(
+      studyReportStatusText(study.report_status),
+      study.report_status,
+    ));
+    studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
+    studyItem.append(studyRow);
+    this.appendShareButton(studyItem, study.study_uid, studyTitle);
+    this.appendExportButton(studyItem, study.study_uid);
+    this.appendTagEditButton(studyItem, {
+      targetType: 'study',
+      targetKey: study.study_uid,
+      scope: 'study',
+      title: `${studyTitle} · ${study.study_uid}`,
+      values: {
+        AccessionNumber: study.accession_number,
+        StudyID: study.study_id,
+        StudyDescription: study.description,
+        ReferringPhysicianName: study.referring_physician,
+      },
+    });
+
+    if (this.expandedStudyUid !== study.study_uid) return studyItem;
+
+    const series = this.series.get(study.study_uid);
+    const seriesList = document.createElement('div');
+    seriesList.className = 'series-list';
+    if (!series) {
+      seriesList.append(emptyWorklistMessage('正在读取序列...'));
+    } else if (!series.length) {
+      seriesList.append(emptyWorklistMessage('没有序列'));
+    } else {
+      const recommendedUid = recommendMprSeries(series)?.series_uid;
+      for (const entry of series) {
+        const seriesEntry = document.createElement('div');
+        seriesEntry.className = 'series-entry';
+        const seriesButton = document.createElement('button');
+        seriesButton.type = 'button';
+        seriesButton.className = 'series-row';
+        const title = document.createElement('strong');
+        title.textContent = entry.description?.trim() || `序列 ${entry.series_number ?? '--'}`;
+        const detail = document.createElement('span');
+        detail.textContent = `${entry.modality || '未知'} · ${entry.instance_count} 实例`;
+        seriesButton.append(title, detail);
+        if (entry.series_uid === recommendedUid) {
+          seriesButton.classList.add('recommended');
+          const recommendation = document.createElement('span');
+          recommendation.className = 'series-recommendation';
+          recommendation.textContent = 'MPR 推荐数据源';
+          seriesButton.append(recommendation);
+        }
+        const seriesPayload: SeriesDragPayload = {
+          studyUid: study.study_uid,
+          seriesUid: entry.series_uid,
+        };
+        seriesButton.addEventListener('click', () => {
+          if (Date.now() < this.seriesClickSuppressedUntil) return;
+          void this.openRemote(study.study_uid, entry.series_uid);
+        });
+        seriesButton.addEventListener('pointerdown', (event) => {
+          this.beginSeriesPointerDrag(seriesButton, event, seriesPayload);
+        });
+        seriesButton.addEventListener('pointermove', (event) => {
+          this.moveSeriesPointerDrag(event);
+        });
+        seriesButton.addEventListener('pointerup', (event) => {
+          this.finishSeriesPointerDrag(event, false);
+        });
+        seriesButton.addEventListener('pointercancel', (event) => {
+          this.cancelSeriesPointerDrag(event);
+        });
+        seriesButton.addEventListener('lostpointercapture', (event) => {
+          if (this.seriesPointerDrag?.pointerId === event.pointerId) {
+            this.cancelSeriesPointerDrag(event);
+          }
+        });
+        seriesEntry.append(seriesButton);
+        this.appendExportButton(seriesEntry, study.study_uid, entry.series_uid);
+        this.appendTagEditButton(seriesEntry, {
+          targetType: 'series',
+          targetKey: entry.series_uid,
+          scope: 'series',
+          title: `${entry.description?.trim() || `序列 ${entry.series_number ?? '--'}`} · ${entry.series_uid}`,
+          values: {
+            SeriesDescription: entry.description,
+            SeriesNumber: entry.series_number,
+            BodyPartExamined: entry.body_part_examined,
+            ProtocolName: entry.protocol_name,
+          },
+        });
+        seriesList.append(seriesEntry);
+      }
+    }
+    studyItem.append(seriesList);
+    return studyItem;
+  }
+
   private renderPatients(): void {
     const container = requiredElement<HTMLElement>('patient-list');
     container.replaceChildren();
@@ -5041,112 +5199,7 @@ export class App {
         } else if (!studies.length) {
           studyList.append(emptyWorklistMessage('没有检查'));
         } else {
-          for (const study of studies) {
-            const studyItem = document.createElement('div');
-            studyItem.className = 'study-item';
-            const modality = study.modalities.join(' / ') || '未知模态';
-            const studyTitle = study.description?.trim() || '未命名检查';
-            const studyRow = worklistRow(
-              studyTitle,
-              `${formatApiDate(study.study_date) || '无日期'} · ${modality}`,
-              `${study.series_count} 序列 · ${study.instance_count} 实例`,
-              this.expandedStudyUid === study.study_uid,
-            );
-            studyRow.classList.add('study-row');
-            studyRow.append(reportStatusBadge(
-              studyReportStatusText(study.report_status),
-              study.report_status,
-            ));
-            studyRow.addEventListener('click', () => void this.toggleStudy(study.study_uid));
-            studyItem.append(studyRow);
-            this.appendShareButton(studyItem, study.study_uid, studyTitle);
-            this.appendExportButton(studyItem, study.study_uid);
-            this.appendTagEditButton(studyItem, {
-              targetType: 'study',
-              targetKey: study.study_uid,
-              scope: 'study',
-              title: `${study.description?.trim() || '未命名检查'} · ${study.study_uid}`,
-              values: {
-                AccessionNumber: study.accession_number,
-                StudyID: study.study_id,
-                StudyDescription: study.description,
-                ReferringPhysicianName: study.referring_physician,
-              },
-            });
-            if (this.expandedStudyUid === study.study_uid) {
-              const series = this.series.get(study.study_uid);
-              const seriesList = document.createElement('div');
-              seriesList.className = 'series-list';
-              if (!series) {
-                seriesList.append(emptyWorklistMessage('正在读取序列...'));
-              } else if (!series.length) {
-                seriesList.append(emptyWorklistMessage('没有序列'));
-              } else {
-                const recommendedUid = recommendMprSeries(series)?.series_uid;
-                for (const entry of series) {
-                  const seriesEntry = document.createElement('div');
-                  seriesEntry.className = 'series-entry';
-                  const seriesButton = document.createElement('button');
-                  seriesButton.type = 'button';
-                  seriesButton.className = 'series-row';
-                  const title = document.createElement('strong');
-                  title.textContent = entry.description?.trim() || `序列 ${entry.series_number ?? '--'}`;
-                  const detail = document.createElement('span');
-                  detail.textContent = `${entry.modality || '未知'} · ${entry.instance_count} 实例`;
-                  seriesButton.append(title, detail);
-                  if (entry.series_uid === recommendedUid) {
-                    seriesButton.classList.add('recommended');
-                    const recommendation = document.createElement('span');
-                    recommendation.className = 'series-recommendation';
-                    recommendation.textContent = 'MPR 推荐数据源';
-                    seriesButton.append(recommendation);
-                  }
-                  const seriesPayload: SeriesDragPayload = {
-                    studyUid: study.study_uid,
-                    seriesUid: entry.series_uid,
-                  };
-                  seriesButton.addEventListener('click', () => {
-                    if (Date.now() < this.seriesClickSuppressedUntil) return;
-                    void this.openRemote(study.study_uid, entry.series_uid);
-                  });
-                  seriesButton.addEventListener('pointerdown', (event) => {
-                    this.beginSeriesPointerDrag(seriesButton, event, seriesPayload);
-                  });
-                  seriesButton.addEventListener('pointermove', (event) => {
-                    this.moveSeriesPointerDrag(event);
-                  });
-                  seriesButton.addEventListener('pointerup', (event) => {
-                    this.finishSeriesPointerDrag(event, false);
-                  });
-                  seriesButton.addEventListener('pointercancel', (event) => {
-                    this.cancelSeriesPointerDrag(event);
-                  });
-                  seriesButton.addEventListener('lostpointercapture', (event) => {
-                    if (this.seriesPointerDrag?.pointerId === event.pointerId) {
-                      this.cancelSeriesPointerDrag(event);
-                    }
-                  });
-                  seriesEntry.append(seriesButton);
-                  this.appendExportButton(seriesEntry, study.study_uid, entry.series_uid);
-                  this.appendTagEditButton(seriesEntry, {
-                    targetType: 'series',
-                    targetKey: entry.series_uid,
-                    scope: 'series',
-                    title: `${entry.description?.trim() || `序列 ${entry.series_number ?? '--'}`} · ${entry.series_uid}`,
-                    values: {
-                      SeriesDescription: entry.description,
-                      SeriesNumber: entry.series_number,
-                      BodyPartExamined: entry.body_part_examined,
-                      ProtocolName: entry.protocol_name,
-                    },
-                  });
-                  seriesList.append(seriesEntry);
-                }
-              }
-              studyItem.append(seriesList);
-            }
-            studyList.append(studyItem);
-          }
+          studyList.append(...studies.map((study) => this.renderStudyItem(study)));
         }
         item.append(studyList);
       }
@@ -6941,6 +6994,11 @@ export class App {
     )) {
       control.disabled = !hasSeries;
     }
+    const reportButton = requiredElement<HTMLButtonElement>('report-panel-btn');
+    reportButton.disabled = !hasSeries || !this.remoteSeriesOpen;
+    reportButton.title = this.remoteSeriesOpen
+      ? '诊断报告：结构化撰写、签发与修订'
+      : '本地序列仅供阅片，不提供报告服务';
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-tool]')) {
       button.classList.toggle('active', button.dataset.tool === this.state?.tool);
       button.setAttribute('aria-pressed', String(button.dataset.tool === this.state?.tool));
@@ -7789,7 +7847,7 @@ function setOrientationLabel(pane: HTMLElement, side: 'top' | 'right' | 'bottom'
   if (element) element.textContent = text;
 }
 
-function recommendMprSeries(series: RemoteSeriesSummary[]): RemoteSeriesSummary | null {
+export function recommendMprSeries(series: RemoteSeriesSummary[]): RemoteSeriesSummary | null {
   const eligible = series.filter((entry) => {
     if (!['CT', 'MR'].includes(entry.modality?.toUpperCase() ?? '')) return false;
     const description = entry.description?.toLowerCase() ?? '';

@@ -5,7 +5,7 @@
 
 use chrono::{NaiveDate, NaiveTime};
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use crate::DbError;
 
@@ -92,6 +92,301 @@ pub struct SeriesSummary {
     pub body_part_examined: Option<String>,
     pub protocol_name: Option<String>,
     pub instance_count: i32,
+}
+
+/// 高级队列查询的可选过滤条件。
+///
+/// 字符串切片由 HTTP 层或调用方持有，查询本身不复制过滤条件。`query` 使用
+/// 患者 ID 和规范化姓名的字面量包含匹配；其余字段都是精确匹配。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QueueFilter<'a> {
+    pub query: &'a str,
+    pub modality: Option<&'a str>,
+    pub body_part: Option<&'a str>,
+    pub report_status: Option<&'a str>,
+    pub institution: Option<&'a str>,
+    pub date_from: Option<NaiveDate>,
+    pub date_to: Option<NaiveDate>,
+}
+
+/// 队列表允许的排序列。
+///
+/// 这个枚举在进入 SQL 之前解析完成，避免把 URL 中的排序字段直接拼进查询。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum QueueSort {
+    #[default]
+    StudyDate,
+    PatientName,
+    Modality,
+    ReportStatus,
+    Institution,
+}
+
+impl QueueSort {
+    /// URL 使用的稳定名称。HTTP 层负责将用户输入解析为这个枚举。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StudyDate => "study_date",
+            Self::PatientName => "patient_name",
+            Self::Modality => "modality",
+            Self::ReportStatus => "report_status",
+            Self::Institution => "institution",
+        }
+    }
+}
+
+/// 高级队列中的一行（一个检查）。
+#[derive(Debug, Clone, Serialize, PartialEq, sqlx::FromRow)]
+pub struct QueueStudyRow {
+    /// 机构内患者主键，仅用于继续查询该患者的检查列表。
+    pub patient_key: i64,
+    pub study_uid: String,
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub patient_sex: Option<String>,
+    pub patient_birth_date: Option<NaiveDate>,
+    pub study_date: Option<NaiveDate>,
+    pub study_time: Option<NaiveTime>,
+    pub modalities: Vec<String>,
+    pub description: Option<String>,
+    pub body_parts: Vec<String>,
+    pub report_status: String,
+    pub institution_name: Option<String>,
+    /// 管理员为检查的全部序列，普通用户为其可见序列。
+    pub series_count: i32,
+}
+
+/// 按检查列出当前用户可见的高级队列。
+///
+/// `is_admin` 只影响序列来源可见性；机构边界始终由 `institution_id` 约束。
+/// 所有动态值都通过 `QueryBuilder::push_bind` 绑定，唯一直接进入 SQL 的值是
+/// [`QueueSort`] 提供的静态排序表达式和方向。
+#[allow(clippy::too_many_arguments)]
+pub async fn list_queue_studies(
+    pool: &PgPool,
+    institution_id: i64,
+    user_id: i64,
+    is_admin: bool,
+    filter: QueueFilter<'_>,
+    sort: QueueSort,
+    descending: bool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<QueueStudyRow>, DbError> {
+    let normalized = pacs_core::normalize_person_name(filter.query.trim());
+    let id_pattern = contains_pattern(filter.query.trim());
+    let name_pattern = contains_pattern(&normalized);
+
+    let mut query = QueryBuilder::<Postgres>::new(
+        r#"SELECT p.id AS patient_key,
+                  st.study_instance_uid AS study_uid,
+                  p.patient_id,
+                  p.name AS patient_name,
+                  p.sex AS patient_sex,
+                  p.birth_date AS patient_birth_date,
+                  st.study_date,
+                  st.study_time,
+                  COALESCE(
+                      array_agg(DISTINCT se.modality ORDER BY se.modality)
+                          FILTER (WHERE se.modality IS NOT NULL),
+                      ARRAY[]::TEXT[]
+                  ) AS modalities,
+                  st.description,
+                  COALESCE(
+                      array_agg(DISTINCT se.body_part_examined ORDER BY se.body_part_examined)
+                          FILTER (WHERE se.body_part_examined IS NOT NULL),
+                      ARRAY[]::TEXT[]
+                  ) AS body_parts,
+                  CASE WHEN r.id IS NULL THEN 'pending'
+                       WHEN r.status = 'signed' THEN 'signed'
+                       WHEN r.author_fk = "#,
+    );
+    query.push_bind(user_id);
+    query.push(
+        r#" THEN 'writing'
+                       ELSE 'locked' END AS report_status,
+                  st.attributes->'00080080'->'Value'->>0 AS institution_name,
+                  COUNT(DISTINCT se.id)::INTEGER AS series_count
+           FROM studies st
+           JOIN patients p ON p.id = st.patient_fk
+           JOIN series se ON se.study_fk = st.id
+           LEFT JOIN diagnostic_reports r
+                  ON r.study_fk = st.id AND r.institution_id = st.institution_id
+           WHERE st.institution_id = "#,
+    );
+    query.push_bind(institution_id);
+    query.push(r#" AND p.institution_id = "#);
+    query.push_bind(institution_id);
+    query.push(" AND st.storage_tier <> 'quarantine'");
+
+    // A non-admin sees a study only when at least one of its series comes from
+    // an active, trusted device granted to that user. Filtering the joined
+    // series also keeps modality/body-part aggregation and series_count within
+    // the visible set.
+    if !is_admin {
+        query.push(
+            r#" AND se.source_status = 'trusted'
+               AND EXISTS (
+                   SELECT 1 FROM dicom_devices d
+                   WHERE d.id = se.source_device_fk
+                     AND d.institution_id = st.institution_id
+                     AND d.status = 'active'
+                     AND EXISTS (
+                         SELECT 1 FROM user_device_grants g
+                         WHERE g.user_fk = "#,
+        );
+        query.push_bind(user_id);
+        query.push(" AND g.device_fk = d.id))");
+    }
+
+    query.push(
+        r#" AND (
+               "#,
+    );
+    query.push_bind(filter.query.trim());
+    query.push(
+        r#" = ''
+               OR p.patient_id ILIKE "#,
+    );
+    query.push_bind(&id_pattern);
+    query.push(
+        r#" ESCAPE '\'
+               OR p.name_normalized LIKE "#,
+    );
+    query.push_bind(&name_pattern);
+    query.push(r#" ESCAPE '\')"#);
+
+    if let Some(modality) = filter
+        .modality
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if is_admin {
+            // Administrators see every series, so the maintained study-level
+            // aggregate can use the existing GIN index.
+            query.push(" AND st.modalities @> ARRAY[");
+            query.push_bind(modality);
+            query.push("]::TEXT[]");
+        } else {
+            query.push(
+                r#" AND EXISTS (
+                       SELECT 1 FROM series modality_filter
+                       WHERE modality_filter.study_fk = st.id
+                         AND modality_filter.modality = "#,
+            );
+            query.push_bind(modality);
+            query.push(
+                r#" AND modality_filter.source_status = 'trusted'
+                         AND EXISTS (
+                             SELECT 1 FROM dicom_devices modality_device
+                             WHERE modality_device.id = modality_filter.source_device_fk
+                               AND modality_device.institution_id = st.institution_id
+                               AND modality_device.status = 'active'
+                               AND EXISTS (
+                                   SELECT 1 FROM user_device_grants modality_grant
+                                   WHERE modality_grant.user_fk = "#,
+            );
+            query.push_bind(user_id);
+            query.push(" AND modality_grant.device_fk = modality_device.id))");
+            query.push(")");
+        }
+    }
+    if let Some(body_part) = filter
+        .body_part
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        query.push(
+            r#" AND EXISTS (
+                       SELECT 1 FROM series body_filter
+                       WHERE body_filter.study_fk = st.id
+                         AND body_filter.body_part_examined = "#,
+        );
+        query.push_bind(body_part);
+        if !is_admin {
+            query.push(
+                r#" AND body_filter.source_status = 'trusted'
+                         AND EXISTS (
+                             SELECT 1 FROM dicom_devices body_device
+                             WHERE body_device.id = body_filter.source_device_fk
+                               AND body_device.institution_id = st.institution_id
+                               AND body_device.status = 'active'
+                               AND EXISTS (
+                                   SELECT 1 FROM user_device_grants body_grant
+                                   WHERE body_grant.user_fk = "#,
+            );
+            query.push_bind(user_id);
+            query.push(" AND body_grant.device_fk = body_device.id))");
+        }
+        query.push(")");
+    }
+    if let Some(institution) = filter
+        .institution
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        query.push(" AND st.attributes->'00080080'->'Value'->>0 = ");
+        query.push_bind(institution);
+    }
+    if let Some(date_from) = filter.date_from {
+        query.push(" AND st.study_date >= ");
+        query.push_bind(date_from);
+    }
+    if let Some(date_to) = filter.date_to {
+        query.push(" AND st.study_date <= ");
+        query.push_bind(date_to);
+    }
+    if let Some(report_status) = filter
+        .report_status
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        query.push(" AND ");
+        push_report_status_case(&mut query, user_id);
+        query.push(" = ");
+        query.push_bind(report_status);
+    }
+
+    query.push(" GROUP BY st.id, p.id, r.id, st.attributes ORDER BY ");
+    match sort {
+        QueueSort::StudyDate => {
+            query.push("st.study_date");
+        }
+        QueueSort::PatientName => {
+            query.push("p.name_normalized");
+        }
+        QueueSort::Modality => {
+            query.push(if is_admin {
+                "st.modalities[1]"
+            } else {
+                "MIN(se.modality)"
+            });
+        }
+        QueueSort::ReportStatus => {
+            push_report_status_case(&mut query, user_id);
+        }
+        QueueSort::Institution => {
+            query.push("st.attributes->'00080080'->'Value'->>0");
+        }
+    }
+    query.push(if descending { " DESC" } else { " ASC" });
+    query.push(" NULLS LAST, st.study_instance_uid ASC LIMIT ");
+    query.push_bind(limit);
+    query.push(" OFFSET ");
+    query.push_bind(offset);
+
+    Ok(query
+        .build_query_as::<QueueStudyRow>()
+        .fetch_all(pool)
+        .await?)
+}
+
+/// Append the four-state report expression. Each occurrence binds the current
+/// user independently because `QueryBuilder` numbers parameters as it builds.
+fn push_report_status_case(query: &mut QueryBuilder<Postgres>, user_id: i64) {
+    query.push("CASE WHEN r.id IS NULL THEN 'pending' WHEN r.status = 'signed' THEN 'signed' WHEN r.author_fk = ");
+    query.push_bind(user_id);
+    query.push(" THEN 'writing' ELSE 'locked' END");
 }
 
 /// 搜索一个机构下的病人。搜索文本按字面量包含匹配，不把 `%`/`_` 当通配符。

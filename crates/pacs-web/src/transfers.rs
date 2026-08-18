@@ -42,6 +42,9 @@ pub fn transfer_routes(state: WebState, auth: Arc<AuthService>) -> Router {
             "/imports/{job_id}",
             get(get_transfer).delete(cancel_transfer),
         )
+        // 桌面端本地文件只能临时阅片。自定义批量上传接口保留兼容路由，
+        // 但一律拒绝，服务端入库只允许标准 DICOM C-STORE / STOW-RS。
+        .layer(axum::middleware::from_fn(reject_local_bulk_import))
         .layer(axum::middleware::from_fn(move |request, next| {
             let auth = Arc::clone(&import_auth);
             async move {
@@ -76,6 +79,16 @@ pub fn transfer_routes(state: WebState, auth: Arc<AuthService>) -> Router {
             }
         }));
     imports.merge(exports).with_state(state)
+}
+
+async fn reject_local_bulk_import(_request: Request, _next: Next) -> Response {
+    (
+        StatusCode::GONE,
+        Json(json!({
+            "error": "本地批量导入已禁用，请使用 DICOM C-STORE 或 DICOMweb STOW-RS"
+        })),
+    )
+        .into_response()
 }
 
 async fn require_transfer(

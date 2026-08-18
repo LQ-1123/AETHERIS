@@ -640,6 +640,23 @@ export interface StudySummary {
   report_status: string;
 }
 
+export interface QueueStudyRow {
+  patient_key: number;
+  study_uid: string;
+  patient_id: string;
+  patient_name: string | null;
+  patient_sex: string | null;
+  patient_birth_date: string | null;
+  study_date: string | null;
+  study_time: string | null;
+  modalities: string[];
+  description: string | null;
+  body_parts: string[];
+  report_status: 'pending' | 'writing' | 'locked' | 'signed';
+  institution_name: string | null;
+  series_count: number;
+}
+
 export interface RemoteSeriesSummary {
   series_uid: string;
   series_number: number | null;
@@ -662,30 +679,6 @@ export interface TransferProgress {
   completed_files: number;
   total_files: number;
   status: string | null;
-}
-
-export interface ImportTransferItem {
-  item_key: string;
-  status: 'pending' | 'running' | 'succeeded' | 'skipped' | 'conflict' | 'failed' | 'cancelled';
-  input: { name?: string };
-  result: {
-    disposition?: 'created' | 'duplicate' | 'conflict' | 'invalid' | 'failed';
-    sop_instance_uid?: string | null;
-    error?: string | null;
-  };
-}
-
-export interface ImportTransferResponse {
-  job: {
-    result?: {
-      created?: number;
-      duplicates?: number;
-      conflicts?: number;
-      invalid?: number;
-      failed?: number;
-    };
-  };
-  items?: ImportTransferItem[];
 }
 
 export type TransformTargetType = 'patient' | 'study' | 'series' | 'instance';

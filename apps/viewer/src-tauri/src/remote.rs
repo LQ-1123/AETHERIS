@@ -175,6 +175,24 @@ pub struct StudySummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueStudyRow {
+    pub patient_key: i64,
+    pub study_uid: String,
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub patient_sex: Option<String>,
+    pub patient_birth_date: Option<String>,
+    pub study_date: Option<String>,
+    pub study_time: Option<String>,
+    pub modalities: Vec<String>,
+    pub description: Option<String>,
+    pub body_parts: Vec<String>,
+    pub report_status: String,
+    pub institution_name: Option<String>,
+    pub series_count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeriesSummary {
     pub series_uid: String,
     pub series_number: Option<i32>,
@@ -681,6 +699,45 @@ impl RemoteState {
         self.get_json(url).await
     }
 
+    pub async fn list_queue_studies(
+        &self,
+        query: &str,
+        modality: Option<&str>,
+        body_part: Option<&str>,
+        report_status: Option<&str>,
+        institution: Option<&str>,
+        date_from: Option<&str>,
+        date_to: Option<&str>,
+        sort: &str,
+        order: &str,
+        limit: u32,
+        offset: u64,
+    ) -> Result<Vec<QueueStudyRow>, RemoteError> {
+        let mut url = self.session_url("api/queue/studies").await?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs
+                .append_pair("query", query)
+                .append_pair("sort", sort)
+                .append_pair("order", order)
+                .append_pair("limit", &limit.to_string())
+                .append_pair("offset", &offset.to_string());
+            for (key, value) in [
+                ("modality", modality),
+                ("body_part", body_part),
+                ("report_status", report_status),
+                ("institution", institution),
+                ("date_from", date_from),
+                ("date_to", date_to),
+            ] {
+                if let Some(value) = value.filter(|value| !value.is_empty()) {
+                    pairs.append_pair(key, value);
+                }
+            }
+        }
+        self.get_json(url).await
+    }
+
     pub async fn list_patient_studies(
         &self,
         patient_id: i64,
@@ -1097,78 +1154,6 @@ impl RemoteState {
             .map_err(request_error)
     }
 
-    pub async fn create_import(&self) -> Result<Uuid, RemoteError> {
-        let url = self.session_url("api/v1/imports").await?;
-        let value: serde_json::Value = self
-            .authorized_json(Method::POST, url, Some(serde_json::json!({})))
-            .await?;
-        job_id(&value)
-    }
-
-    pub async fn create_upload(
-        &self,
-        job: Uuid,
-        name: &str,
-        size: u64,
-    ) -> Result<Uuid, RemoteError> {
-        let url = self
-            .session_url(&format!("api/v1/imports/{job}/files"))
-            .await?;
-        let value: serde_json::Value = self
-            .authorized_json(
-                Method::POST,
-                url,
-                Some(serde_json::json!({"relative_name": name, "size": size})),
-            )
-            .await?;
-        value
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|v| Uuid::parse_str(v).ok())
-            .ok_or_else(|| RemoteError::InvalidResponse("上传响应缺少文件 ID".to_owned()))
-    }
-
-    pub async fn upload_chunk(
-        &self,
-        job: Uuid,
-        upload: Uuid,
-        offset: u64,
-        bytes: Vec<u8>,
-    ) -> Result<(), RemoteError> {
-        let mut url = self
-            .session_url(&format!("api/v1/imports/{job}/files/{upload}"))
-            .await?;
-        url.query_pairs_mut()
-            .append_pair("offset", &offset.to_string());
-        self.authorized_bytes(Method::PUT, url, bytes).await?;
-        Ok(())
-    }
-
-    pub async fn upload_offset(&self, job: Uuid, upload: Uuid) -> Result<u64, RemoteError> {
-        let value = self.transfer_status("imports", job).await?;
-        value
-            .get("uploads")
-            .and_then(serde_json::Value::as_array)
-            .and_then(|items| {
-                items.iter().find(|item| {
-                    item.get("id").and_then(serde_json::Value::as_str) == Some(&upload.to_string())
-                })
-            })
-            .and_then(|item| item.get("received_size"))
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| RemoteError::InvalidResponse("任务响应缺少上传偏移".to_owned()))
-    }
-
-    pub async fn complete_import(&self, job: Uuid) -> Result<(), RemoteError> {
-        let url = self
-            .session_url(&format!("api/v1/imports/{job}/complete"))
-            .await?;
-        let _: serde_json::Value = self
-            .authorized_json(Method::POST, url, Some(serde_json::json!({})))
-            .await?;
-        Ok(())
-    }
-
     pub async fn create_export(
         &self,
         study: &str,
@@ -1355,29 +1340,6 @@ impl RemoteState {
         ensure_success(response).await
     }
 
-    async fn authorized_bytes(
-        &self,
-        method: Method,
-        url: Url,
-        body: Vec<u8>,
-    ) -> Result<Response, RemoteError> {
-        let mut guard = self.session.lock().await;
-        let session = guard.as_mut().ok_or(RemoteError::NotLoggedIn)?;
-        let send = |session: &Session| {
-            session
-                .client
-                .request(method.clone(), url.clone())
-                .bearer_auth(&session.access_token)
-                .body(body.clone())
-                .send()
-        };
-        let mut response = send(session).await.map_err(request_error)?;
-        if response.status() == StatusCode::UNAUTHORIZED {
-            refresh(session).await?;
-            response = send(session).await.map_err(request_error)?;
-        }
-        ensure_success(response).await
-    }
 }
 
 fn job_id(value: &serde_json::Value) -> Result<Uuid, RemoteError> {
