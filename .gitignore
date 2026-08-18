@@ -1,3 +1,4 @@
+temp/*-acceptance/
 __pycache__/
 *.pyc
 venv/
@@ -49,4 +50,4 @@ viz/
 
 # 集中归档的本机构建缓存、打包成品与生成物
 temp/generated/
-temp/acceptance/
+temp/*-acceptance/
