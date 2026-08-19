@@ -75,7 +75,9 @@ jobs:
 
       - name: Read application version
         shell: bash
-        run: echo "APP_VERSION=$(node -p \"require('./apps/viewer/src-tauri/tauri.conf.json').version\")" >> "$GITHUB_ENV"
+        run: |
+          APP_VERSION="$(node -p "require('./apps/viewer/src-tauri/tauri.conf.json').version")"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
 
       - name: Build installer (pacsd + launcher + viewer + postgres + Inno Setup)
         shell: pwsh
