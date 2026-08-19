@@ -1,6 +1,7 @@
 # 用 GitHub Actions 在 Windows 上构建"开箱即用"的 AETHERIS 安装包。
 # 产出: AETHERIS-Setup-<tauri 版本>-x64.exe（内含 Viewer + pacsd + PostgreSQL + 启动器，目标机零依赖）。
-# 触发: 手动（workflow_dispatch）或推送 v* 标签。
+# 触发: 仅手动（workflow_dispatch）。先在线构建并下载 EXE，验收后再创建 Release，
+# 避免创建发布标签时重复打包。
 #
 # 打包流程对应 packaging/windows/build.ps1：
 #   编译 pacsd + aetheris-launcher → tauri 构建 AETHERIS.exe → 组装 postgres/bin|lib|share
@@ -11,9 +12,6 @@ name: Build Windows Installer
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   build-windows:
