@@ -54,13 +54,28 @@ The platform combines:
 * **Measurement and annotation**
 * **Local AI segmentation**
 * **RBAC, authentication and audit logging**
-* **Worklists and report lifecycle management**
+* **Server-side patient worklists and exam requests**
+* **Structured reporting and institution-controlled peer review**
+* **Account, password-reset and workload administration**
 * **Docker-based deployment**
 * **Windows and macOS distributable applications**
 
 AETHERIS is intended to be both a usable PACS platform and an engineering foundation for future intelligent medical imaging workflows.
 
 > **Research / engineering project. Not clinically validated. Not intended for diagnosis or direct clinical decision-making.**
+
+---
+
+## Latest Release — v0.3.0
+
+v0.3.0 connects the patient queue, image review, exam requests, structured reporting, independent report review, account administration, and workload reporting into one institution-scoped workflow.
+
+| Platform | Download | SHA-256 |
+| --- | --- | --- |
+| macOS Apple Silicon | [AETHERIS_0.3.0_aarch64.dmg](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS_0.3.0_aarch64.dmg) | `f454761759d07acca4bccaf9d0a1af447425a9edaaebbf12c98719d8782dfa78` |
+| Windows 10/11 x64 | [AETHERIS-Setup-0.3.0-x64.exe](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS-Setup-0.3.0-x64.exe) | `a926a5c479071f6b9d41722fa3a9c6915047e3b733ce98e86e198df4b614ea67` |
+
+See the [v0.3.0 release notes](doc/releases/v0.3.0.md) for the full feature list, upgrade procedure, validation results, and known limitations.
 
 ---
 
@@ -241,6 +256,44 @@ The architecture is intended to support progressively more advanced volumetric v
 
 ---
 
+# Clinical Workflow
+
+## Patient Queue and Exam Requests
+
+The full-screen patient queue is the default landing page after login. It presents one row per study with server-side pagination, sorting, and combined filters for source institution, report status, modality, body part, and date.
+
+Technicians and administrators can manage exam requests in either direction:
+
+* Create the request first, receive the images later, and manually bind the matching study.
+* Create a request directly from an already-ingested study; patient and Study data are read by the server instead of trusted from the client.
+
+Exam requests carry modality, body part, request type, and clinical indication through the `pending → executed → completed` lifecycle. The request is visible in the report workspace and is completed automatically when the associated report is approved or signed.
+
+## Separate Report Workspace
+
+Diagnostic reporting runs in a separate desktop window so the Viewer remains focused on image display and interaction. Reports are study-scoped and support:
+
+* Structured findings, impression, recommendation, and positive-result fields
+* Draft saving and immutable signed version snapshots
+* Submit-for-review, review claim, reviewer correction, approval, and post-sign amendment
+* Patient/institution context, exam-request indication, reviewer identity, and a complete review timeline
+
+## Institution-Controlled Peer Review
+
+Administrators can enable or disable the report-review closure under **Admin Console → Institution Settings**. The setting is persisted per institution and takes effect immediately.
+
+When enabled, authors can save drafts and submit them for review but cannot sign directly. Reviewers need the `review_report` permission and cannot review their own reports. Reviewer corrections preserve the original author, identify the reviewer, and create a `reviewer_modified` audit event that contributes to workload/error statistics. When disabled, the direct draft-to-sign path remains available for single-radiologist and demonstration environments.
+
+## Administration and Workload
+
+The Admin Console provides account creation, first-login password change, enable/disable with session revocation, reviewer permission grants, device registration, source ownership, user access grants, institution settings, and per-user workload reports.
+
+Password reset is approval-based: a user submits a username and proposed new password from the login screen, only an Argon2id hash is stored, and an administrator can approve or reject the request without seeing the password. Workload reports aggregate report states, signed versions, completed reviews, reviewer modifications, and exam requests over a selected date range.
+
+All account, report, device, exam-request, workload, and institution-setting boundaries are enforced by the server rather than by hidden UI controls.
+
+---
+
 # Local AI
 
 AETHERIS includes a local AI worker architecture for medical image processing.
@@ -270,8 +323,11 @@ AETHERIS provides application-level security mechanisms for distributed deployme
 * Refresh tokens
 * Role-Based Access Control
 * Account management
+* Approval-based password reset
 * Audit logging
 * Permission-aware API access
+* Institution-scoped device and workflow authorization
+* Independent report review permissions
 * Versioned report amendments
 * Lifecycle controls
 
@@ -359,6 +415,11 @@ This makes it possible to develop and test PACS networking without requiring phy
 
 AETHERIS can also be packaged as a standalone desktop application.
 
+Current v0.3.0 packages:
+
+* [macOS Apple Silicon DMG](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS_0.3.0_aarch64.dmg)
+* [Windows 10/11 x64 installer](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS-Setup-0.3.0-x64.exe)
+
 ### macOS
 
 <p align="center"><img src="doc/diagrams/packaging.svg" alt="macOS app bundle" width="620"/></p>
@@ -372,6 +433,8 @@ GitHub Actions builds a Windows installer containing:
 <p align="center"><img src="doc/diagrams/packaging.svg" alt="Windows installer contents" width="620"/></p>
 
 The target machine does not need a separate PACS installation.
+
+The v0.3.0 packages are not commercially code-signed. The macOS build uses ad-hoc signing and is not notarized; the Windows installer requires administrator privileges. Review the [release notes](doc/releases/v0.3.0.md) before installation or upgrade.
 
 ---
 
