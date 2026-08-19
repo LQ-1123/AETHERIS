@@ -146,7 +146,10 @@ impl LocalStack {
                 .status()
                 .map_err(|e| format!("无法复制本地栈: {e}"))?;
             if !status.success() {
-                return Err(format!("复制本地栈失败（退出码 {}）", status.code().unwrap_or(-1)));
+                return Err(format!(
+                    "复制本地栈失败（退出码 {}）",
+                    status.code().unwrap_or(-1)
+                ));
             }
         }
         // 软链：postgres 不同进程按不同基准解析 ../lib 与 ../share（仅 macOS 布局需要；
@@ -188,7 +191,10 @@ impl LocalStack {
                 .status()
                 .map_err(|e| format!("无法执行 initdb: {e}"))?;
             if !status.success() {
-                return Err(format!("initdb 失败（退出码 {}）", status.code().unwrap_or(-1)));
+                return Err(format!(
+                    "initdb 失败（退出码 {}）",
+                    status.code().unwrap_or(-1)
+                ));
             }
         }
         if !port_open(PG_PORT) {
@@ -222,8 +228,16 @@ impl LocalStack {
         let check = Command::new(&psql)
             .current_dir(&pg_bin)
             .args([
-                "-h", "127.0.0.1", "-p", PG_PORT, "-U", "pacs", "-d", "postgres",
-                "-tAc", "SELECT 1 FROM pg_database WHERE datname='pacs'",
+                "-h",
+                "127.0.0.1",
+                "-p",
+                PG_PORT,
+                "-U",
+                "pacs",
+                "-d",
+                "postgres",
+                "-tAc",
+                "SELECT 1 FROM pg_database WHERE datname='pacs'",
             ])
             .output()
             .map_err(|e| format!("查询数据库失败: {e}"))?;
@@ -235,7 +249,10 @@ impl LocalStack {
                 .status()
                 .map_err(|e| format!("无法创建数据库: {e}"))?;
             if !status.success() {
-                return Err(format!("创建 pacs 数据库失败（退出码 {}）", status.code().unwrap_or(-1)));
+                return Err(format!(
+                    "创建 pacs 数据库失败（退出码 {}）",
+                    status.code().unwrap_or(-1)
+                ));
             }
         }
         Ok(())
@@ -262,7 +279,10 @@ impl LocalStack {
         if jwt.len() < 32 {
             jwt = random_hex(48);
         }
-        let _ = fs::write(&file, format!("PACS_ADMIN_PASSWORD={password}\nPACS_JWT_SECRET={jwt}\n"));
+        let _ = fs::write(
+            &file,
+            format!("PACS_ADMIN_PASSWORD={password}\nPACS_JWT_SECRET={jwt}\n"),
+        );
         Ok((password, jwt))
     }
 
@@ -270,7 +290,10 @@ impl LocalStack {
         let output = Command::new(self.stack_dir().join("pacsd"))
             .current_dir(&self.stack_dir())
             .args(["admin", "--username", ADMIN_USER, "--password", password])
-            .env("DATABASE_URL", format!("postgres://pacs@127.0.0.1:{PG_PORT}/pacs"))
+            .env(
+                "DATABASE_URL",
+                format!("postgres://pacs@127.0.0.1:{PG_PORT}/pacs"),
+            )
             .output()
             .map_err(|e| format!("无法执行 pacsd admin: {e}"))?;
         let text = String::from_utf8_lossy(&output.stdout).to_string()
@@ -290,14 +313,19 @@ impl LocalStack {
             .map_err(|e| format!("无法打开 pacsd 日志: {e}"))?;
         let child = Command::new(self.stack_dir().join("pacsd"))
             .current_dir(&self.stack_dir())
-            .env("DATABASE_URL", format!("postgres://pacs@127.0.0.1:{PG_PORT}/pacs"))
+            .env(
+                "DATABASE_URL",
+                format!("postgres://pacs@127.0.0.1:{PG_PORT}/pacs"),
+            )
             .env("PACS_STORAGE_ROOT", self.storage())
             .env("PACS_HTTP_BIND", format!("127.0.0.1:{HTTP_PORT}"))
             .env("PACS_DIMSE_BIND", format!("127.0.0.1:{DIMSE_PORT}"))
             .env("PACS_AE_TITLE", "AETHERIS_LOCAL")
             .env("PACS_JWT_SECRET", jwt)
             .env("RUST_LOG", "info,pacsd=debug")
-            .stdout(Stdio::from(log_file.try_clone().map_err(|e| e.to_string())?))
+            .stdout(Stdio::from(
+                log_file.try_clone().map_err(|e| e.to_string())?,
+            ))
             .stderr(Stdio::from(log_file))
             .spawn()
             .map_err(|e| format!("无法启动 pacsd: {e}"))?;

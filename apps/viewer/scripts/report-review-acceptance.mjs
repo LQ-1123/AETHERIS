@@ -27,6 +27,9 @@ try {
     set('rw-status', '草稿 · 编辑中');
     document.getElementById('rw-status').dataset.status = 'draft';
     set('rw-patient-strip', '陈晓华 · P-20260818-001 · 女 · 54 岁 · CT · 胸部薄层 CT · 2026-08-18');
+    const clinical = document.getElementById('rw-clinical-context');
+    clinical.hidden = false;
+    clinical.innerHTML = '<strong>申请信息</strong><span>间断胸痛一周，伴活动后气促，排除肺栓塞。</span><small>增强 · CT · 胸部 · 申请人 赵技师</small>';
     set('rw-workitem-text', '待书写');
     document.getElementById('rw-workitem').hidden = false;
     document.getElementById('rw-create').hidden = true;
@@ -55,6 +58,21 @@ try {
   assert.equal(await page.locator('#rw-modify').isVisible(), false);
   assert.equal(await page.locator('#rw-findings').getAttribute('contenteditable'), 'true');
   await page.screenshot({ path: `${outputDirectory}/standalone-author-report.png` });
+
+  await page.evaluate(() => {
+    const clinical = document.getElementById('rw-clinical-context');
+    clinical.replaceChildren();
+    clinical.hidden = true;
+  });
+  assert.equal(await page.locator('#rw-clinical-context').isVisible(), false, '无申请单时不应显示空申请信息区');
+  assert.equal(await page.locator('#report-window-root').isVisible(), true, '无申请单不应影响报告窗口');
+  await page.screenshot({ path: `${outputDirectory}/standalone-author-report-no-request.png` });
+
+  await page.evaluate(() => {
+    const clinical = document.getElementById('rw-clinical-context');
+    clinical.hidden = false;
+    clinical.innerHTML = '<strong>申请信息</strong><span>间断胸痛一周，伴活动后气促，排除肺栓塞。</span><small>增强 · CT · 胸部 · 申请人 赵技师</small>';
+  });
 
   await page.evaluate(() => {
     const set = (id, value) => { document.getElementById(id).textContent = value; };

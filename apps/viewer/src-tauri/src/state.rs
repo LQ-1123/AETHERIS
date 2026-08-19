@@ -1074,61 +1074,61 @@ fn prepare_image_stacks(parsed: Vec<ParsedFile>) -> Result<Vec<PreparedImageStac
         } else {
             let orientation_groups =
                 group_slices_by_orientation(&sortable_slices).map_err(geometry_error)?;
-        let mut dimension_groups = Vec::<Vec<usize>>::new();
-        for orientation_group in orientation_groups {
-            let orientation_group = orientation_group
-                .into_iter()
-                .map(|local_index| sortable_indices[local_index])
-                .collect::<Vec<_>>();
-            let mut compatible_dimensions = Vec::<Vec<usize>>::new();
-            for source_index in orientation_group {
-                let file = &parsed[source_index];
-                if let Some(group) = compatible_dimensions.iter_mut().find(|group| {
-                    let reference = &parsed[group[0]];
-                    reference.rows == file.rows
-                        && reference.cols == file.cols
-                        && reference.bits_allocated == file.bits_allocated
-                        && reference.pixel_format == file.pixel_format
-                }) {
-                    group.push(source_index);
-                } else {
-                    compatible_dimensions.push(vec![source_index]);
-                }
-            }
-            dimension_groups.extend(compatible_dimensions);
-        }
-
-        dimension_groups
-            .into_iter()
-            .map(|indices| {
-                let group_slices = indices
-                    .iter()
-                    .map(|&source_index| slices[source_index])
-                    .collect::<Vec<_>>();
-                let sorted = sort_slices(&group_slices).map_err(geometry_error)?;
-                let mut warnings = Vec::new();
-                if sorted.duplicate_position_groups > 0 {
-                    warnings.push(format!(
-                        "当前图像组包含 {} 组重复切片位置，请核对重建内容",
-                        sorted.duplicate_position_groups
-                    ));
-                }
-                if !sorted.spacing_is_regular {
-                    warnings.push("当前图像组的切片间距不均匀，可能存在漏传切片".to_owned());
-                }
-                let order = sorted
-                    .order
+            let mut dimension_groups = Vec::<Vec<usize>>::new();
+            for orientation_group in orientation_groups {
+                let orientation_group = orientation_group
                     .into_iter()
-                    .map(|local_index| indices[local_index])
+                    .map(|local_index| sortable_indices[local_index])
                     .collect::<Vec<_>>();
-                Ok(ImageStackPlan {
-                    first_source_index: *indices.first().expect("图像组不为空"),
-                    order,
-                    normal: sorted.normal,
-                    warnings,
+                let mut compatible_dimensions = Vec::<Vec<usize>>::new();
+                for source_index in orientation_group {
+                    let file = &parsed[source_index];
+                    if let Some(group) = compatible_dimensions.iter_mut().find(|group| {
+                        let reference = &parsed[group[0]];
+                        reference.rows == file.rows
+                            && reference.cols == file.cols
+                            && reference.bits_allocated == file.bits_allocated
+                            && reference.pixel_format == file.pixel_format
+                    }) {
+                        group.push(source_index);
+                    } else {
+                        compatible_dimensions.push(vec![source_index]);
+                    }
+                }
+                dimension_groups.extend(compatible_dimensions);
+            }
+
+            dimension_groups
+                .into_iter()
+                .map(|indices| {
+                    let group_slices = indices
+                        .iter()
+                        .map(|&source_index| slices[source_index])
+                        .collect::<Vec<_>>();
+                    let sorted = sort_slices(&group_slices).map_err(geometry_error)?;
+                    let mut warnings = Vec::new();
+                    if sorted.duplicate_position_groups > 0 {
+                        warnings.push(format!(
+                            "当前图像组包含 {} 组重复切片位置，请核对重建内容",
+                            sorted.duplicate_position_groups
+                        ));
+                    }
+                    if !sorted.spacing_is_regular {
+                        warnings.push("当前图像组的切片间距不均匀，可能存在漏传切片".to_owned());
+                    }
+                    let order = sorted
+                        .order
+                        .into_iter()
+                        .map(|local_index| indices[local_index])
+                        .collect::<Vec<_>>();
+                    Ok(ImageStackPlan {
+                        first_source_index: *indices.first().expect("图像组不为空"),
+                        order,
+                        normal: sorted.normal,
+                        warnings,
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, ViewerError>>()?
+                .collect::<Result<Vec<_>, ViewerError>>()?
         }
     };
 

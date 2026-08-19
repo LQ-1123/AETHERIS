@@ -1266,6 +1266,14 @@ pub async fn approve_report(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
+        r#"UPDATE exam_requests SET status='completed',revision=revision+1
+           WHERE study_fk=(SELECT study_fk FROM diagnostic_reports WHERE id=$1)
+             AND status='executed'"#,
+    )
+    .bind(report_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
         r#"INSERT INTO audit_log(user_fk,username,action,outcome,study_instance_uid,detail)
            SELECT u.id,u.username,'report_signed','success',st.study_instance_uid,
                   jsonb_build_object('report_id',$1::TEXT,'reviewed',true,'modified',$3)

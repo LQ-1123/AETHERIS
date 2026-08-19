@@ -230,30 +230,59 @@ async fn device_registration_approval_and_series_attribution() {
     );
 }
 
-/// 0023 回填语句幂等：重复执行不产生重复工作项（与迁移内容一致的语句）。
+/// 0023 回填语句幂等：对本用例独占的序列重复执行不产生重复工作项。
 #[tokio::test]
 async fn work_item_backfill_statement_is_idempotent() {
     let Some(pool) = pool().await else { return };
-    let total = async |pool: &PgPool| -> i64 {
-        sqlx::query_scalar("SELECT count(*) FROM diagnostic_work_items")
-            .fetch_one(pool)
-            .await
-            .unwrap()
-    };
-    let before = total(&pool).await;
+    let nonce = Uuid::new_v4().as_u128();
+    let patient_fk: i64 = sqlx::query_scalar(
+        "INSERT INTO patients(institution_id,patient_id) VALUES(1,$1) RETURNING id",
+    )
+    .bind(format!("backfill-{nonce}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let study_fk: i64 = sqlx::query_scalar(
+        "INSERT INTO studies(institution_id,patient_fk,study_instance_uid) VALUES(1,$1,$2) RETURNING id",
+    )
+    .bind(patient_fk)
+    .bind(format!("1.2.826.0.1.3680043.9.9900.{nonce}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let series_fk: i64 = sqlx::query_scalar(
+        "INSERT INTO series(study_fk,series_instance_uid) VALUES($1,$2) RETURNING id",
+    )
+    .bind(study_fk)
+    .bind(format!("1.2.826.0.1.3680043.9.9901.{nonce}"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     let statement = r#"INSERT INTO diagnostic_work_items (id, institution_id, series_fk)
                        SELECT gen_random_uuid(), st.institution_id, se.id
                        FROM series se JOIN studies st ON st.id = se.study_fk
+                       WHERE se.id=$1
                        ON CONFLICT (institution_id, series_fk) DO NOTHING"#;
-    sqlx::query(statement).execute(&pool).await.unwrap();
-    let after_once = total(&pool).await;
-    sqlx::query(statement).execute(&pool).await.unwrap();
-    let after_twice = total(&pool).await;
-    assert_eq!(
-        after_once, after_twice,
-        "回填语句重复执行不得产生重复工作项"
-    );
-    assert!(after_once >= before, "回填只增不减");
+    let first = sqlx::query(statement)
+        .bind(series_fk)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let second = sqlx::query(statement)
+        .bind(series_fk)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM diagnostic_work_items WHERE institution_id=1 AND series_fk=$1",
+    )
+    .bind(series_fk)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(first.rows_affected(), 1, "首次回填应创建工作项");
+    assert_eq!(second.rows_affected(), 0, "重复回填不得创建工作项");
+    assert_eq!(count, 1, "同一序列只能存在一条工作项");
 }
 
 /// 按序列查工作项：不受「仅当天」日期过滤限制，且遵守设备授权可见性。

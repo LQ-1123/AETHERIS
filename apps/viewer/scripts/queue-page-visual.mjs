@@ -35,11 +35,18 @@ try {
   assert.equal(await page.locator('#queue-body tr').count(), 50, '首页应显示 50 项');
   assert.equal(await page.locator('#workspace').isHidden(), true, '队列页打开时应隐藏阅片工作区');
   assert.equal(await page.locator('#worklist-panel').isHidden(), true, '旧工作列表侧栏不应可见');
-  assert.equal(await page.locator('.queue-edit-button').count(), 50, '管理员应在每个检查行看到编辑标签入口');
+  assert.equal(await page.getByRole('button', { name: '编辑检查 DICOM 标签' }).count(), 50,
+    '管理员应在每个检查行看到编辑标签入口');
+  const requestEntryCoverage = await page.locator('#queue-body tr').evaluateAll((rows) => rows.every((row) => {
+    const hasBadge = row.querySelector('.queue-exam-request-badge') !== null;
+    const hasCreateButton = [...row.querySelectorAll('button')].some((button) => button.textContent?.trim() === '开申请单');
+    return hasBadge !== hasCreateButton;
+  }));
+  assert.equal(requestEntryCoverage, true, '仅没有申请单的检查应显示开申请单入口');
   assert.equal(await page.locator('#queue-next').isEnabled(), true, '超过一页时下一页应可用');
   assert.equal(await page.getByText('UNAUTHORIZED').count(), 0, '未授权设备数据不得出现');
 
-  await page.locator('.queue-edit-button').first().click();
+  await page.getByRole('button', { name: '编辑检查 DICOM 标签' }).first().click();
   await page.locator('#tag-editor-dialog').waitFor({ state: 'visible' });
   assert.equal(await page.locator('#tag-editor-title').textContent(), '编辑检查标签', '队列标签入口应打开检查级编辑器');
   assert.match(
@@ -61,10 +68,10 @@ try {
   );
   assert.deepEqual(
     Object.keys(statusColors).sort(),
-    ['locked', 'pending', 'signed', 'writing'],
-    '首页应覆盖四种报告状态',
+    ['locked', 'pending', 'signed', 'submitted', 'under_review', 'writing'],
+    '首页应覆盖六种报告状态',
   );
-  assert.equal(new Set(Object.values(statusColors)).size, 4, '四态徽标应使用可区分的文字颜色');
+  assert.equal(new Set(Object.values(statusColors)).size, 6, '六态徽标应使用可区分的文字颜色');
   const desktopMetrics = await layoutMetrics(page);
   assertLayout(desktopMetrics, 'desktop');
   await page.screenshot({ path: `${outputDirectory}/queue-page-desktop.png`, fullPage: true });

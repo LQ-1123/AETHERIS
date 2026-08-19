@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-ai"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -3033,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-codec"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dicom",
  "dicom-pixeldata",
@@ -3044,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "dicom",
@@ -3059,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-viewer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "dicom",

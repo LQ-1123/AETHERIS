@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
 use axum::{Json, Router};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use pacs_auth::{AuthService, Identity, Permission, Role};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -44,6 +44,7 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/series/{series_uid}/resolve-source", post(resolve_source))
         .route("/series-sources", get(series_sources))
         .route("/worklist/{work_id}/assign", post(assign))
+        .route("/workload", get(workload))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn(move |request, next| {
             let auth = Arc::clone(&admin_auth);
@@ -52,6 +53,20 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
 
     let clinical_auth = Arc::clone(&auth);
     let clinical = Router::new()
+        .route(
+            "/exam-requests",
+            get(exam_requests).post(create_exam_request),
+        )
+        .route(
+            "/exam-requests/study-candidates",
+            get(exam_request_study_candidates),
+        )
+        .route(
+            "/exam-requests/study/{study_uid}",
+            get(exam_request_for_study).post(create_exam_request_for_study),
+        )
+        .route("/exam-requests/{request_id}", put(update_exam_request))
+        .route("/exam-requests/{request_id}/bind", post(bind_exam_request))
         .route("/worklist", get(worklist))
         .route("/worklist/{work_id}/claim", post(claim))
         .route("/worklist/{work_id}/release", post(release))
@@ -885,6 +900,291 @@ async fn assign(
     )
     .await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn require_exam_request_editor(identity: &Identity) -> Result<(), ApiError> {
+    if matches!(identity.role, Role::Technician | Role::Admin) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("exam_request_editor_required"))
+    }
+}
+
+fn require_exam_request_reader(identity: &Identity) -> Result<(), ApiError> {
+    if matches!(
+        identity.role,
+        Role::Technician | Role::Radiologist | Role::Admin
+    ) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden("exam_request_reader_required"))
+    }
+}
+
+#[derive(Deserialize)]
+struct ExamRequestsQuery {
+    status: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn exam_requests(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<ExamRequestsQuery>,
+) -> Result<Json<Vec<pacs_db::ExamRequest>>, ApiError> {
+    require_exam_request_reader(&identity)?;
+    Ok(Json(
+        pacs_db::list_exam_requests(
+            &state.pool,
+            identity.institution_id,
+            q.status.as_deref(),
+            q.limit.unwrap_or(100),
+            q.offset.unwrap_or(0),
+        )
+        .await
+        .map_err(ApiError::db)?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct ExamRequestPayload {
+    patient_id: String,
+    patient_name: String,
+    patient_birth_date: Option<NaiveDate>,
+    patient_sex: Option<String>,
+    modality: String,
+    body_part: String,
+    request_type: String,
+    clinical_indication: String,
+    scheduled_at: Option<DateTime<Utc>>,
+}
+
+impl ExamRequestPayload {
+    fn as_input(&self) -> pacs_db::ExamRequestInput<'_> {
+        pacs_db::ExamRequestInput {
+            patient_id: &self.patient_id,
+            patient_name: &self.patient_name,
+            patient_birth_date: self.patient_birth_date,
+            patient_sex: self.patient_sex.as_deref(),
+            modality: &self.modality,
+            body_part: &self.body_part,
+            request_type: &self.request_type,
+            clinical_indication: &self.clinical_indication,
+            scheduled_at: self.scheduled_at,
+        }
+    }
+}
+
+async fn create_exam_request(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<ExamRequestPayload>,
+) -> Result<(StatusCode, Json<pacs_db::ExamRequest>), ApiError> {
+    require_exam_request_editor(&identity)?;
+    let created = pacs_db::create_exam_request(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        req.as_input(),
+    )
+    .await
+    .map_err(ApiError::db)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::ExamRequestCreated,
+        serde_json::json!({"request_id":created.id,"patient_id":created.patient_id}),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+#[derive(Deserialize)]
+struct ExistingStudyExamRequestPayload {
+    modality: String,
+    body_part: String,
+    request_type: String,
+    clinical_indication: String,
+    scheduled_at: Option<DateTime<Utc>>,
+}
+
+async fn create_exam_request_for_study(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(study_uid): Path<String>,
+    Json(req): Json<ExistingStudyExamRequestPayload>,
+) -> Result<(StatusCode, Json<pacs_db::ExamRequest>), ApiError> {
+    require_exam_request_editor(&identity)?;
+    pacs_core::Uid::parse(&study_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Study UID 无效"))?;
+    let created = pacs_db::create_exam_request_for_study(
+        &state.pool,
+        identity.institution_id,
+        identity.user_id,
+        &study_uid,
+        pacs_db::ExistingStudyExamRequestInput {
+            modality: &req.modality,
+            body_part: &req.body_part,
+            request_type: &req.request_type,
+            clinical_indication: &req.clinical_indication,
+            scheduled_at: req.scheduled_at,
+        },
+    )
+    .await
+    .map_err(ApiError::db)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::ExamRequestCreated,
+        serde_json::json!({"request_id":created.id,"patient_id":created.patient_id,"study_uid":study_uid,"source":"existing_study"}),
+    )
+    .await;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::ExamRequestBound,
+        serde_json::json!({"request_id":created.id,"study_uid":study_uid,"source":"created_for_existing_study"}),
+    )
+    .await;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+#[derive(Deserialize)]
+struct UpdateExamRequestPayload {
+    revision: i32,
+    #[serde(flatten)]
+    request: ExamRequestPayload,
+}
+
+async fn update_exam_request(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(request_id): Path<Uuid>,
+    Json(req): Json<UpdateExamRequestPayload>,
+) -> Result<Json<pacs_db::ExamRequest>, ApiError> {
+    require_exam_request_editor(&identity)?;
+    let updated = pacs_db::update_exam_request(
+        &state.pool,
+        identity.institution_id,
+        request_id,
+        req.revision,
+        req.request.as_input(),
+    )
+    .await
+    .map_err(ApiError::db)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::ExamRequestUpdated,
+        serde_json::json!({"request_id":request_id}),
+    )
+    .await;
+    Ok(Json(updated))
+}
+
+#[derive(Deserialize)]
+struct BindExamRequestPayload {
+    study_uid: String,
+    revision: i32,
+}
+
+async fn bind_exam_request(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(request_id): Path<Uuid>,
+    Json(req): Json<BindExamRequestPayload>,
+) -> Result<Json<pacs_db::ExamRequest>, ApiError> {
+    require_exam_request_editor(&identity)?;
+    pacs_core::Uid::parse(&req.study_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Study UID 无效"))?;
+    let bound = pacs_db::bind_exam_request(
+        &state.pool,
+        identity.institution_id,
+        request_id,
+        &req.study_uid,
+        req.revision,
+    )
+    .await
+    .map_err(ApiError::db)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::ExamRequestBound,
+        serde_json::json!({"request_id":request_id,"study_uid":req.study_uid}),
+    )
+    .await;
+    Ok(Json(bound))
+}
+
+async fn exam_request_for_study(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Path(study_uid): Path<String>,
+) -> Result<Json<Option<pacs_db::ExamRequest>>, ApiError> {
+    require_exam_request_reader(&identity)?;
+    pacs_core::Uid::parse(&study_uid)
+        .map_err(|_| ApiError::bad("invalid_uid", "Study UID 无效"))?;
+    if identity.role == Role::Radiologist
+        && !pacs_db::can_access_study(
+            &state.pool,
+            identity.institution_id,
+            identity.user_id,
+            false,
+            &study_uid,
+        )
+        .await
+        .map_err(ApiError::db)?
+    {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(
+        pacs_db::exam_request_for_study(&state.pool, identity.institution_id, &study_uid)
+            .await
+            .map_err(ApiError::db)?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct StudyCandidatesQuery {
+    query: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn exam_request_study_candidates(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<StudyCandidatesQuery>,
+) -> Result<Json<Vec<pacs_db::ExamRequestStudyCandidate>>, ApiError> {
+    require_exam_request_editor(&identity)?;
+    Ok(Json(
+        pacs_db::list_exam_request_study_candidates(
+            &state.pool,
+            identity.institution_id,
+            q.query.as_deref().unwrap_or(""),
+            q.limit.unwrap_or(50),
+        )
+        .await
+        .map_err(ApiError::db)?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct WorkloadQuery {
+    date_from: NaiveDate,
+    date_to: NaiveDate,
+}
+
+async fn workload(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Query(q): Query<WorkloadQuery>,
+) -> Result<Json<Vec<pacs_db::WorkloadRow>>, ApiError> {
+    Ok(Json(
+        pacs_db::workload_report(&state.pool, identity.institution_id, q.date_from, q.date_to)
+            .await
+            .map_err(ApiError::db)?,
+    ))
 }
 
 #[derive(Deserialize)]

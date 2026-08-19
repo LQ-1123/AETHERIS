@@ -151,6 +151,7 @@ pub struct QueueStudyRow {
     pub description: Option<String>,
     pub body_parts: Vec<String>,
     pub report_status: String,
+    pub has_exam_request: bool,
     pub institution_name: Option<String>,
     /// 管理员为检查的全部序列，普通用户为其可见序列。
     pub series_count: i32,
@@ -207,6 +208,7 @@ pub async fn list_queue_studies(
     query.push(
         r#" THEN 'writing'
                        ELSE 'locked' END AS report_status,
+                  EXISTS(SELECT 1 FROM exam_requests er WHERE er.study_fk=st.id) AS has_exam_request,
                   st.attributes->'00080080'->'Value'->>0 AS institution_name,
                   COUNT(DISTINCT se.id)::INTEGER AS series_count
            FROM studies st

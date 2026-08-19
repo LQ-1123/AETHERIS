@@ -13,6 +13,8 @@ export interface QueuePageOptions {
   recommendSeries: (series: RemoteSeriesSummary[]) => RemoteSeriesSummary | null;
   canEditTags: () => boolean;
   editStudyTags: (row: QueueStudyRow) => Promise<void>;
+  canCreateExamRequestForStudy: () => boolean;
+  createExamRequestForStudy: (row: QueueStudyRow) => void;
   canReturnToViewer: () => boolean;
 }
 
@@ -74,6 +76,8 @@ export class QueuePage {
   private readonly recommendSeries: QueuePageOptions['recommendSeries'];
   private readonly canEditTags: QueuePageOptions['canEditTags'];
   private readonly editStudyTags: QueuePageOptions['editStudyTags'];
+  private readonly canCreateExamRequestForStudy: QueuePageOptions['canCreateExamRequestForStudy'];
+  private readonly createExamRequestForStudy: QueuePageOptions['createExamRequestForStudy'];
   private readonly canReturnToViewer: QueuePageOptions['canReturnToViewer'];
   private page = 0;
   private hasNext = false;
@@ -89,6 +93,8 @@ export class QueuePage {
     this.recommendSeries = options.recommendSeries;
     this.canEditTags = options.canEditTags;
     this.editStudyTags = options.editStudyTags;
+    this.canCreateExamRequestForStudy = options.canCreateExamRequestForStudy;
+    this.createExamRequestForStudy = options.createExamRequestForStudy;
     this.canReturnToViewer = options.canReturnToViewer;
     this.form.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -255,6 +261,12 @@ export class QueuePage {
     const description = document.createElement('small');
     description.textContent = text(row.description, '检查描述未记录');
     study.append(bodyParts, description);
+    if (row.has_exam_request) {
+      const requestBadge = document.createElement('span');
+      requestBadge.className = 'queue-exam-request-badge';
+      requestBadge.textContent = '有申请单';
+      study.append(requestBadge);
+    }
 
     const status = document.createElement('td');
     const statusBadge = document.createElement('span');
@@ -283,6 +295,17 @@ export class QueuePage {
         void this.openRow(row);
       });
       actions.append(review);
+    }
+    if (this.canCreateExamRequestForStudy() && !row.has_exam_request) {
+      const request = document.createElement('button');
+      request.type = 'button';
+      request.className = 'queue-edit-button primary';
+      request.textContent = '开申请单';
+      request.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.createExamRequestForStudy(row);
+      });
+      actions.append(request);
     }
     if (this.canEditTags()) {
       const edit = document.createElement('button');

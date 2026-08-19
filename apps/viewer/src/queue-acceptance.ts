@@ -43,6 +43,7 @@ function fixtureRows(): QueueFixture[] {
       description: `${BODY_PARTS[index % BODY_PARTS.length]} 常规检查`,
       body_parts: [BODY_PARTS[index % BODY_PARTS.length]],
       report_status: STATUSES[index % STATUSES.length],
+      has_exam_request: index % 3 === 0,
       institution_name: INSTITUTIONS[index % INSTITUTIONS.length],
       series_count: 2 + (index % 3),
       authorized: index !== 55,

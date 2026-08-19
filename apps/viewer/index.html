@@ -86,6 +86,9 @@
         <button id="queue-btn" class="icon-button" type="button" title="工作队列" aria-label="打开工作队列">
           <i data-lucide="clipboard-list"></i>
         </button>
+        <button id="exam-request-btn" class="icon-button" type="button" title="检查申请单" aria-label="打开检查申请单" hidden>
+          <i data-lucide="list-checks"></i>
+        </button>
         <button id="open-btn" class="command-button" type="button" title="打开本地 DICOM 文件，仅用于阅片且不会上传服务器">
           <i data-lucide="folder-open"></i>
           <span>本地打开</span>
@@ -710,6 +713,55 @@
         </footer>
       </section>
 
+      <section id="exam-request-page" hidden aria-label="检查申请单">
+        <header class="queue-nav">
+          <div class="queue-nav-left">
+            <button id="exam-request-back" class="icon-button" type="button" title="返回阅片" aria-label="返回阅片">
+              <i data-lucide="arrow-left"></i>
+            </button>
+            <div>
+              <strong>检查申请单</strong>
+              <span id="exam-request-count">0 张申请单</span>
+            </div>
+          </div>
+          <div class="exam-request-header-actions">
+            <button id="exam-request-new" class="command-button" type="button">新建申请单</button>
+            <button id="exam-request-refresh" class="icon-button" type="button" title="刷新" aria-label="刷新申请单">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+        </header>
+        <form id="exam-request-filters" class="exam-request-filters">
+          <label>
+            <span>状态</span>
+            <select id="exam-request-status-filter">
+              <option value="">全部</option>
+              <option value="pending">待执行</option>
+              <option value="executed">已执行</option>
+              <option value="completed">已完成</option>
+            </select>
+          </label>
+          <button class="command-button" type="submit">查询</button>
+        </form>
+        <div class="exam-request-table-wrap">
+          <table class="queue-table exam-request-table">
+            <thead>
+              <tr>
+                <th>患者</th>
+                <th>检查请求</th>
+                <th>临床指征</th>
+                <th>预约 / 申请</th>
+                <th>状态</th>
+                <th>关联检查</th>
+                <th class="queue-actions-heading">操作</th>
+              </tr>
+            </thead>
+            <tbody id="exam-request-body"></tbody>
+          </table>
+          <div id="exam-request-page-status" class="worklist-status" aria-live="polite"></div>
+        </div>
+      </section>
+
       <footer id="series-navigator">
         <button id="cine-toggle" class="icon-button" data-requires-series type="button" title="播放 Cine" aria-label="播放或暂停 Cine" aria-pressed="false">
           <i id="cine-play-icon" data-lucide="play"></i>
@@ -1022,8 +1074,46 @@
         <button data-admin-tab="password-resets" type="button">密码重置审核</button>
         <button data-admin-tab="sources" type="button">来源归属</button>
         <button data-admin-tab="grants" type="button">用户授权</button>
+        <button data-admin-tab="workload" type="button">工作量</button>
       </nav>
       <section id="admin-console-body" class="admin-console-body"></section>
+    </dialog>
+
+    <dialog id="exam-request-editor-dialog" class="operational-dialog exam-request-editor-dialog" aria-labelledby="exam-request-editor-title">
+      <header class="dialog-heading">
+        <div>
+          <h2 id="exam-request-editor-title">新建申请单</h2>
+          <span id="exam-request-editor-subtitle">患者信息与检查请求</span>
+        </div>
+        <button id="exam-request-editor-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <form id="exam-request-editor-form" class="exam-request-editor-form">
+        <p id="exam-request-existing-study-context" class="exam-request-existing-study-context" hidden></p>
+        <label><span>Patient ID *</span><input id="exam-request-patient-id" maxlength="64" required /></label>
+        <label><span>患者姓名 *</span><input id="exam-request-patient-name" maxlength="256" required /></label>
+        <label><span>出生日期</span><input id="exam-request-birth-date" type="date" /></label>
+        <label><span>性别</span><select id="exam-request-sex"><option value="">未提供</option><option value="M">男</option><option value="F">女</option><option value="O">其他</option></select></label>
+        <label><span>模态 *</span><select id="exam-request-modality" required><option value="CT">CT</option><option value="MR">MR</option><option value="CR">CR</option><option value="DX">DX</option><option value="US">US</option><option value="XA">XA</option><option value="MG">MG</option></select></label>
+        <label><span>检查部位 *</span><input id="exam-request-body-part" maxlength="128" placeholder="如：胸部" required /></label>
+        <label><span>检查类型 *</span><select id="exam-request-type" required><option value="平扫">平扫</option><option value="增强">增强</option><option value="平扫+增强">平扫+增强</option><option value="其他">其他</option></select></label>
+        <label><span>预约时间</span><input id="exam-request-scheduled-at" type="datetime-local" /></label>
+        <label class="exam-request-indication-field"><span>临床指征 / 主诉 *</span><textarea id="exam-request-indication" rows="4" maxlength="4096" required></textarea></label>
+        <p id="exam-request-editor-error" class="dialog-error" role="alert" hidden></p>
+        <footer><button id="exam-request-editor-cancel" type="button">取消</button><button id="exam-request-editor-submit" class="command-button" type="submit">保存申请单</button></footer>
+      </form>
+    </dialog>
+
+    <dialog id="exam-request-bind-dialog" class="operational-dialog exam-request-bind-dialog" aria-labelledby="exam-request-bind-title">
+      <header class="dialog-heading">
+        <div><h2 id="exam-request-bind-title">绑定已入库检查</h2><span id="exam-request-bind-subtitle"></span></div>
+        <button id="exam-request-bind-close" class="icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+      </header>
+      <form id="exam-request-bind-search" class="exam-request-bind-search">
+        <input id="exam-request-candidate-query" type="search" placeholder="Patient ID / 姓名 / Study UID" />
+        <button class="command-button" type="submit">搜索检查</button>
+      </form>
+      <div id="exam-request-candidates" class="exam-request-candidates"></div>
+      <p id="exam-request-bind-error" class="dialog-error" role="alert" hidden></p>
     </dialog>
 
     <div id="report-window-root" hidden>
@@ -1033,6 +1123,7 @@
         <button id="rw-image" class="icon-button" type="button" title="切回影像" aria-label="切回影像"><i data-lucide="image"></i></button>
       </header>
       <div id="rw-patient-strip" class="rw-patient-strip"></div>
+      <div id="rw-clinical-context" class="rw-clinical-context" hidden></div>
       <div id="rw-workitem" class="rw-workitem" hidden>
         <span id="rw-workitem-text"></span>
         <button id="rw-create" class="command-button" type="button" hidden>新建报告</button>

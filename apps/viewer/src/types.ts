@@ -653,6 +653,7 @@ export interface QueueStudyRow {
   description: string | null;
   body_parts: string[];
   report_status: 'pending' | 'writing' | 'locked' | 'submitted' | 'under_review' | 'signed';
+  has_exam_request: boolean;
   institution_name: string | null;
   series_count: number;
 }
@@ -888,6 +889,79 @@ export interface ClinicalWorkItem {
   modality: string | null;
   series_description: string | null;
   study_date: string | null;
+}
+
+export type ExamRequestStatus = 'pending' | 'executed' | 'completed';
+
+export interface ExamRequest {
+  id: string;
+  patient_id: string;
+  patient_name: string;
+  patient_birth_date: string | null;
+  patient_sex: string | null;
+  modality: string;
+  body_part: string;
+  request_type: string;
+  clinical_indication: string;
+  requested_by_id: number;
+  requested_by_name: string;
+  requested_at: string;
+  scheduled_at: string | null;
+  status: ExamRequestStatus;
+  study_uid: string | null;
+  study_date: string | null;
+  study_description: string | null;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExamRequestInput {
+  patientId: string;
+  patientName: string;
+  patientBirthDate: string | null;
+  patientSex: string | null;
+  modality: string;
+  bodyPart: string;
+  requestType: string;
+  clinicalIndication: string;
+  scheduledAt: string | null;
+}
+
+/** 为已入库检查开具申请单时可编辑的字段。
+ *
+ * 患者快照和目标检查由服务端根据 Study UID 读取，不能由客户端覆盖。
+ */
+export interface ExistingStudyExamRequestInput {
+  modality: string;
+  bodyPart: string;
+  requestType: string;
+  clinicalIndication: string;
+  scheduledAt: string | null;
+}
+
+export interface ExamRequestStudyCandidate {
+  study_uid: string;
+  patient_id: string;
+  patient_name: string | null;
+  study_date: string | null;
+  modalities: string[];
+  description: string | null;
+}
+
+export interface WorkloadRow {
+  user_id: number;
+  username: string;
+  display_name: string | null;
+  role: 'radiologist' | 'technician';
+  draft_reports: number;
+  submitted_reports: number;
+  under_review_reports: number;
+  signed_status_reports: number;
+  signed_reports: number;
+  reviews_completed: number;
+  reviewer_modifications: number;
+  exam_requests_created: number;
 }
 
 // ---- 管理员控制台（A1）----

@@ -35,6 +35,9 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
     let outsider: i64 = sqlx::query_scalar(
         "INSERT INTO users(institution_id,username,password_hash,role) VALUES(1,$1,'x','radiologist') RETURNING id",
     ).bind(format!("outsider-{suffix}")).fetch_one(&pool).await.unwrap();
+    let technician: i64 = sqlx::query_scalar(
+        "INSERT INTO users(institution_id,username,password_hash,role) VALUES(1,$1,'x','technician') RETURNING id",
+    ).bind(format!("technician-{suffix}")).fetch_one(&pool).await.unwrap();
 
     let study = unique_uid();
     let series = unique_uid();
@@ -125,6 +128,28 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
     )
     .await
     .unwrap();
+    let request = pacs_db::create_exam_request(
+        &pool,
+        1,
+        technician,
+        pacs_db::ExamRequestInput {
+            patient_id: &format!("CLINICAL-{suffix}"),
+            patient_name: "临床测试患者",
+            patient_birth_date: None,
+            patient_sex: Some("M"),
+            modality: "CT",
+            body_part: "胸部",
+            request_type: "平扫",
+            clinical_indication: "咳嗽两周，排除肺部感染",
+            scheduled_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let request = pacs_db::bind_exam_request(&pool, 1, request.id, &study, request.revision)
+        .await
+        .unwrap();
+    assert_eq!(request.status, "executed");
     let report = pacs_db::update_report_draft(
         &pool,
         1,
@@ -140,6 +165,14 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
     )
     .await
     .unwrap();
+    let request_after_draft = pacs_db::exam_request_for_study(&pool, 1, &study)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        request_after_draft.status, "executed",
+        "仅保存草稿不得提前完成申请单"
+    );
     assert!(
         pacs_db::sign_report(&pool, 1, report.id, doctor, report.revision)
             .await
@@ -166,6 +199,33 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
     )
     .await
     .unwrap();
+    let request = pacs_db::exam_request_for_study(&pool, 1, &study)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(request.status, "completed", "审核签发应自动闭环申请单");
+    assert!(
+        pacs_db::update_exam_request(
+            &pool,
+            1,
+            request.id,
+            request.revision,
+            pacs_db::ExamRequestInput {
+                patient_id: &request.patient_id,
+                patient_name: &request.patient_name,
+                patient_birth_date: request.patient_birth_date,
+                patient_sex: request.patient_sex.as_deref(),
+                modality: &request.modality,
+                body_part: &request.body_part,
+                request_type: &request.request_type,
+                clinical_indication: "完成后不得编辑",
+                scheduled_at: request.scheduled_at,
+            },
+        )
+        .await
+        .is_err(),
+        "已完成申请单不得编辑"
+    );
     let versions = pacs_db::list_report_versions(&pool, 1, report.id, doctor, false)
         .await
         .unwrap();

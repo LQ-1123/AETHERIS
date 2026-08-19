@@ -189,11 +189,66 @@ API Key 只在创建时完整返回一次，应立即存入密钥管理系统。
 
 设备过滤 `status` 应使用服务返回的状态值（主要为 `pending`、`active`、`disabled`）。手工归属会影响该 Series 此后的权限判断，操作前应核实来源。
 
-## 6. 医生工作列表与报告
+### 5.3 工作量报表
 
-Base URL 为 `/api/v1`。读取需要 `ViewImages`，领取、释放、写报告及签发流程要求 `radiologist`。管理员虽然有通用权限，但报告 handler 的临床签发身份仍限定为医师。
+| 方法与路径 | 查询 | 说明 |
+| --- | --- | --- |
+| `GET /workload` | `date_from=YYYY-MM-DD`, `date_to=YYYY-MM-DD` | 按机构本地时区聚合医生、审核人和技师工作量 |
 
-### 6.1 待诊工作列表
+仅管理员可调用。响应按用户返回草稿、待审核、审核中、已签发状态报告数，签发版本数、完成审核数、被审核人修改次数及申请单创建数。日期范围包含起止两天；起始日期晚于结束日期返回 `400`。
+
+## 6. 检查申请、医生工作列表与报告
+
+Base URL 为 `/api/v1`。申请单由 `technician` 或 `admin` 创建、编辑和绑定；`radiologist` 只读，且按 Study 查询时仍受设备授权限制。领取、释放和写报告要求 `radiologist`；报告必须由作者提交，再由具备 `ReviewReport` 权限且不是作者本人的审核人签发。
+
+### 6.1 检查申请单
+
+| 方法与路径 | 请求/查询 | 说明 |
+| --- | --- | --- |
+| `GET /exam-requests` | `status`, `limit`, `offset` 可选 | 列出机构内申请单，可按 `pending`、`executed`、`completed` 筛选 |
+| `POST /exam-requests` | 患者信息、检查请求、临床指征 | 创建待执行申请单 |
+| `PUT /exam-requests/{request_id}` | 完整申请内容与 `revision` | 仅可编辑待执行申请单 |
+| `GET /exam-requests/study-candidates` | `query`, `limit` 可选 | 搜索未绑定、非隔离区且已有实例的 Study |
+| `POST /exam-requests/{request_id}/bind` | `study_uid`, `revision` | 手动绑定已入库检查并置为 `executed` |
+| `GET /exam-requests/study/{study_uid}` | — | 读取指定可访问检查的申请信息，无申请单时返回 `null` |
+| `POST /exam-requests/study/{study_uid}` | `modality`, `body_part`, `request_type`, `clinical_indication`, `scheduled_at` 可选 | 直接为已有检查开具并立即关联申请单；患者快照由服务端读取，成功状态为 `executed`（已有签发报告时为 `completed`） |
+
+创建示例：
+
+```json
+{
+  "patient_id": "P-20260819-016",
+  "patient_name": "林海",
+  "patient_birth_date": "1977-05-12",
+  "patient_sex": "M",
+  "modality": "MR",
+  "body_part": "上腹部",
+  "request_type": "平扫+增强",
+  "clinical_indication": "上腹部隐痛两月，肝功能指标异常，进一步评估肝脏占位。",
+  "scheduled_at": "2026-08-20T02:30:00Z"
+}
+```
+
+绑定示例：
+
+```json
+{"study_uid":"1.2.840.113619.2.55.3.123","revision":1}
+```
+
+已有检查直接开具示例（请求体不含患者字段，患者和 Study 归属由服务端校验）：
+
+```json
+{
+  "modality": "CT",
+  "body_part": "胸部",
+  "request_type": "增强",
+  "clinical_indication": "胸痛，排除肺栓塞"
+}
+```
+
+同一 Study 只能绑定一张申请单。报告审核签发后，绑定的 `executed` 申请单会在同一数据库事务内自动变为 `completed`。
+
+### 6.2 待诊工作列表
 
 | 方法与路径 | 请求/查询 | 说明 |
 | --- | --- | --- |
@@ -213,14 +268,18 @@ Base URL 为 `/api/v1`。读取需要 `ViewImages`，领取、释放、写报告
 
 领取是排他的。两位医生提交相同旧 `revision` 时只有一位成功，另一位收到冲突响应。建议医生端进入病人后先领取，并在离开未完成任务时释放。
 
-### 6.2 报告
+### 6.3 报告
 
 | 方法与路径 | 请求/查询 | 说明 |
 | --- | --- | --- |
 | `GET /reports` | 必填 `study_uid` | 查询指定 Study 的报告 |
 | `POST /reports` | `study_uid`, `covered_series_uids` | 为 Study 创建报告 |
 | `PUT /reports/{report_id}/draft` | `revision`, `findings`, `impression`, `recommendation` | 保存草稿 |
-| `POST /reports/{report_id}/sign` | `revision` | 正式签发 |
+| `POST /reports/{report_id}/submit` | `revision` | 作者提交审核 |
+| `POST /reports/{report_id}/review/start` | `revision` | 非作者审核人领取审核 |
+| `POST /reports/{report_id}/review/approve` | `revision`, `modified`, `content`, `review_comment` | 审核通过并签发；可记录审核人修正 |
+| `GET /reports/{report_id}/review-events` | — | 查询审核事件轨迹 |
+| `POST /reports/{report_id}/sign` | `revision` | 旧客户端兼容端点，固定拒绝作者直签 |
 | `POST /reports/{report_id}/amendments` | `reason` | 对已签发报告发起修订 |
 | `GET /reports/{report_id}/versions` | — | 获取不可变版本历史 |
 
@@ -244,7 +303,7 @@ Base URL 为 `/api/v1`。读取需要 `ViewImages`，领取、释放、写报告
 }
 ```
 
-签发后正文不应直接覆盖；需先以 `{"reason":"补充临床信息后修订"}` 发起 amendment，再保存新版本。第三方系统应保留版本关系，而不是只缓存最新文本。
+标准状态流为 `draft → submitted → under_review → signed`。作者只能保存草稿和提交审核，不能审核自己的报告；审核人可不修改直接签发，也可提交完整的修正后正文并签发。签发后正文不应直接覆盖；需先以 `{"reason":"补充临床信息后修订"}` 发起 amendment，再保存新版本。第三方系统应保留版本关系，而不是只缓存最新文本。
 
 ## 7. Viewer 数据 API
 

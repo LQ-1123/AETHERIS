@@ -2,6 +2,7 @@ import {
   approveReport,
   beginReportAmendment,
   createReport,
+  examRequestForStudy,
   getReportContext,
   listenReportContext,
   listReportTemplates,
@@ -15,7 +16,7 @@ import {
   type ReportWindowContext,
 } from './api';
 import { htmlToText, plainToHtml, sanitizeReportHtml } from './rich-text';
-import type { DiagnosticReport, ReportReviewEvent, ReportTemplate, ReportVersion } from './types';
+import type { DiagnosticReport, ExamRequest, ReportReviewEvent, ReportTemplate, ReportVersion } from './types';
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -39,6 +40,7 @@ export class ReportWindow {
   private versions: ReportVersion[] = [];
   private reviewEvents: ReportReviewEvent[] = [];
   private templates: ReportTemplate[] = [];
+  private examRequest: ExamRequest | null = null;
   private busy = false;
   private lastEditor: 'findings' | 'impression' | null = null;
   private reviewEditing = false;
@@ -128,11 +130,13 @@ export class ReportWindow {
     this.busy = true;
     try {
       const { studyUid, modality } = this.context;
-      const [reports, templates] = await Promise.all([
+      const [reports, templates, examRequest] = await Promise.all([
         listReports(studyUid),
         listReportTemplates(modality ?? undefined),
+        examRequestForStudy(studyUid),
       ]);
       this.templates = templates;
+      this.examRequest = examRequest;
       this.report = reports[0] ?? null;
       this.versions = [];
       this.reviewEvents = [];
@@ -157,6 +161,7 @@ export class ReportWindow {
   }
 
   private render(): void {
+    this.renderClinicalContext();
     this.renderStatus();
     const report = this.report;
     if (!report) {
@@ -165,6 +170,18 @@ export class ReportWindow {
     }
     this.renderDocument(report);
     this.renderSignature(report);
+  }
+
+  private renderClinicalContext(): void {
+    const node = el('rw-clinical-context');
+    const request = this.examRequest;
+    node.hidden = !request;
+    node.replaceChildren();
+    if (!request) return;
+    const heading = document.createElement('strong'); heading.textContent = '申请信息';
+    const indication = document.createElement('span'); indication.textContent = request.clinical_indication;
+    const meta = document.createElement('small'); meta.textContent = `${request.request_type} · ${request.modality} · ${request.body_part} · 申请人 ${request.requested_by_name}`;
+    node.append(heading, indication, meta);
   }
 
   private renderStatus(): void {

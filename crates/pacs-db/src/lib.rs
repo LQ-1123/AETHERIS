@@ -14,6 +14,7 @@
 
 mod annotations;
 mod clinical;
+mod exam_requests;
 pub mod find;
 pub mod ingest;
 mod jobs;
@@ -155,4 +156,10 @@ pub use clinical::{
     release_work_item, replace_user_device_grants, resolve_series_source, set_device_status,
     sign_report, start_report_review, study_work_items, submit_report, update_report_draft,
     user_device_grants, work_item_for_series,
+};
+pub use exam_requests::{
+    ExamRequest, ExamRequestInput, ExamRequestStudyCandidate, ExistingStudyExamRequestInput,
+    WorkloadRow, bind_exam_request, create_exam_request, create_exam_request_for_study,
+    exam_request_for_study, list_exam_request_study_candidates, list_exam_requests,
+    update_exam_request, workload_report,
 };

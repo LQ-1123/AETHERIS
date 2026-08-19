@@ -414,7 +414,7 @@ async fn openapi_document() -> Json<serde_json::Value> {
                 "put": {"summary": "Update a report draft with optimistic revision", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Updated draft"}, "409": {"description": "Stale revision"}}}
             },
             "/api/v1/reports/{report_id}/sign": {
-                "post": {"summary": "Sign an immutable report version", "security": [{"userAccessToken": []}], "responses": {"204": {"description": "Signed"}, "422": {"description": "Required clinical content missing"}}}
+                "post": {"summary": "Deprecated direct-sign endpoint; always rejects and requires review", "deprecated": true, "security": [{"userAccessToken": []}], "responses": {"409": {"description": "Report must be submitted for independent review"}}}
             },
             "/api/v1/router/destinations": {
                 "get": {"summary": "List DICOM route destinations", "security": [{"serviceApiKey": []}, {"userAccessToken": []}], "responses": {"200": {"description": "Destination list and connection state"}}},
@@ -465,8 +465,51 @@ async fn openapi_document() -> Json<serde_json::Value> {
     document["paths"]
         .as_object_mut()
         .expect("OpenAPI paths must be an object")
+        .extend(clinical_openapi_paths());
+    document["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths must be an object")
         .extend(lifecycle_openapi_paths());
     Json(document)
+}
+
+fn clinical_openapi_paths() -> serde_json::Map<String, serde_json::Value> {
+    let serde_json::Value::Object(paths) = serde_json::json!({
+        "/api/v1/exam-requests": {
+            "get": {"summary": "List institution exam requests", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Exam request list"}}},
+            "post": {"summary": "Create a pending exam request", "security": [{"userAccessToken": []}], "responses": {"201": {"description": "Exam request created"}}}
+        },
+        "/api/v1/exam-requests/{request_id}": {
+            "put": {"summary": "Update a pending exam request with optimistic revision", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Exam request updated"}, "409": {"description": "Already executed or stale revision"}}}
+        },
+        "/api/v1/exam-requests/{request_id}/bind": {
+            "post": {"summary": "Bind a pending request to one stored Study", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Exam request marked executed"}, "409": {"description": "Study already bound or stale revision"}}}
+        },
+        "/api/v1/exam-requests/study-candidates": {
+            "get": {"summary": "Search stored Studies eligible for manual binding", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Eligible Study list"}}}
+        },
+        "/api/v1/exam-requests/study/{study_uid}": {
+            "get": {"summary": "Get the exam request bound to an accessible Study", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Exam request or null"}, "404": {"description": "Study not accessible"}}}
+        },
+        "/api/v1/workload": {
+            "get": {"summary": "Aggregate institution workload by user and local date range", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Workload rows"}}}
+        },
+        "/api/v1/reports/{report_id}/submit": {
+            "post": {"summary": "Submit an authored draft for independent review", "security": [{"userAccessToken": []}], "responses": {"204": {"description": "Submitted"}, "409": {"description": "Stale revision or invalid state"}}}
+        },
+        "/api/v1/reports/{report_id}/review/start": {
+            "post": {"summary": "Claim a submitted report for review", "security": [{"userAccessToken": []}], "responses": {"204": {"description": "Review started"}, "409": {"description": "Already claimed or stale revision"}}}
+        },
+        "/api/v1/reports/{report_id}/review/approve": {
+            "post": {"summary": "Approve and issue a report, optionally with reviewer corrections", "security": [{"userAccessToken": []}], "responses": {"204": {"description": "Approved and issued"}, "400": {"description": "Modified content missing"}}}
+        },
+        "/api/v1/reports/{report_id}/review-events": {
+            "get": {"summary": "List the report review audit trail", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Review event list"}}}
+        }
+    }) else {
+        unreachable!()
+    };
+    paths
 }
 
 fn lifecycle_openapi_paths() -> serde_json::Map<String, serde_json::Value> {
@@ -805,5 +848,24 @@ mod tests {
         assert!(limiter.check("key-a").is_ok());
         assert!(limiter.check("key-a").is_err());
         assert!(limiter.check("key-b").is_ok());
+    }
+
+    #[tokio::test]
+    async fn openapi_includes_exam_request_and_review_workflows() {
+        let Json(document) = openapi_document().await;
+        let paths = document["paths"].as_object().expect("OpenAPI paths");
+        for path in [
+            "/api/v1/exam-requests",
+            "/api/v1/exam-requests/{request_id}/bind",
+            "/api/v1/workload",
+            "/api/v1/reports/{report_id}/submit",
+            "/api/v1/reports/{report_id}/review/approve",
+        ] {
+            assert!(paths.contains_key(path), "missing OpenAPI path {path}");
+        }
+        assert_eq!(
+            document["paths"]["/api/v1/reports/{report_id}/sign"]["post"]["deprecated"],
+            true
+        );
     }
 }

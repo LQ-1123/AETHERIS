@@ -131,6 +131,56 @@ pub struct ClinicalWorkItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExamRequest {
+    pub id: String,
+    pub patient_id: String,
+    pub patient_name: String,
+    pub patient_birth_date: Option<String>,
+    pub patient_sex: Option<String>,
+    pub modality: String,
+    pub body_part: String,
+    pub request_type: String,
+    pub clinical_indication: String,
+    pub requested_by_id: i64,
+    pub requested_by_name: String,
+    pub requested_at: String,
+    pub scheduled_at: Option<String>,
+    pub status: String,
+    pub study_uid: Option<String>,
+    pub study_date: Option<String>,
+    pub study_description: Option<String>,
+    pub revision: i32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExamRequestStudyCandidate {
+    pub study_uid: String,
+    pub patient_id: String,
+    pub patient_name: Option<String>,
+    pub study_date: Option<String>,
+    pub modalities: Vec<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkloadRow {
+    pub user_id: i64,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub draft_reports: i64,
+    pub submitted_reports: i64,
+    pub under_review_reports: i64,
+    pub signed_status_reports: i64,
+    pub signed_reports: i64,
+    pub reviews_completed: i64,
+    pub reviewer_modifications: i64,
+    pub exam_requests_created: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DicomDevice {
     pub id: String,
     pub name: String,
@@ -226,6 +276,7 @@ pub struct QueueStudyRow {
     pub description: Option<String>,
     pub body_parts: Vec<String>,
     pub report_status: String,
+    pub has_exam_request: bool,
     pub institution_name: Option<String>,
     pub series_count: i32,
 }
@@ -617,6 +668,176 @@ impl RemoteState {
         if let Some(status) = status {
             url.query_pairs_mut().append_pair("status", status);
         }
+        self.get_json(url).await
+    }
+
+    pub async fn list_exam_requests(
+        &self,
+        status: Option<&str>,
+        limit: u32,
+        offset: u64,
+    ) -> Result<Vec<ExamRequest>, RemoteError> {
+        let mut url = self.session_url("api/v1/exam-requests").await?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs
+                .append_pair("limit", &limit.to_string())
+                .append_pair("offset", &offset.to_string());
+            if let Some(status) = status.filter(|value| !value.is_empty()) {
+                pairs.append_pair("status", status);
+            }
+        }
+        self.get_json(url).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_exam_request(
+        &self,
+        patient_id: &str,
+        patient_name: &str,
+        patient_birth_date: Option<&str>,
+        patient_sex: Option<&str>,
+        modality: &str,
+        body_part: &str,
+        request_type: &str,
+        clinical_indication: &str,
+        scheduled_at: Option<&str>,
+    ) -> Result<ExamRequest, RemoteError> {
+        let url = self.session_url("api/v1/exam-requests").await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "patient_id": patient_id,
+                "patient_name": patient_name,
+                "patient_birth_date": patient_birth_date,
+                "patient_sex": patient_sex,
+                "modality": modality,
+                "body_part": body_part,
+                "request_type": request_type,
+                "clinical_indication": clinical_indication,
+                "scheduled_at": scheduled_at,
+            })),
+        )
+        .await
+    }
+
+    pub async fn create_exam_request_for_study(
+        &self,
+        study_uid: &str,
+        modality: &str,
+        body_part: &str,
+        request_type: &str,
+        clinical_indication: &str,
+        scheduled_at: Option<&str>,
+    ) -> Result<ExamRequest, RemoteError> {
+        validate_uid(study_uid)?;
+        let url = self
+            .session_url(&format!("api/v1/exam-requests/study/{study_uid}"))
+            .await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({
+                "modality": modality,
+                "body_part": body_part,
+                "request_type": request_type,
+                "clinical_indication": clinical_indication,
+                "scheduled_at": scheduled_at,
+            })),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_exam_request(
+        &self,
+        request_id: &str,
+        revision: i32,
+        patient_id: &str,
+        patient_name: &str,
+        patient_birth_date: Option<&str>,
+        patient_sex: Option<&str>,
+        modality: &str,
+        body_part: &str,
+        request_type: &str,
+        clinical_indication: &str,
+        scheduled_at: Option<&str>,
+    ) -> Result<ExamRequest, RemoteError> {
+        let url = self
+            .session_url(&format!("api/v1/exam-requests/{request_id}"))
+            .await?;
+        self.authorized_json(
+            Method::PUT,
+            url,
+            Some(serde_json::json!({
+                "revision": revision,
+                "patient_id": patient_id,
+                "patient_name": patient_name,
+                "patient_birth_date": patient_birth_date,
+                "patient_sex": patient_sex,
+                "modality": modality,
+                "body_part": body_part,
+                "request_type": request_type,
+                "clinical_indication": clinical_indication,
+                "scheduled_at": scheduled_at,
+            })),
+        )
+        .await
+    }
+
+    pub async fn bind_exam_request(
+        &self,
+        request_id: &str,
+        study_uid: &str,
+        revision: i32,
+    ) -> Result<ExamRequest, RemoteError> {
+        validate_uid(study_uid)?;
+        let url = self
+            .session_url(&format!("api/v1/exam-requests/{request_id}/bind"))
+            .await?;
+        self.authorized_json(
+            Method::POST,
+            url,
+            Some(serde_json::json!({"study_uid":study_uid,"revision":revision})),
+        )
+        .await
+    }
+
+    pub async fn exam_request_for_study(
+        &self,
+        study_uid: &str,
+    ) -> Result<Option<ExamRequest>, RemoteError> {
+        validate_uid(study_uid)?;
+        let url = self
+            .session_url(&format!("api/v1/exam-requests/study/{study_uid}"))
+            .await?;
+        self.get_json(url).await
+    }
+
+    pub async fn list_exam_request_study_candidates(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<ExamRequestStudyCandidate>, RemoteError> {
+        let mut url = self
+            .session_url("api/v1/exam-requests/study-candidates")
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("query", query)
+            .append_pair("limit", &limit.to_string());
+        self.get_json(url).await
+    }
+
+    pub async fn workload_report(
+        &self,
+        date_from: &str,
+        date_to: &str,
+    ) -> Result<Vec<WorkloadRow>, RemoteError> {
+        let mut url = self.session_url("api/v1/workload").await?;
+        url.query_pairs_mut()
+            .append_pair("date_from", date_from)
+            .append_pair("date_to", date_to);
         self.get_json(url).await
     }
 

@@ -14,8 +14,9 @@ import {
   resolveSeriesSource,
   setDeviceStatus,
   updateUser,
+  workloadReport,
 } from './api';
-import type { AdminUser, DicomDevice, PasswordResetRequest, SeriesSourceEntry } from './types';
+import type { AdminUser, DicomDevice, PasswordResetRequest, SeriesSourceEntry, WorkloadRow } from './types';
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -23,7 +24,7 @@ function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return found as T;
 }
 
-type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'sources' | 'grants';
+type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'sources' | 'grants' | 'workload';
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   legacy_unattributed: '历史未归属',
@@ -107,7 +108,8 @@ export class AdminConsole {
       else if (this.tab === 'password-resets') this.renderPasswordResetRequests();
       else if (this.tab === 'devices') await this.renderDevices();
       else if (this.tab === 'sources') await this.renderSources();
-      else await this.renderGrants();
+      else if (this.tab === 'grants') await this.renderGrants();
+      else await this.renderWorkload();
     } catch (error) {
       this.showError(errorMessage(error));
     } finally {
@@ -657,6 +659,75 @@ export class AdminConsole {
       this.renderPasswordResetRequests();
     } catch (error) { this.showError(errorMessage(error)); }
   }
+
+  private async renderWorkload(dateFrom?: string, dateTo?: string): Promise<void> {
+    const generation = ++this.renderGeneration;
+    const today = localDate(new Date());
+    const monthStart = `${today.slice(0, 8)}01`;
+    const from = dateFrom ?? monthStart;
+    const to = dateTo ?? today;
+    const fragment = document.createDocumentFragment();
+    const filters = document.createElement('form');
+    filters.className = 'admin-workload-filters';
+    const fromField = dateField('起始日期', from);
+    const toField = dateField('结束日期', to);
+    const query = actionButton('查询', () => void this.renderWorkload(fromField.input.value, toField.input.value));
+    query.type = 'submit';
+    filters.append(fromField.label, toField.label, query);
+    filters.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.renderWorkload(fromField.input.value, toField.input.value);
+    });
+    fragment.append(filters);
+
+    let rows: WorkloadRow[];
+    try {
+      rows = await workloadReport(from, to);
+    } catch (error) {
+      this.showError(errorMessage(error));
+      return;
+    }
+    const actions = document.createElement('div');
+    actions.className = 'admin-workload-summary';
+    const summary = document.createElement('span');
+    summary.textContent = `${from} 至 ${to} · ${rows.length} 名员工`;
+    const exportButton = actionButton('导出 CSV', () => exportWorkloadCsv(rows, from, to));
+    actions.append(summary, exportButton);
+    fragment.append(actions);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'admin-workload-table-wrap';
+    const table = document.createElement('table');
+    table.className = 'admin-workload-table';
+    table.innerHTML = `<thead><tr><th>人员</th><th>角色</th><th>草稿</th><th>待审核</th><th>审核中</th><th>已签发状态</th><th>签发版本</th><th>完成审核</th><th>被审核修改</th><th>申请单</th></tr></thead>`;
+    const body = document.createElement('tbody');
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      for (const value of [
+        row.display_name || row.username,
+        row.role === 'radiologist' ? '医生' : '技师',
+        row.draft_reports,
+        row.submitted_reports,
+        row.under_review_reports,
+        row.signed_status_reports,
+        row.signed_reports,
+        row.reviews_completed,
+        row.reviewer_modifications,
+        row.exam_requests_created,
+      ]) {
+        const td = document.createElement('td'); td.textContent = String(value); tr.append(td);
+      }
+      body.append(tr);
+    }
+    if (!rows.length) {
+      const empty = document.createElement('tr');
+      const td = document.createElement('td'); td.colSpan = 10; td.className = 'admin-empty'; td.textContent = '当前机构没有医生或技师账号。';
+      empty.append(td); body.append(empty);
+    }
+    table.append(body); wrap.append(table); fragment.append(wrap);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
+  }
 }
 
 function accountInput(labelText: string, placeholder: string, type: string) {
@@ -698,4 +769,27 @@ function errorMessage(error: unknown): string {
 function formatDateTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function dateField(labelText: string, value: string) {
+  const label = document.createElement('label'); label.append(document.createTextNode(labelText));
+  const input = document.createElement('input'); input.type = 'date'; input.value = value; input.required = true; label.append(input);
+  return { label, input };
+}
+
+function localDate(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function exportWorkloadCsv(rows: WorkloadRow[], from: string, to: string): void {
+  const header = ['姓名', '账号', '角色', '草稿', '待审核', '审核中', '已签发状态', '签发版本', '完成审核', '被审核修改', '申请单'];
+  const lines = [header, ...rows.map((row) => [
+    row.display_name ?? '', row.username, row.role, row.draft_reports, row.submitted_reports,
+    row.under_review_reports, row.signed_status_reports, row.signed_reports,
+    row.reviews_completed, row.reviewer_modifications, row.exam_requests_created,
+  ])].map((columns) => columns.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','));
+  const blob = new Blob([`\uFEFF${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `工作量-${from}-${to}.csv`; link.click();
+  URL.revokeObjectURL(link.href);
 }

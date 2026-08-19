@@ -8,6 +8,10 @@ import type {
   DiagnosticReport,
   DicomDevice,
   DicomRevision,
+  ExamRequest,
+  ExamRequestInput,
+  ExistingStudyExamRequestInput,
+  ExamRequestStudyCandidate,
   PatientSummary,
   PasswordResetRequest,
   QueueStudyRow,
@@ -52,6 +56,7 @@ import type {
   TransformTargetType,
   VoiFunction,
   UserWindowPreset,
+  WorkloadRow,
 } from './types';
 
 type InvokeFn = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -390,6 +395,64 @@ export async function listReportVersions(reportId: string): Promise<ReportVersio
 export async function listWorklist(status?: string): Promise<ClinicalWorkItem[]> {
   const invoke = await getInvoke();
   return invoke<ClinicalWorkItem[]>('list_worklist', { status: status ?? null });
+}
+
+export async function listExamRequests(
+  status: string,
+  limit = 100,
+  offset = 0,
+): Promise<ExamRequest[]> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequest[]>('list_exam_requests', { status: status || null, limit, offset });
+}
+
+export async function createExamRequest(input: ExamRequestInput): Promise<ExamRequest> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequest>('create_exam_request', { ...input });
+}
+
+export async function createExamRequestForStudy(
+  studyUid: string,
+  input: ExistingStudyExamRequestInput,
+): Promise<ExamRequest> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequest>('create_exam_request_for_study', { studyUid, ...input });
+}
+
+export async function updateExamRequest(
+  requestId: string,
+  revision: number,
+  input: ExamRequestInput,
+): Promise<ExamRequest> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequest>('update_exam_request', { requestId, revision, ...input });
+}
+
+export async function bindExamRequest(
+  requestId: string,
+  studyUid: string,
+  revision: number,
+): Promise<ExamRequest> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequest>('bind_exam_request', { requestId, studyUid, revision });
+}
+
+export async function examRequestForStudy(studyUid: string): Promise<ExamRequest | null> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequest | null>('exam_request_for_study', { studyUid });
+}
+
+export async function listExamRequestStudyCandidates(
+  query: string,
+  limit = 50,
+): Promise<ExamRequestStudyCandidate[]> {
+  const invoke = await getInvoke();
+  return invoke<ExamRequestStudyCandidate[]>('list_exam_request_study_candidates', { query, limit });
+}
+
+export async function workloadReport(dateFrom: string, dateTo: string): Promise<WorkloadRow[]> {
+  const invoke = await getInvoke();
+  return invoke<WorkloadRow[]>('workload_report', { dateFrom, dateTo });
 }
 
 export async function workItemForSeries(seriesUid: string): Promise<ClinicalWorkItem> {

@@ -3,10 +3,10 @@
 use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
-    AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress,
-    PasswordResetRequest, PatientSummary, QueueStudyRow, RemoteState, RemoteUser,
-    ReportReviewEvent, ReportTemplate, ReportVersion, SeriesSourceEntry, SeriesSummary,
-    StudySummary, UserWindowPreset,
+    AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress, ExamRequest,
+    ExamRequestStudyCandidate, PasswordResetRequest, PatientSummary, QueueStudyRow, RemoteState,
+    RemoteUser, ReportReviewEvent, ReportTemplate, ReportVersion, SeriesSourceEntry, SeriesSummary,
+    StudySummary, UserWindowPreset, WorkloadRow,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
@@ -584,6 +584,154 @@ pub async fn list_worklist(
 ) -> Result<Vec<ClinicalWorkItem>, String> {
     state
         .list_worklist(status.as_deref())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_exam_requests(
+    status: Option<String>,
+    limit: u32,
+    offset: u64,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ExamRequest>, String> {
+    state
+        .list_exam_requests(status.as_deref(), limit, offset)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn create_exam_request(
+    patient_id: String,
+    patient_name: String,
+    patient_birth_date: Option<String>,
+    patient_sex: Option<String>,
+    modality: String,
+    body_part: String,
+    request_type: String,
+    clinical_indication: String,
+    scheduled_at: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<ExamRequest, String> {
+    state
+        .create_exam_request(
+            &patient_id,
+            &patient_name,
+            patient_birth_date.as_deref(),
+            patient_sex.as_deref(),
+            &modality,
+            &body_part,
+            &request_type,
+            &clinical_indication,
+            scheduled_at.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn create_exam_request_for_study(
+    study_uid: String,
+    modality: String,
+    body_part: String,
+    request_type: String,
+    clinical_indication: String,
+    scheduled_at: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<ExamRequest, String> {
+    state
+        .create_exam_request_for_study(
+            &study_uid,
+            &modality,
+            &body_part,
+            &request_type,
+            &clinical_indication,
+            scheduled_at.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn update_exam_request(
+    request_id: String,
+    revision: i32,
+    patient_id: String,
+    patient_name: String,
+    patient_birth_date: Option<String>,
+    patient_sex: Option<String>,
+    modality: String,
+    body_part: String,
+    request_type: String,
+    clinical_indication: String,
+    scheduled_at: Option<String>,
+    state: State<'_, RemoteState>,
+) -> Result<ExamRequest, String> {
+    state
+        .update_exam_request(
+            &request_id,
+            revision,
+            &patient_id,
+            &patient_name,
+            patient_birth_date.as_deref(),
+            patient_sex.as_deref(),
+            &modality,
+            &body_part,
+            &request_type,
+            &clinical_indication,
+            scheduled_at.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn bind_exam_request(
+    request_id: String,
+    study_uid: String,
+    revision: i32,
+    state: State<'_, RemoteState>,
+) -> Result<ExamRequest, String> {
+    state
+        .bind_exam_request(&request_id, &study_uid, revision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn exam_request_for_study(
+    study_uid: String,
+    state: State<'_, RemoteState>,
+) -> Result<Option<ExamRequest>, String> {
+    state
+        .exam_request_for_study(&study_uid)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_exam_request_study_candidates(
+    query: String,
+    limit: u32,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<ExamRequestStudyCandidate>, String> {
+    state
+        .list_exam_request_study_candidates(&query, limit)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn workload_report(
+    date_from: String,
+    date_to: String,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<WorkloadRow>, String> {
+    state
+        .workload_report(&date_from, &date_to)
         .await
         .map_err(|error| error.to_string())
 }

@@ -1280,7 +1280,10 @@ mod tests {
     fn sparse_slices_keep_their_full_physical_depth() {
         let volume = Volume::build(
             0,
-            vec![source(0.0, [0, 10, 20, 30]), source(5.0, [100, 110, 120, 130])],
+            vec![
+                source(0.0, [0, 10, 20, 30]),
+                source(5.0, [100, 110, 120, 130]),
+            ],
             || false,
             |_, _| {},
         )
@@ -1293,7 +1296,10 @@ mod tests {
             .iter()
             .find(|plane| plane.plane == Plane::Coronal)
             .unwrap();
-        assert_eq!(coronal.rows, 10, "两张 5 mm 间隔的切片应覆盖完整的 10 mm 体厚");
+        assert_eq!(
+            coronal.rows, 10,
+            "两张 5 mm 间隔的切片应覆盖完整的 10 mm 体厚"
+        );
         assert!(
             volume
                 .resampled_slice(Plane::Coronal, 0, coronal)

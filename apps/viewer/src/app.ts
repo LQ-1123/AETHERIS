@@ -103,6 +103,7 @@ import { imageGeometry, Renderer, type CrossReferenceLine } from './renderer';
 import { RequestVersion } from './request-version';
 import { RouterPanel } from './router-panel';
 import { QueuePage } from './queue-page';
+import { ExamRequestPage } from './exam-request-page';
 
 import { AdminConsole } from './admin-console';
 import { volumeCapabilityReason } from './volume-capability';
@@ -494,6 +495,7 @@ export class App {
   private rollbackPreview: TransformPreviewResponse | null = null;
   private routerPanel: RouterPanel;
   private queuePage: QueuePage;
+  private examRequestPage: ExamRequestPage;
 
   private adminConsole: AdminConsole;
   private lifecyclePanel: LifecyclePanel;
@@ -650,7 +652,18 @@ export class App {
       recommendSeries: recommendMprSeries,
       canEditTags: () => this.canEditDicomTags(),
       editStudyTags: (row) => this.editQueueStudyTags(row),
+      canCreateExamRequestForStudy: () => this.canManageExamRequests(),
+      createExamRequestForStudy: (row) => this.examRequestPage.openForStudy(row),
       canReturnToViewer: () => this.panes.some((pane) => pane.state != null),
+    });
+    this.examRequestPage = new ExamRequestPage({
+      canReturnToViewer: () => this.panes.some((pane) => pane.state != null),
+      canCreateForStudy: () => this.canManageExamRequests(),
+      beforeOpen: () => this.queuePage.close(),
+      onStudyRequestCreated: () => this.queuePage.refresh(),
+      onClose: () => {
+        if (this.remoteUser && !this.panes.some((pane) => pane.state != null)) this.queuePage.open();
+      },
     });
     this.initializePanes();
     this.mprRenderers = {
@@ -3941,7 +3954,10 @@ export class App {
     for (const id of ['study-share-close', 'study-share-cancel']) {
       requiredElement<HTMLButtonElement>(id).addEventListener('click', () => this.closeStudyShare());
     }
-    requiredElement<HTMLButtonElement>('queue-btn').addEventListener('click', () => this.queuePage.open());
+    requiredElement<HTMLButtonElement>('queue-btn').addEventListener('click', () => {
+      if (this.examRequestPage.isOpen()) this.examRequestPage.close();
+      this.queuePage.open();
+    });
     requiredElement<HTMLButtonElement>('refresh-worklist').addEventListener('click', () => {
       void this.refreshPatientContext();
     });
@@ -4631,6 +4647,10 @@ export class App {
   }
 
   private canEditDicomTags(): boolean {
+    return this.remoteUser?.role === 'admin' || this.remoteUser?.role === 'technician';
+  }
+
+  private canManageExamRequests(): boolean {
     return this.remoteUser?.role === 'admin' || this.remoteUser?.role === 'technician';
   }
 
@@ -7026,6 +7046,9 @@ export class App {
     this.refreshSyncBadges();
     const hasSeries = this.state != null;
     requiredElement<HTMLButtonElement>('admin-console-btn').hidden = this.remoteUser?.role !== 'admin';
+    const canManageExamRequests = this.canManageExamRequests();
+    requiredElement<HTMLButtonElement>('exam-request-btn').hidden = !canManageExamRequests;
+    if (!canManageExamRequests && this.examRequestPage.isOpen()) this.examRequestPage.close();
     if (this.remoteUser?.role !== 'admin') this.adminConsole.close();
     const workspaceHasSeries = this.panes.some((pane) => pane.state != null);
     const frameCount = this.state?.metadata.frames.length ?? 0;

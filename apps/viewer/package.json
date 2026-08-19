@@ -1,6 +1,6 @@
 {
   "name": "pacs-viewer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,8 @@
     "test:visual:queue": "node scripts/queue-page-visual.mjs",
     "test:visual:report": "node scripts/report-workspace-visual.mjs",
     "test:visual:password-reset": "node scripts/password-reset-acceptance.mjs",
+    "test:visual:exam-requests": "node scripts/exam-request-acceptance.mjs",
+    "test:visual:exam-request-workload": "node scripts/exam-request-workload-checklist.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

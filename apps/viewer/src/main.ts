@@ -161,5 +161,12 @@ window.addEventListener('DOMContentLoaded', () => {
     });
     return;
   }
+  if (import.meta.env.DEV && import.meta.env.VITE_EXAM_REQUEST_ACCEPTANCE === '1') {
+    void import('./exam-request-acceptance').then(({ installExamRequestAcceptanceMock }) => {
+      installExamRequestAcceptanceMock();
+      new App();
+    });
+    return;
+  }
   new App();
 });
