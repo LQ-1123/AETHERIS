@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AETHERIS security boundary</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #101214; }
+    body { display: grid; place-items: center; }
+    svg { display: block; width: min(100vw, 1280px); height: auto; }
+  </style>
+</head>
+<body>
+<svg viewBox="0 0 1280 720" role="img" aria-labelledby="security-boundary-title security-boundary-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="security-boundary-title">AETHERIS permission and security boundary</title>
+  <desc id="security-boundary-desc">Secure architecture showing permitted authenticated paths through TLS, role checks, institution scoping and audit logging, with unregistered device and cross-institution paths blocked before protected data.</desc>
+  <defs>
+    <marker id="security-boundary-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#78939a"/>
+    </marker>
+    <marker id="security-boundary-arrow-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#58b8c7"/>
+    </marker>
+    <style>
+      .bg { fill: #101214; }
+      .zone { fill: #111b20; fill-opacity: .48; stroke: #34383b; stroke-width: 1; stroke-dasharray: 8 8; }
+      .zone-protected { fill: #122328; fill-opacity: .52; stroke: #52717a; stroke-width: 1; stroke-dasharray: 8 8; }
+      .zone-tag { fill: #101214; }
+      .node { fill: #15181a; stroke: #4b5256; stroke-width: 1; }
+      .node-store { fill: #121a1d; stroke: #52717a; stroke-width: 1; }
+      .node-focal { fill: #122328; stroke: #58b8c7; stroke-width: 2; }
+      .tag { fill: none; stroke: #52717a; stroke-width: 1; }
+      .tag-focal { fill: #17343a; stroke: #58b8c7; stroke-width: 1; }
+      .title { fill: #e7e9eb; font: 600 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #9fc3cd; font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .eyebrow { fill: #9fc3cd; font: 600 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
+      .name { fill: #e7e9eb; font: 600 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .sub { fill: #9fc3cd; font: 400 8px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .connector { fill: none; stroke: #78939a; stroke-width: 2; marker-end: url(#security-boundary-arrow); }
+      .connector-accent { fill: none; stroke: #58b8c7; stroke-width: 2; marker-end: url(#security-boundary-arrow-accent); }
+      .forbidden { fill: none; stroke: #78939a; stroke-width: 2; stroke-dasharray: 8 8; }
+      .stop { fill: #101214; stroke: #58b8c7; stroke-width: 2; }
+      .label-mask { fill: #101214; }
+      .edge-label { fill: #9fc3cd; font: 600 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+      .blocked-label { fill: #9fc3cd; font: 600 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+      .legend { fill: #9fc3cd; font: 500 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1280" height="720"/>
+  <text class="eyebrow" x="40" y="28">PERMISSION &amp; SECURITY BOUNDARY</text>
+  <text class="title" x="40" y="60">Identity, institution scope, and protected data</text>
+  <text class="subtitle" x="40" y="84">Every clinical request follows the supported route; device trust and tenant boundaries are enforced by the service</text>
+
+  <rect class="zone" x="40" y="124" width="280" height="480" rx="8"/>
+  <rect class="zone-tag" x="56" y="128" width="112" height="16" rx="4"/>
+  <text class="eyebrow" x="64" y="140">USERS &amp; DEVICES</text>
+
+  <rect class="zone" x="344" y="124" width="552" height="480" rx="8"/>
+  <rect class="zone-tag" x="360" y="128" width="128" height="16" rx="4"/>
+  <text class="eyebrow" x="368" y="140">SERVICE BOUNDARY</text>
+
+  <rect class="zone-protected" x="920" y="124" width="320" height="480" rx="8"/>
+  <rect class="zone-tag" x="936" y="128" width="112" height="16" rx="4"/>
+  <text class="eyebrow" x="944" y="140">PROTECTED DATA</text>
+
+  <!-- Permitted and blocked paths before nodes. -->
+  <line class="connector-accent" x1="288" y1="238" x2="384" y2="238"/>
+  <rect class="label-mask" x="304" y="214" width="56" height="12" rx="4"/>
+  <text class="edge-label" x="332" y="222" text-anchor="middle">TLS / HTTPS</text>
+
+  <path class="connector" d="M288 394 H352 Q360 394 360 386 V246 Q360 238 368 238 H384"/>
+  <rect class="label-mask" x="300" y="370" width="48" height="12" rx="4"/>
+  <text class="edge-label" x="324" y="378" text-anchor="middle">DEVICE</text>
+
+  <line class="connector-accent" x1="600" y1="238" x2="640" y2="238"/>
+  <rect class="label-mask" x="604" y="214" width="32" height="12" rx="4"/>
+  <text class="edge-label" x="620" y="222" text-anchor="middle">TOKEN</text>
+
+  <path class="connector-accent" d="M748 280 V312 Q748 320 740 320 H628 Q620 320 620 328 V372"/>
+  <rect class="label-mask" x="664" y="296" width="64" height="12" rx="4"/>
+  <text class="edge-label" x="696" y="304" text-anchor="middle">ROLE CHECK</text>
+
+  <path class="connector" d="M728 404 H864 Q872 404 872 396 V246 Q872 238 880 238 H952"/>
+  <rect class="label-mask" x="744" y="380" width="72" height="12" rx="4"/>
+  <text class="edge-label" x="780" y="388" text-anchor="middle">SCOPED QUERY</text>
+
+  <line class="connector" x1="728" y1="424" x2="952" y2="424"/>
+  <rect class="label-mask" x="808" y="400" width="64" height="12" rx="4"/>
+  <text class="edge-label" x="840" y="408" text-anchor="middle">SCOPED FILE</text>
+
+  <line class="connector" x1="824" y1="280" x2="824" y2="488"/>
+  <rect class="label-mask" x="840" y="360" width="48" height="12" rx="4"/>
+  <text class="edge-label" x="864" y="368" text-anchor="middle">AUDIT</text>
+
+  <line class="forbidden" x1="72" y1="524" x2="328" y2="524"/>
+  <rect class="label-mask" x="112" y="500" width="152" height="12" rx="4"/>
+  <text class="blocked-label" x="188" y="508" text-anchor="middle">UNREGISTERED SOURCE · BLOCKED</text>
+  <circle class="stop" cx="336" cy="524" r="8"/>
+  <path d="M332 520 L340 528 M340 520 L332 528" stroke="#58b8c7" stroke-width="2"/>
+
+  <path class="forbidden" d="M384 548 H496 Q504 548 504 540 V464"/>
+  <rect class="label-mask" x="384" y="524" width="112" height="12" rx="4"/>
+  <text class="blocked-label" x="440" y="532" text-anchor="middle">CROSS-TENANT · BLOCKED</text>
+  <circle class="stop" cx="504" cy="456" r="8"/>
+  <path d="M500 452 L508 460 M508 452 L500 460" stroke="#58b8c7" stroke-width="2"/>
+
+  <g>
+    <rect class="node" x="72" y="196" width="216" height="84" rx="8"/>
+    <rect class="tag" x="84" y="208" width="48" height="16" rx="4"/>
+    <text class="eyebrow" x="108" y="220" text-anchor="middle">USER</text>
+    <text class="name" x="180" y="244" text-anchor="middle">Authenticated user</text>
+    <text class="sub" x="180" y="264" text-anchor="middle">session · assigned role</text>
+  </g>
+
+  <g>
+    <rect class="node" x="72" y="352" width="216" height="84" rx="8"/>
+    <rect class="tag" x="84" y="364" width="56" height="16" rx="4"/>
+    <text class="eyebrow" x="112" y="376" text-anchor="middle">DEVICE</text>
+    <text class="name" x="180" y="400" text-anchor="middle">Registered modality</text>
+    <text class="sub" x="180" y="420" text-anchor="middle">AE title · source ownership</text>
+  </g>
+
+  <g>
+    <rect class="node" x="384" y="196" width="216" height="84" rx="8"/>
+    <rect class="tag" x="396" y="208" width="40" height="16" rx="4"/>
+    <text class="eyebrow" x="416" y="220" text-anchor="middle">EDGE</text>
+    <text class="name" x="492" y="244" text-anchor="middle">TLS endpoint</text>
+    <text class="sub" x="492" y="264" text-anchor="middle">encrypted API boundary</text>
+  </g>
+
+  <g>
+    <rect class="node-focal" x="640" y="196" width="216" height="84" rx="8"/>
+    <rect class="tag-focal" x="652" y="208" width="48" height="16" rx="4"/>
+    <text class="eyebrow" x="676" y="220" text-anchor="middle">POLICY</text>
+    <text class="name" x="748" y="244" text-anchor="middle">Authentication &amp; RBAC</text>
+    <text class="sub" x="748" y="264" text-anchor="middle">server-side permission gate</text>
+  </g>
+
+  <g>
+    <rect class="node-focal" x="512" y="372" width="216" height="84" rx="8"/>
+    <rect class="tag-focal" x="524" y="384" width="48" height="16" rx="4"/>
+    <text class="eyebrow" x="548" y="396" text-anchor="middle">TENANT</text>
+    <text class="name" x="620" y="420" text-anchor="middle">Institution scope</text>
+    <text class="sub" x="620" y="440" text-anchor="middle">query · workflow · storage</text>
+  </g>
+
+  <g>
+    <rect class="node" x="752" y="488" width="144" height="72" rx="8"/>
+    <text class="name" x="824" y="520" text-anchor="middle">Audit trail</text>
+    <text class="sub" x="824" y="540" text-anchor="middle">actor · action · time</text>
+  </g>
+
+  <g>
+    <rect class="node-store" x="952" y="196" width="256" height="84" rx="8"/>
+    <rect class="tag" x="964" y="208" width="48" height="16" rx="4"/>
+    <text class="eyebrow" x="988" y="220" text-anchor="middle">INDEX</text>
+    <text class="name" x="1080" y="244" text-anchor="middle">PostgreSQL</text>
+    <text class="sub" x="1080" y="264" text-anchor="middle">institution-filtered records</text>
+  </g>
+
+  <g>
+    <rect class="node-store" x="952" y="372" width="256" height="84" rx="8"/>
+    <rect class="tag" x="964" y="384" width="48" height="16" rx="4"/>
+    <text class="eyebrow" x="988" y="396" text-anchor="middle">STORE</text>
+    <text class="name" x="1080" y="420" text-anchor="middle">DICOM object storage</text>
+    <text class="sub" x="1080" y="440" text-anchor="middle">path resolved inside service scope</text>
+  </g>
+
+  <line x1="40" y1="648" x2="1240" y2="648" stroke="#34383b" stroke-width="1"/>
+  <text class="legend" x="40" y="676">SOLID = PERMITTED</text>
+  <line x1="200" y1="672" x2="248" y2="672" stroke="#58b8c7" stroke-width="2" marker-end="url(#security-boundary-arrow-accent)"/>
+  <text class="legend" x="280" y="676">DASHED + STOP = REJECTED BEFORE BOUNDARY</text>
+  <line x1="608" y1="672" x2="656" y2="672" stroke="#78939a" stroke-width="2" stroke-dasharray="8 8"/>
+  <circle class="stop" cx="672" cy="672" r="8"/>
+  <text class="legend" x="704" y="676">AUDIT RECORDS THE AUTHORIZED PATH</text>
+</svg>
+</body>
+</html>

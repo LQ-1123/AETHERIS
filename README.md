@@ -1,690 +1,295 @@
-
-# AETHERIS
-
 <p align="center">
-  <img src="./logo.jpg" width="128" alt="AETHERIS Logo">
+  <img src="./logo.jpg" width="112" alt="AETHERIS logo">
 </p>
 
-<h3 align="center">A Modern, Self-Hosted Medical Imaging Infrastructure</h3>
+<h1 align="center">AETHERIS</h1>
 
 <p align="center">
-  <strong>Built from the ground up with Rust.</strong><br>
-  DICOM · DICOMweb · PACS · 2D/3D Visualization · Local AI · Secure Workflows
+  <strong>Medical imaging, connected from acquisition to reviewed report.</strong><br>
+  Self-hosted PACS · Native desktop viewer · Clinical workflow · Local AI
 </p>
 
 <p align="center">
-  <a href="https://github.com/LQ-1123/AETHERIS">GitHub</a>
+  <a href="https://github.com/LQ-1123/AETHERIS/releases">Download</a>
   ·
-  <a href="https://github.com/LQ-1123/AETHERIS/issues">Issues</a>
+  <a href="doc/releases/v0.3.0.md">Release notes</a>
   ·
-  <a href="https://github.com/LQ-1123/AETHERIS/releases">Releases</a>
+  <a href="doc/api-reference.md">API reference</a>
+  ·
+  <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
 
-![Rust](https://img.shields.io/badge/Rust-1.97%2B-orange?logo=rust)
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql)
-![DICOM](<https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-0B6E99>)
-![License](https://img.shields.io/badge/License-MIT-green)
-![Platform](<https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey>)
+![Release](https://img.shields.io/badge/Release-v0.3.0-58b8c7)
+![Rust](https://img.shields.io/badge/Rust-1.97%2B-e7e9eb?logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-2-58b8c7?logo=tauri&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-336791?logo=postgresql&logoColor=white)
+![DICOM](https://img.shields.io/badge/DICOM-DIMSE%20%7C%20DICOMweb-58b8c7)
+![Platform](https://img.shields.io/badge/Desktop-Windows%20%7C%20macOS-e7e9eb)
+![License](https://img.shields.io/badge/License-MIT-58b8c7)
 
 </p>
 
-[English](README.md) · [中文](README.zh-CN.md)
+[English](README.md) · [简体中文](README.zh-CN.md)
 
 ---
 
-## Overview
+## Product at a glance
 
-**AETHERIS** is a self-hosted medical imaging infrastructure designed around a simple idea:
+**AETHERIS** is a self-hosted medical imaging platform built around a Rust PACS core and a native Tauri desktop application. It brings DICOM ingestion, durable storage, patient worklists, diagnostic visualization, exam requests, reporting, independent review, administration, and local AI into one institution-scoped system.
 
-> **Medical imaging should be interoperable, durable, observable, and locally controlled.**
+| Product surface | Delivered workflow |
+| --- | --- |
+| **PACS core** | DIMSE and DICOMweb ingestion, metadata indexing, durable object storage, authentication, audit, routing, lifecycle jobs, and clinical APIs |
+| **Desktop viewer** | Patient worklist, local DICOM open, 2D reading, multi-series layouts, GPU oblique MPR, MIP/MinIP, volume rendering, measurement, annotation, masks, and local AI segmentation |
+| **Clinical workspace** | Exam requests, study matching, separate report windows, draft submission, independent review, immutable signed versions, account administration, and workload reporting |
 
-Instead of treating PACS as a collection of legacy services, AETHERIS approaches the problem as a modern software system — with a Rust-based core, explicit storage guarantees, standards-oriented networking, a native desktop viewer, and local AI capabilities.
+The platform keeps the Viewer focused on imaging while workflow state and permissions remain server-owned, auditable, and institution-scoped.
 
-The platform combines:
+## Release v0.3.0
 
-* **DICOM networking** through DIMSE
-* **Modern HTTP interoperability** through DICOMweb
-* **Durable medical image storage**
-* **PostgreSQL-backed metadata indexing**
-* **Native desktop visualization**
-* **MPR / MIP / MinIP / volume rendering**
-* **Measurement and annotation**
-* **Local AI segmentation**
-* **RBAC, authentication and audit logging**
-* **Server-side patient worklists and exam requests**
-* **Structured reporting and institution-controlled peer review**
-* **Account, password-reset and workload administration**
-* **Docker-based deployment**
-* **Windows and macOS distributable applications**
+v0.3.0 connects the worklist, exam request, image review, reporting, independent review, account administration, and workload reporting into a complete desktop workflow.
 
-AETHERIS is intended to be both a usable PACS platform and an engineering foundation for future intelligent medical imaging workflows.
-
-> **Research / engineering project. Not clinically validated. Not intended for diagnosis or direct clinical decision-making.**
-
----
-
-## Latest Release — v0.3.0
-
-v0.3.0 connects the patient queue, image review, exam requests, structured reporting, independent report review, account administration, and workload reporting into one institution-scoped workflow.
-
-| Platform | Download | SHA-256 |
+| Platform | Package | SHA-256 |
 | --- | --- | --- |
 | macOS Apple Silicon | [AETHERIS_0.3.0_aarch64.dmg](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS_0.3.0_aarch64.dmg) | `f454761759d07acca4bccaf9d0a1af447425a9edaaebbf12c98719d8782dfa78` |
 | Windows 10/11 x64 | [AETHERIS-Setup-0.3.0-x64.exe](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS-Setup-0.3.0-x64.exe) | `a926a5c479071f6b9d41722fa3a9c6915047e3b733ce98e86e198df4b614ea67` |
 
-See the [v0.3.0 release notes](doc/releases/v0.3.0.md) for the full feature list, upgrade procedure, validation results, and known limitations.
+Both desktop packages include the Viewer, `pacsd`, and a local PostgreSQL runtime. See the [v0.3.0 release notes](doc/releases/v0.3.0.md) for the complete change and validation record.
+
+## Clinical workflow
+
+<p align="center">
+  <img src="doc/diagrams/readme/clinical-workflow.svg" width="100%" alt="AETHERIS clinical workflow from exam request to reviewed report">
+</p>
+
+The same study identity follows the workflow end to end: request creation, image receipt or matching, diagnostic review, report drafting, submission, review, signing, request completion, and workload accounting.
+
+### Worklist and exam requests
+
+The patient worklist is the desktop entry point. It provides server-side pagination and sorting plus combined filters for patient, date, modality, body part, report state, and source institution. Double-clicking a study opens its complete study/series context in the Viewer.
+
+Exam requests support both operational sequences:
+
+- Create the request first, receive the images later, then manually match the study.
+- Create a request directly from an existing study; patient and Study data are resolved by the server.
+
+Requests carry modality, body part, exam type, clinical indication, appointment information, linked study, and a traceable state from pending execution through completion.
+
+<table>
+  <tr>
+    <td width="50%"><img src="doc/screenshots/queue-page-desktop.png" alt="Patient study worklist with filters and report states"></td>
+    <td width="50%"><img src="doc/screenshots/03-new-request-form.png" alt="Exam request creation form"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Patient study worklist · filtering, sorting, report status, source institution</sub></td>
+    <td align="center"><sub>Exam request · patient, modality, body part, exam type, and clinical indication</sub></td>
+  </tr>
+</table>
+
+### Diagnostic viewing
+
+The native Viewer supports local files and remote PACS studies with a shared reading toolset:
+
+- Window/level, presets, zoom, pan, cine navigation, inversion, flip, and rotation.
+- Up to 3×3 multi-series layouts with independent pane state.
+- Patient-space GPU oblique MPR with linked axial, coronal, and sagittal planes.
+- MIP, MinIP, GPU volume rendering, and physical-space measurements.
+- Length, angle, arrow, rectangle, ellipse, ROI statistics, and synchronized annotations.
+- 3D sparse masks and local AI segmentation with no cloud image upload requirement.
+
+<table>
+  <tr>
+    <td width="50%"><img src="doc/img/多窗口图像.png" alt="AETHERIS multi-series split-screen viewer"></td>
+    <td width="50%"><img src="doc/img/多角度MPR重建.png" alt="AETHERIS GPU oblique MPR"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Multi-series comparison · independent panes and shared study context</sub></td>
+    <td align="center"><sub>GPU oblique MPR · rotatable reference lines and linked patient-space planes</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="doc/screenshots/volume-rendering.png" alt="AETHERIS GPU volume rendering"></td>
+    <td width="50%"><img src="doc/screenshots/ai-segmentation.png" alt="AETHERIS local AI lung segmentation"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>GPU volume rendering · windowing, rotation, pan, and zoom</sub></td>
+    <td align="center"><sub>Local AI segmentation · editable 3D masks and quantitative results</sub></td>
+  </tr>
+</table>
 
----
+### Reporting and independent review
 
-## Screenshots
+Reports open in a separate desktop window so image interaction stays uninterrupted. A report is attached to one study and includes structured findings, impression, recommendation, positive-result marking, templates, linked request information, and a complete review timeline.
 
-| Login                               | Main Workspace (Worklist + Viewer)                  | Multi-window Viewing                              |
-| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------- |
-| ![Login](doc/screenshots/login.png) | ![Main Workspace](doc/img/%E6%9B%B4%E6%96%B0%E7%9A%84%E4%B8%BB%E7%95%8C%E9%9D%A2.png) | ![Multi-window Viewing](doc/img/%E5%A4%9A%E7%AA%97%E5%8F%A3%E5%9B%BE%E5%83%8F.png) |
+When institution review is enabled, the author can **Save draft** or **Submit for review**. A user with `review_report` permission can start review and either sign the submitted report unchanged or modify it before signing. The system preserves author identity, reviewer identity, review comments, audit events, and immutable signed-version snapshots; authors cannot review their own reports.
 
-| MPR Reconstruction                             | Volume Rendering                                          | AI Segmentation                                         |
-| ---------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------- |
-| ![MPR Reconstruction](doc/img/%E5%A4%9A%E8%A7%92%E5%BA%A6MPR%E9%87%8D%E5%BB%BA.png) | ![Volume Rendering](doc/screenshots/volume-rendering.png) | ![AI Segmentation](doc/screenshots/ai-segmentation.png) |
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="doc/screenshots/standalone-author-report.png" width="300" alt="Separate author report window with Save draft and Submit for review actions"></td>
+    <td width="50%" align="center"><img src="doc/screenshots/standalone-reviewer-report.png" width="300" alt="Separate reviewer report window with review and sign actions"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Radiologist workspace · Save draft / Submit for review</sub></td>
+    <td align="center"><sub>Reviewer workspace · Sign unchanged / Modify and sign</sub></td>
+  </tr>
+</table>
 
-| Report Workbench (Radiologist)                 | Annotations                                     | DICOM Tag Revision                                |
-| ---------------------------------------------- | ----------------------------------------------- | ------------------------------------------------- |
-| ![Report Workbench](doc/img/%E6%8A%A5%E5%91%8A%E4%B9%A6%E5%86%99%E7%95%8C%E9%9D%A2-%E5%8C%BB%E7%94%9F.png) | ![Annotations](doc/screenshots/annotations.png) | ![Tag Revision](doc/screenshots/tag-revision.png) |
+### Administration and workload
 
-| Admin Console                          | Lifecycle                                   | DICOM Router                          |
-| -------------------------------------- | ------------------------------------------- | ------------------------------------- |
-| ![Admin Console](doc/img/%E7%AE%A1%E7%90%86%E6%8E%A7%E5%88%B6%E5%8F%B0.png) | ![Lifecycle](doc/screenshots/lifecycle.png) | ![Router](doc/screenshots/router.png) |
+The administration console combines institution-scoped controls for devices, accounts, password-reset review, source ownership, user permissions, workload, and report-review settings.
 
----
+- Create, activate, deactivate, and revoke sessions for institution accounts.
+- Require a password change at first sign-in.
+- Let users submit a username and new password from the login screen; administrators approve or reject the request without seeing the password.
+- Register DICOM devices, bind sources to institutions, and grant device visibility to users.
+- Grant report-review permission and enable the institution review workflow.
+- Aggregate drafts, pending review, active reviews, signed versions, completed reviews, reviewer modifications, and exam requests by user and date range; export results as CSV.
 
-## Why AETHERIS?
+<table>
+  <tr>
+    <td width="50%"><img src="doc/screenshots/11-admin-workload-report.png" alt="AETHERIS administrator workload report"></td>
+    <td width="50%"><img src="doc/screenshots/admin-password-reset-review.png" alt="AETHERIS password reset approval queue"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Workload report · reporting, review, version, and request counts</sub></td>
+    <td align="center"><sub>Password reset review · administrator approves or rejects without reading the new password</sub></td>
+  </tr>
+</table>
 
-Traditional PACS deployments often involve a collection of tightly coupled systems, vendor-specific configurations, and infrastructure that is difficult to reproduce outside a hospital environment.
+## System architecture
 
-AETHERIS takes a different approach:
+<p align="center">
+  <img src="doc/diagrams/readme/system-architecture.svg" width="100%" alt="AETHERIS system architecture">
+</p>
 
-<p align="center"><img src="doc/diagrams/why-aetheris.svg" alt="AETHERIS platform architecture" width="620"/></p>
+The Rust service terminates DIMSE, DICOMweb, authentication, and clinical APIs. PostgreSQL stores indexed and workflow metadata; the object store preserves DICOM datasets; background workers execute routing, lifecycle, transfer, revision, and AI jobs. The desktop application reaches this boundary through authenticated HTTPS and never owns database credentials.
 
-The goal is not simply to make another DICOM viewer.
+## Imaging data flow
 
-The goal is to build a **complete, composable medical imaging infrastructure**.
+<p align="center">
+  <img src="doc/diagrams/readme/imaging-data-flow.svg" width="100%" alt="AETHERIS DICOM imaging data flow">
+</p>
 
----
+Incoming Part 10 objects are persisted durably and indexed into the patient/study/series/instance hierarchy. QIDO-RS serves searchable metadata; WADO-RS returns objects and frames to the Viewer. Visualization, reporting, annotation, and local AI consume those server-resolved study identities while the original DICOM object remains the durable source.
 
-# Core Capabilities
+## Security and permissions
 
-## DICOM Networking
+<p align="center">
+  <img src="doc/diagrams/readme/security-boundary.svg" width="100%" alt="AETHERIS permission and security boundaries">
+</p>
 
-AETHERIS implements the core DIMSE services required for PACS interoperability:
+Security decisions are enforced at the service boundary:
 
-| Service     | Status |
-| ----------- | ------ |
-| C-ECHO SCP  | ✅     |
-| C-STORE SCP | ✅     |
-| C-FIND SCP  | ✅     |
-| C-MOVE SCP  | 🚧     |
-| C-GET SCP   | 🚧     |
+- TLS-protected HTTP endpoints and signed user sessions.
+- Argon2id password hashing and server-reviewed password-reset requests.
+- Fixed roles plus explicit permission grants for sensitive operations.
+- Institution filtering on worklists, DICOMweb retrieval, reports, requests, devices, jobs, and administrative APIs.
+- Device identity and source-ownership checks before images enter an institution scope.
+- Audit events for authentication, data access, report review, password reset, device, permission, routing, revision, and lifecycle actions.
 
-> C-MOVE / C-GET SCP are on the roadmap but **not yet implemented**; incoming requests for them are currently rejected (association aborted). Retrieval today goes through WADO-RS or C-STORE.
+## Standards and interoperability
 
-The DIMSE layer is implemented in the Rust workspace rather than relying entirely on a third-party PACS server.
+Only implemented protocol surfaces are listed here.
 
-This makes the protocol layer explicit, testable, and extensible.
+| Family | Service | Delivered behavior |
+| --- | --- | --- |
+| DIMSE | C-ECHO SCP | Connectivity verification |
+| DIMSE | C-STORE SCP | Durable DICOM object receipt with transfer-syntax negotiation, including RLE Lossless |
+| DIMSE | C-FIND SCP | Patient, study, series, and instance hierarchy queries |
+| DICOMweb | QIDO-RS | Authenticated, institution-scoped metadata search |
+| DICOMweb | WADO-RS | Authenticated object, instance, metadata, and frame retrieval |
+| DICOMweb | STOW-RS | Multipart DICOM Part 10 ingestion |
 
----
+The server preserves original DICOM bytes, handles common character-set variations, performs idempotent indexing, and acknowledges a C-STORE object only after the durable storage path succeeds.
 
-## DICOMweb
+## Install and run
 
-Modern HTTP-based interoperability is provided through DICOMweb:
+### Desktop packages
 
-| Standard | Status            |
-| -------- | ----------------- |
-| QIDO-RS  | ✅                |
-| WADO-RS  | ✅                |
-| STOW-RS  | ✅ Part10 · 🚧 DICOM JSON variant |
+Download the current DMG or EXE from [GitHub Releases](https://github.com/LQ-1123/AETHERIS/releases). The desktop package initializes and launches the local PACS stack through the AETHERIS application:
 
-DICOMweb provides a clean bridge between traditional modality infrastructure and modern web-based applications.
+| Platform | Application data |
+| --- | --- |
+| macOS Apple Silicon | Application bundle plus the packaged local service stack |
+| Windows 10/11 x64 | Program files under `C:\Program Files\AETHERIS`; database, images, configuration, and logs under `C:\ProgramData\AETHERIS` |
 
----
+### Docker service stack
 
-## Durable Storage
-
-AETHERIS treats image persistence as a correctness problem rather than simply a file-copy operation.
-
-The C-STORE path follows:
-
-<p align="center"><img src="doc/diagrams/cstore-durability.svg" alt="C-STORE durability path" width="620"/></p>
-
-The server does **not** report success before the received object has reached durable storage.
-
-Stored DICOM datasets preserve the original byte content rather than performing an unnecessary decode → re-encode cycle.
-
----
-
-# Native Medical Imaging Viewer
-
-AETHERIS includes a native desktop viewer built with **Tauri 2**.
-
-The viewer can operate both as a remote PACS client and as a local DICOM viewer.
-
-### 2D Visualization
-
-* Window / Level
-* Window presets
-* Zoom
-* Pan
-* Series navigation
-* Multi-frame support
-* Multi-file series
-* Image measurement
-* Annotations
-* Multi-window split-screen viewing
-
-### Multi-window Split-screen Viewing
-
-Drag a series row from **Patient → Study → Series** into the workspace to split the screen automatically and render multiple series side by side:
-
-* 1 series: 1×1
-* 2 series: 1×2
-* 3–4 series: 2×2
-* 5–6 series: 3×2
-* 7–9 series: 3×3
-
-Each pane has its own `Renderer` and `ViewState` for independent navigation, windowing, zoom/pan, measurement, and annotations. Click a pane to activate it; hold `Alt` while dropping onto an occupied pane to replace that series; use the pane close button to remove it. Multi-pane mode currently focuses on 2D comparison reading; MPR / VR run in single-pane mode.
-
-<p align="center"><img src="doc/img/多窗口图像.png" alt="Multi-window split-screen viewing" width="760"/></p>
-
-### Geometry-aware Series Reconstruction
-
-Series ordering does not rely on filenames or `InstanceNumber`.
-
-AETHERIS uses:
-
-<p align="center"><img src="doc/diagrams/series-reconstruction.svg" alt="Geometry-aware series reconstruction" width="620"/></p>
-
-When reliable geometry cannot be established, the viewer refuses to guess.
-
-This is intentional.
-
-> **In medical imaging, a plausible image in the wrong order is worse than an explicit failure.**
-
----
-
-# Advanced Visualization
-
-AETHERIS is designed beyond basic 2D image viewing.
-
-Current visualization capabilities include:
-
-* MPR — Multiplanar Reconstruction
-* MIP — Maximum Intensity Projection
-* MinIP — Minimum Intensity Projection
-* GPU-accelerated volume rendering
-* 3D sparse masks
-* Interactive measurement
-* Annotation overlays
-
-### GPU Oblique MPR (arbitrary-angle multiplanar reconstruction)
-
-Entering MPR automatically loads the GPU volume and turns the Axial / Coronal / Sagittal viewports into patient-space linked oblique reconstructions:
-
-* The crosshair lines in each viewport are the reference lines; drag a crosshair arm away from its center to rotate it.
-* Rotating one viewport rebuilds the other two in real time; all three planes remain orthogonal and pass through the same patient-space center point.
-* Double-click any viewport to restore standard Axial / Coronal / Sagittal orientation.
-* The cursor changes to a rotation indicator near crosshair lines to prevent accidental interaction.
-* Each viewport shows a cube/plane intersection icon in the top-right corner, dynamic `R / L / A / P / S / I` labels on the edges, and tilt angle plus DICOM `Image Orientation (Patient)` direction cosines in the top-left.
-
-Geometry foundation:
-
-* All MPR plane calculations happen in Patient Space using 4×4 affine transforms derived from `ImageOrientationPatient`, `ImagePositionPatient`, `PixelSpacing`, and `Spacing Between Slices`.
-* Oblique planes compute independent `spacingX` / `spacingY` and a physical FOV/output size based on the plane-volume intersection, supporting anisotropic voxels.
-* MPR / MIP / MinIP resample the GPU 3D texture in real time; when 16-bit textures are unavailable, an RG8 dual-channel fallback preserves HU precision.
-* Length and angle measurements use true physical spacing so the same anatomy stays consistent across MPR orientations.
-
-<p align="center"><img src="doc/img/多角度MPR重建.png" alt="Multi-angle MPR reconstruction" width="760"/></p>
-
-Volume rendering mouse gestures:
-
-* Left drag — Window / Level
-* Right drag — Rotate
-* Middle drag — Pan
-* Wheel — Zoom
-
-The architecture is intended to support progressively more advanced volumetric visualization without coupling the viewer to the server implementation.
-
----
-
-# Clinical Workflow
-
-## Patient Queue and Exam Requests
-
-The full-screen patient queue is the default landing page after login. It presents one row per study with server-side pagination, sorting, and combined filters for source institution, report status, modality, body part, and date.
-
-Technicians and administrators can manage exam requests in either direction:
-
-* Create the request first, receive the images later, and manually bind the matching study.
-* Create a request directly from an already-ingested study; patient and Study data are read by the server instead of trusted from the client.
-
-Exam requests carry modality, body part, request type, and clinical indication through the `pending → executed → completed` lifecycle. The request is visible in the report workspace and is completed automatically when the associated report is approved or signed.
-
-## Separate Report Workspace
-
-Diagnostic reporting runs in a separate desktop window so the Viewer remains focused on image display and interaction. Reports are study-scoped and support:
-
-* Structured findings, impression, recommendation, and positive-result fields
-* Draft saving and immutable signed version snapshots
-* Submit-for-review, review claim, reviewer correction, approval, and post-sign amendment
-* Patient/institution context, exam-request indication, reviewer identity, and a complete review timeline
-
-## Institution-Controlled Peer Review
-
-Administrators can enable or disable the report-review closure under **Admin Console → Institution Settings**. The setting is persisted per institution and takes effect immediately.
-
-When enabled, authors can save drafts and submit them for review but cannot sign directly. Reviewers need the `review_report` permission and cannot review their own reports. Reviewer corrections preserve the original author, identify the reviewer, and create a `reviewer_modified` audit event that contributes to workload/error statistics. When disabled, the direct draft-to-sign path remains available for single-radiologist and demonstration environments.
-
-## Administration and Workload
-
-The Admin Console provides account creation, first-login password change, enable/disable with session revocation, reviewer permission grants, device registration, source ownership, user access grants, institution settings, and per-user workload reports.
-
-Password reset is approval-based: a user submits a username and proposed new password from the login screen, only an Argon2id hash is stored, and an administrator can approve or reject the request without seeing the password. Workload reports aggregate report states, signed versions, completed reviews, reviewer modifications, and exam requests over a selected date range.
-
-All account, report, device, exam-request, workload, and institution-setting boundaries are enforced by the server rather than by hidden UI controls.
-
----
-
-# Local AI
-
-AETHERIS includes a local AI worker architecture for medical image processing.
-
-The current implementation supports local lung segmentation through **lungmask R231**.
-
-<p align="center"><img src="doc/diagrams/local-ai.svg" alt="Local AI pipeline" width="620"/></p>
-
-The worker runs locally.
-
-Medical images are not required to leave the host for inference.
-
-On Apple Silicon, the local pipeline can automatically use **MPS** where available.
-
-The AI subsystem is deliberately designed as a worker boundary rather than embedding a specific model directly into the PACS core. This allows future models and inference engines to be introduced without redesigning the storage or networking layers.
-
-License note: the bundled `lungmask` plugin inherits the upstream **GPL-3.0** license, and `thorax-vessels` uses Apache-2.0 code with research-only weights. See `apps/viewer/ai-plugins/README.md`.
-
----
-
-# Security & Access Control
-
-AETHERIS provides application-level security mechanisms for distributed deployments:
-
-* Argon2 password hashing
-* JWT authentication
-* Refresh tokens
-* Role-Based Access Control
-* Account management
-* Approval-based password reset
-* Audit logging
-* Permission-aware API access
-* Institution-scoped device and workflow authorization
-* Independent report review permissions
-* Versioned report amendments
-* Lifecycle controls
-
-The server owns database connections.
-
-Clients never connect directly to PostgreSQL.
-
-<p align="center"><img src="doc/diagrams/security-boundary.svg" alt="Security boundary" width="620"/></p>
-
-This prevents database credentials from being distributed to every client and creates a clean security boundary between the application and persistence layers.
-
----
-
-# Architecture
-
-AETHERIS is organized as a Rust workspace with explicit subsystem boundaries.
-
-<p align="center"><img src="doc/diagrams/repo-structure.svg" alt="Repository structure" width="620"/></p>
-
-The architecture intentionally separates:
-
-<p align="center"><img src="doc/diagrams/architecture-layers.svg" alt="Architecture layers" width="620"/></p>
-
-This makes individual subsystems independently testable and replaceable.
-
----
-
-# Technology Stack
-
-| Layer            | Technology                |
-| ---------------- | ------------------------- |
-| Core language    | Rust                      |
-| Desktop          | Tauri 2                   |
-| Backend HTTP     | Axum                      |
-| Database         | PostgreSQL                |
-| DICOM            | DIMSE + DICOMweb          |
-| Authentication   | Argon2 + JWT              |
-| AI               | Local Worker Architecture |
-| Containerization | Docker / Compose          |
-| macOS            | Apple Silicon             |
-| Windows          | x64                       |
-| License          | MIT                       |
-
----
-
-# Deployment
-
-AETHERIS is designed to be deployable without requiring a complex infrastructure stack.
-
-## Docker
+Docker Compose starts PostgreSQL, `pacsd`, persistent DICOM storage, and the DCMTK simulator:
 
 ```bash
+cp .env.example .env
+# Set strong POSTGRES_PASSWORD, PACS_ADMIN_PASSWORD, and PACS_JWT_SECRET values.
 docker compose up -d --build
+docker compose logs -f pacsd
 ```
 
-The default development stack provides:
+Service endpoints:
 
-<p align="center"><img src="doc/diagrams/deployment-stack.svg" alt="Docker deployment stack" width="620"/></p>
+- PACS API and DICOMweb: `https://127.0.0.1:8443`
+- DIMSE SCP: `127.0.0.1:11112` with AE Title `REMOTE_PACS`
+- API inspection page: `https://127.0.0.1:8443/api-checker`
+- DCMTK simulator: `http://127.0.0.1:8787`
 
-The Tauri Viewer remains a native host application.
+### Development
 
----
+Requirements: Rust 1.97+, Node.js 20+, PostgreSQL 14+, `libarchive`, and platform dependencies for Tauri 2.
 
-# DICOM Device Simulation
-
-AETHERIS includes a DCMTK-based device simulator for development and interoperability testing.
+Start the service:
 
 ```bash
-python3 tools/dcmtk-simulator.py
+cp .env.example .env
+# Configure DATABASE_URL, PACS_JWT_SECRET, and storage paths in .env.
+cargo run -p pacsd
 ```
 
-The simulator can:
-
-* Upload DICOM folders
-* Configure Calling AE
-* Configure Called AE
-* Simulate multiple devices
-* Perform concurrent transfers
-
-This makes it possible to develop and test PACS networking without requiring physical CT, MR, CR, DR or other modalities.
-
----
-
-# Zero-Dependency Desktop Distribution
-
-AETHERIS can also be packaged as a standalone desktop application.
-
-Current v0.3.0 packages:
-
-* [macOS Apple Silicon DMG](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS_0.3.0_aarch64.dmg)
-* [Windows 10/11 x64 installer](https://github.com/LQ-1123/AETHERIS/releases/download/v0.3.0/AETHERIS-Setup-0.3.0-x64.exe)
-
-### macOS
-
-<p align="center"><img src="doc/diagrams/packaging.svg" alt="macOS app bundle" width="620"/></p>
-
-The resulting DMG is designed for an out-of-the-box local installation.
-
-### Windows
-
-GitHub Actions builds a Windows installer containing:
-
-<p align="center"><img src="doc/diagrams/packaging.svg" alt="Windows installer contents" width="620"/></p>
-
-The target machine does not need a separate PACS installation.
-
-The v0.3.0 packages are not commercially code-signed. The macOS build uses ad-hoc signing and is not notarized; the Windows installer requires administrator privileges. Review the [release notes](doc/releases/v0.3.0.md) before installation or upgrade.
-
----
-
-# Development
-
-## Requirements
-
-* Rust 1.97.1+
-* PostgreSQL
-* DCMTK
-* Node.js
-* npm
-* Docker (optional)
-
-## Build
-
-```bash
-cargo build --workspace
-```
-
-## Test
-
-```bash
-cargo test --workspace
-```
-
-## Lint
-
-```bash
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-## Run Viewer
+Start the desktop application in another terminal:
 
 ```bash
 cd apps/viewer
-
-npm install
+npm ci
 npm run tauri dev
 ```
 
----
-
-# Interoperability Testing
-
-AETHERIS does not rely exclusively on self-generated test traffic.
-
-The project uses DCMTK to exercise real DICOM associations against the server.
-
-For example:
+Build distributable applications:
 
 ```bash
-echoscu \
-  -aet TEST_SCU \
-  -aec REMOTE_PACS \
-  127.0.0.1 11112
+cd apps/viewer
+npm ci
+npm run tauri build
 ```
 
-And:
+The Windows all-in-one installer is built with the manually triggered [Build Windows Installer](.github/workflows/build-windows.yml) workflow or `packaging/windows/build.ps1` on a prepared Windows host.
+
+## Engineering validation
+
+The repository CI runs formatting, linting, unit/integration tests, PostgreSQL-backed database tests, and DCMTK interoperability traffic. The v0.3.0 release also records the desktop frontend suite and package-integrity checks.
 
 ```bash
-storescu \
-  -aet TEST_SCU \
-  -aec REMOTE_PACS \
-  127.0.0.1 11112 \
-  x.dcm
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+
+cd apps/viewer
+npm ci
+npm run build
+npm test
 ```
 
-This allows the DIMSE implementation to be validated against an independent DICOM implementation.
+## Documentation
 
----
+- [v0.3.0 release notes](doc/releases/v0.3.0.md)
+- [Clinical and administrative API reference](doc/api-reference.md)
+- [System introduction and engineering design](doc/remote-pacs-system-introduction.md)
+- [Implemented function summary](doc/system-function-summary.md)
+- [DCMTK test-platform integration](doc/dcmtk-test-platform-integration.md)
+- Live API inspection page at `/api-checker`
 
-# API Inspection
+## Use boundary
 
-AETHERIS includes an API inspection center for development and integration testing.
+AETHERIS is distributed for medical-imaging research, engineering evaluation, and controlled institutional deployment. Clinical use requires institution-specific validation, security configuration, operating procedures, and regulatory review. Protect credentials, TLS keys, databases, DICOM storage, exports, and screenshots according to applicable healthcare data policies.
 
-After starting `pacsd`, open:
+## License
 
-```text
-https://127.0.0.1:8443/api-checker
-```
-
-The checker can inspect:
-
-* OpenAPI routes
-* DICOMweb endpoints
-* Viewer APIs
-* Annotation APIs
-* Segmentation APIs
-* Transfer APIs
-* Authentication protection
-* GET smoke tests
-* JSON test exports
-
-Write operations are never automatically executed during batch inspection.
-
----
-
-# Engineering Principles
-
-AETHERIS is built around several non-negotiable principles.
-
-### 1. Durability before acknowledgement
-
-If C-STORE returns success, the data must actually be durable.
-
-### 2. Never guess medical image geometry
-
-CT/MR ordering must be based on spatial metadata, not filenames.
-
-### 3. Preserve original DICOM bytes
-
-Storage should not introduce unnecessary lossy transformations.
-
-### 4. Clients never own database credentials
-
-The application server remains the security and authorization boundary.
-
-### 5. Standards over vendor lock-in
-
-DICOM and DICOMweb should remain the primary interoperability layer.
-
-### 6. Local-first AI
-
-AI inference should be capable of operating without sending medical images to a third-party cloud service.
-
-### 7. Explicit failure over silent corruption
-
-When the system cannot determine something safely, it should fail visibly rather than silently produce a plausible but incorrect result.
-
----
-
-# Project Status
-
-AETHERIS is under active development.
-
-Current milestones:
-
-```text
-Phase 0 ──────────────────────────────── ✅
-Core architecture
-
-Phase 1 ──────────────────────────────── ✅
-Storage / database
-
-Phase 2 ──────────────────────────────── ✅
-DIMSE infrastructure
-
-Phase 3 ──────────────────────────────── ✅
-Authentication / RBAC / audit
-
-Phase 4 ──────────────────────────────── ✅
-PACS workflows
-
-Phase 5 ──────────────────────────────── 🟡
-DICOMweb
-QIDO-RS / WADO-RS      ✅
-STOW-RS                ✅
-
-Phase 6 ──────────────────────────────── 🟡
-Native Viewer
-Local DICOM            ✅
-Remote Worklist        ✅
-2D Visualization       ✅
-3D Visualization       ✅
-Local AI               ✅
-```
-
----
-
-# Roadmap
-
-The long-term direction of AETHERIS includes:
-
-* [ ] STOW-RS: application/dicom+json and bulk-data variants
-* [ ] Expand DICOMweb coverage
-* [ ] Improve DICOM modality interoperability
-* [ ] Advanced MPR / VR workflows
-* [ ] More AI segmentation models
-* [ ] AI-assisted image analysis
-* [x] Structured reporting (report workbench: findings/impression/recommendation, positive flag, sign/amend, version snapshots)
-* [x] Report review workflow (peer review, reviewer-direct correction)
-* [x] Exam request workflow (technician order entry)
-* [x] Workload reporting (per-user statistics)
-* [ ] DICOM SR integration
-* [x] Advanced worklist management
-* [ ] Distributed storage
-* [ ] Object storage backends
-* [ ] Improved multi-site deployment
-* [ ] Production-grade certificate management
-* [ ] More comprehensive observability
-* [ ] Expanded automated interoperability testing
-
-The objective is to evolve AETHERIS from a self-hosted PACS into a broader **medical imaging infrastructure platform**.
-
----
-
-# Security Notice
-
-DIMSE itself does not provide strong authentication. AE Titles can be spoofed.
-
-For development, AETHERIS binds services to loopback by default.
-
-Before deploying with real devices or real patient data, production deployments must provide appropriate:
-
-* TLS certificates and SAN configuration
-* Network segmentation
-* Firewall rules
-* Device allowlists
-* Credential management
-* Backup strategy
-* Access auditing
-* Data retention policies
-* Privacy and regulatory controls
-
-Real patient data may be subject to applicable regulations, including PIPL, GDPR, HIPAA, and local healthcare regulations.
-
-**Do not expose the development configuration directly to the public Internet.**
-
----
-
-# Clinical Disclaimer
-
-AETHERIS is a research and engineering project.
-
-It has **not been clinically validated** and is not a medical device.
-
-Nothing in this repository should be interpreted as:
-
-* a medical diagnosis;
-* a clinical recommendation;
-* a validated radiological workflow;
-* a substitute for qualified medical professionals.
-
-AI outputs are experimental and must not be used as the sole basis for clinical decisions.
-
----
-
-# License
-
-AETHERIS is released under the [MIT License](./LICENSE).
-
----
-
-<p align="center">
-
-**AETHERIS**
-
-*Medical Imaging Infrastructure, Reimagined.*
-
-Built with Rust · DICOM · Tauri · PostgreSQL
-
-</p>
+[MIT](LICENSE)

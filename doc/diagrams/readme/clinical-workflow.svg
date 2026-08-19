@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1280 720" role="img" aria-labelledby="clinical-workflow-title clinical-workflow-desc" xmlns="http://www.w3.org/2000/svg">
+  <title id="clinical-workflow-title">AETHERIS clinical workflow</title>
+  <desc id="clinical-workflow-desc">Swimlane workflow from exam request creation and image matching through radiologist review, draft submission, independent review, signing, request closure, and workload accounting.</desc>
+  <defs>
+    <marker id="clinical-workflow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#78939a"/>
+    </marker>
+    <marker id="clinical-workflow-arrow-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#58b8c7"/>
+    </marker>
+    <style>
+      .bg { fill: #101214; }
+      .lane-a { fill: #111b20; fill-opacity: .40; }
+      .lane-b { fill: #15181a; fill-opacity: .56; }
+      .rule { stroke: #34383b; stroke-width: 1; }
+      .node { fill: #15181a; stroke: #4b5256; stroke-width: 1; }
+      .node-focal { fill: #122328; stroke: #58b8c7; stroke-width: 2; }
+      .title { fill: #e7e9eb; font: 600 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .subtitle { fill: #9fc3cd; font: 400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .eyebrow { fill: #9fc3cd; font: 600 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
+      .lane-label { fill: #9fc3cd; font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+      .name { fill: #e7e9eb; font: 600 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .sub { fill: #9fc3cd; font: 400 8px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .connector { fill: none; stroke: #78939a; stroke-width: 2; marker-end: url(#clinical-workflow-arrow); }
+      .connector-accent { fill: none; stroke: #58b8c7; stroke-width: 2; marker-end: url(#clinical-workflow-arrow-accent); }
+      .label-mask { fill: #101214; }
+      .edge-label { fill: #9fc3cd; font: 600 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+      .step { fill: #58b8c7; font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .legend { fill: #9fc3cd; font: 500 8px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1280" height="720"/>
+  <text class="eyebrow" x="40" y="28">CLINICAL WORKFLOW</text>
+  <text class="title" x="40" y="60">From exam request to reviewed report</text>
+  <text class="subtitle" x="40" y="84">The Viewer stays focused on imaging while requests, reporting, review, and workload form a traceable workflow</text>
+
+  <rect class="lane-a" x="40" y="132" width="1200" height="112"/>
+  <rect class="lane-b" x="40" y="244" width="1200" height="112"/>
+  <rect class="lane-a" x="40" y="356" width="1200" height="112"/>
+  <rect class="lane-b" x="40" y="468" width="1200" height="112"/>
+  <line class="rule" x1="160" y1="132" x2="160" y2="580"/>
+  <line class="rule" x1="40" y1="132" x2="1240" y2="132"/>
+  <line class="rule" x1="40" y1="244" x2="1240" y2="244"/>
+  <line class="rule" x1="40" y1="356" x2="1240" y2="356"/>
+  <line class="rule" x1="40" y1="468" x2="1240" y2="468"/>
+  <line class="rule" x1="40" y1="580" x2="1240" y2="580"/>
+
+  <text class="lane-label" x="56" y="192">TECHNOLOGIST</text>
+  <text class="lane-label" x="56" y="304">AETHERIS</text>
+  <text class="lane-label" x="56" y="416">RADIOLOGIST</text>
+  <text class="lane-label" x="56" y="528">REVIEWER</text>
+
+  <!-- Handoffs before process nodes. -->
+  <path class="connector" d="M344 188 H440 Q448 188 448 196 V268"/>
+  <rect class="label-mask" x="360" y="164" width="64" height="12" rx="4"/>
+  <text class="edge-label" x="392" y="172" text-anchor="middle">REQUEST</text>
+
+  <path class="connector" d="M528 300 H624 Q632 300 632 308 V380"/>
+  <rect class="label-mask" x="544" y="276" width="72" height="12" rx="4"/>
+  <text class="edge-label" x="580" y="284" text-anchor="middle">STUDY READY</text>
+
+  <line class="connector" x1="712" y1="412" x2="736" y2="412"/>
+
+  <path class="connector-accent" d="M896 412 H992 Q1000 412 1000 420 V492"/>
+  <rect class="label-mask" x="912" y="388" width="72" height="12" rx="4"/>
+  <text class="edge-label" x="948" y="396" text-anchor="middle">SUBMITTED</text>
+
+  <path class="connector-accent" d="M1080 524 H1120 Q1128 524 1128 516 V332"/>
+  <rect class="label-mask" x="1144" y="420" width="56" height="12" rx="4"/>
+  <text class="edge-label" x="1172" y="428" text-anchor="middle">SIGNED</text>
+
+  <g>
+    <rect class="node" x="184" y="156" width="160" height="64" rx="8"/>
+    <text class="step" x="200" y="176">01</text>
+    <text class="name" x="264" y="188" text-anchor="middle">Create request</text>
+    <text class="sub" x="264" y="208" text-anchor="middle">patient · modality · indication</text>
+  </g>
+
+  <g>
+    <rect class="node" x="368" y="268" width="160" height="64" rx="8"/>
+    <text class="step" x="384" y="288">02</text>
+    <text class="name" x="448" y="300" text-anchor="middle">Receive &amp; match</text>
+    <text class="sub" x="448" y="320" text-anchor="middle">uploaded or existing study</text>
+  </g>
+
+  <g>
+    <rect class="node" x="552" y="380" width="160" height="64" rx="8"/>
+    <text class="step" x="568" y="400">03</text>
+    <text class="name" x="632" y="412" text-anchor="middle">Review images</text>
+    <text class="sub" x="632" y="432" text-anchor="middle">2D · MPR · VR · annotation</text>
+  </g>
+
+  <g>
+    <rect class="node" x="736" y="380" width="160" height="64" rx="8"/>
+    <text class="step" x="752" y="400">04</text>
+    <text class="name" x="816" y="412" text-anchor="middle">Draft &amp; submit</text>
+    <text class="sub" x="816" y="432" text-anchor="middle">separate report window</text>
+  </g>
+
+  <g>
+    <rect class="node-focal" x="920" y="492" width="160" height="64" rx="8"/>
+    <text class="step" x="936" y="512">05</text>
+    <text class="name" x="1000" y="524" text-anchor="middle">Review &amp; sign</text>
+    <text class="sub" x="1000" y="544" text-anchor="middle">direct or reviewer-modified</text>
+  </g>
+
+  <g>
+    <rect class="node" x="1048" y="268" width="160" height="64" rx="8"/>
+    <text class="step" x="1064" y="288">06</text>
+    <text class="name" x="1128" y="300" text-anchor="middle">Close &amp; account</text>
+    <text class="sub" x="1128" y="320" text-anchor="middle">request · versions · workload</text>
+  </g>
+
+  <line x1="40" y1="628" x2="1240" y2="628" stroke="#34383b" stroke-width="1"/>
+  <text class="legend" x="40" y="660">OWNER = LANE</text>
+  <text class="legend" x="200" y="660">ACCENT = REQUIRED REVIEW HANDOFF</text>
+  <line x1="464" y1="656" x2="512" y2="656" stroke="#58b8c7" stroke-width="2" marker-end="url(#clinical-workflow-arrow-accent)"/>
+  <text class="legend" x="552" y="660">FINAL STATE = SIGNED REPORT + COMPLETED REQUEST + WORKLOAD RECORD</text>
+</svg>
