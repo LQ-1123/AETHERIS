@@ -4,6 +4,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $stage = Join-Path $PSScriptRoot 'stage'
+$tauriConfig = Join-Path $root 'apps\viewer\src-tauri\tauri.conf.json'
+$appVersion = (Get-Content $tauriConfig -Raw | ConvertFrom-Json).version
+if (-not $appVersion) { throw '无法从 tauri.conf.json 读取版本号。' }
 if (-not $PostgresDir) {
     $PostgresDir = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory -ErrorAction SilentlyContinue |
         Sort-Object { [int]$_.Name } -Descending |
@@ -44,6 +47,9 @@ try {
         Write-Host '已复制 vcpkg 运行时 DLL（libarchive 等）'
     }
 
-    & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" (Join-Path $PSScriptRoot 'installer.iss')
+    & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$appVersion" (Join-Path $PSScriptRoot 'installer.iss')
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup 编译失败' }
+    $installer = Join-Path $PSScriptRoot "output\AETHERIS-Setup-$appVersion-x64.exe"
+    if (-not (Test-Path $installer)) { throw "未找到预期安装包：$installer" }
+    Write-Host "安装包已生成：$installer"
 } finally { Pop-Location }

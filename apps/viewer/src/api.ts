@@ -12,6 +12,7 @@ import type {
   ExamRequestInput,
   ExistingStudyExamRequestInput,
   ExamRequestStudyCandidate,
+  InstitutionSettings,
   PatientSummary,
   PasswordResetRequest,
   QueueStudyRow,
@@ -573,6 +574,16 @@ export async function resolveSeriesSource(seriesUid: string, deviceId: string): 
 export async function listUsers(): Promise<AdminUser[]> {
   const invoke = await getInvoke();
   return invoke<AdminUser[]>('list_users');
+}
+
+export async function getInstitutionSettings(): Promise<InstitutionSettings> {
+  const invoke = await getInvoke();
+  return invoke<InstitutionSettings>('get_institution_settings');
+}
+
+export async function updateInstitutionSettings(reviewRequired: boolean): Promise<InstitutionSettings> {
+  const invoke = await getInvoke();
+  return invoke<InstitutionSettings>('update_institution_settings', { reviewRequired });
 }
 
 export async function createUser(input: {

@@ -45,6 +45,10 @@ pub fn routes(state: WebState, auth: Arc<AuthService>) -> Router {
         .route("/series-sources", get(series_sources))
         .route("/worklist/{work_id}/assign", post(assign))
         .route("/workload", get(workload))
+        .route(
+            "/institution/settings",
+            get(institution_settings).patch(update_institution_settings),
+        )
         .with_state(state.clone())
         .layer(axum::middleware::from_fn(move |request, next| {
             let auth = Arc::clone(&admin_auth);
@@ -1173,6 +1177,60 @@ async fn exam_request_study_candidates(
 struct WorkloadQuery {
     date_from: NaiveDate,
     date_to: NaiveDate,
+}
+
+#[derive(Serialize)]
+struct InstitutionSettings {
+    review_required: bool,
+}
+
+#[derive(Deserialize)]
+struct UpdateInstitutionSettingsRequest {
+    review_required: bool,
+}
+
+async fn institution_settings(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+) -> Result<Json<InstitutionSettings>, ApiError> {
+    let review_required =
+        sqlx::query_scalar("SELECT review_required FROM institutions WHERE id=$1")
+            .bind(identity.institution_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "读取机构设置失败");
+                ApiError::internal()
+            })?
+            .ok_or_else(ApiError::not_found)?;
+    Ok(Json(InstitutionSettings { review_required }))
+}
+
+async fn update_institution_settings(
+    State(state): State<WebState>,
+    Extension(identity): Extension<Identity>,
+    Json(req): Json<UpdateInstitutionSettingsRequest>,
+) -> Result<Json<InstitutionSettings>, ApiError> {
+    let review_required = sqlx::query_scalar(
+        "UPDATE institutions SET review_required=$2 WHERE id=$1 RETURNING review_required",
+    )
+    .bind(identity.institution_id)
+    .bind(req.review_required)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "更新机构设置失败");
+        ApiError::internal()
+    })?
+    .ok_or_else(ApiError::not_found)?;
+    audit(
+        &state,
+        &identity,
+        pacs_auth::audit::Action::InstitutionSettingsChanged,
+        serde_json::json!({"review_required": review_required}),
+    )
+    .await;
+    Ok(Json(InstitutionSettings { review_required }))
 }
 
 async fn workload(

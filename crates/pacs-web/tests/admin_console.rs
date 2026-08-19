@@ -585,3 +585,118 @@ async fn user_device_grants_roundtrip() {
         .collect::<Vec<_>>();
     assert_eq!(ids, vec![device_ids[1].clone()], "PUT 应为全量替换语义");
 }
+
+#[tokio::test]
+async fn institution_review_setting_is_persistent_and_admin_only() {
+    let Some(pool) = pool().await else { return };
+    let secret = b"institution-settings-test-secret-32";
+    let suffix = Uuid::new_v4();
+    let institution_id: i64 =
+        sqlx::query_scalar("INSERT INTO institutions(code,name) VALUES($1,$2) RETURNING id")
+            .bind(format!("settings-{suffix}"))
+            .bind(format!("设置测试机构 {suffix}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let admin_username = format!("settings-admin-{suffix}");
+    let admin_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (institution_id, username, password_hash, role)
+         VALUES ($1, $2, 'unused', 'admin') RETURNING id",
+    )
+    .bind(institution_id)
+    .bind(&admin_username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let doctor_username = format!("settings-doctor-{suffix}");
+    let doctor_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (institution_id, username, password_hash, role)
+         VALUES ($1, $2, 'unused', 'radiologist') RETURNING id",
+    )
+    .bind(institution_id)
+    .bind(&doctor_username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let codec = AccessTokenCodec::new(secret).unwrap();
+    let admin_token = codec
+        .issue(
+            admin_id,
+            institution_id,
+            &admin_username,
+            Role::Admin,
+            Utc::now(),
+        )
+        .unwrap();
+    let doctor_token = codec
+        .issue(
+            doctor_id,
+            institution_id,
+            &doctor_username,
+            Role::Radiologist,
+            Utc::now(),
+        )
+        .unwrap();
+    let auth = Arc::new(AuthService::new(pool.clone(), secret).unwrap());
+    let app = pacs_web::clinical_routes(pacs_web::WebState::new(pool.clone()), auth);
+    let admin_bearer = format!("Bearer {admin_token}");
+    let doctor_bearer = format!("Bearer {doctor_token}");
+
+    let initial = app
+        .clone()
+        .oneshot(
+            Request::get("/institution/settings")
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(initial.status(), StatusCode::OK);
+    assert_eq!(response_json(initial).await["review_required"], false);
+
+    let updated = app
+        .clone()
+        .oneshot(
+            Request::patch("/institution/settings")
+                .header(header::AUTHORIZATION, &admin_bearer)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"review_required": true}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    assert_eq!(response_json(updated).await["review_required"], true);
+
+    let persisted: bool =
+        sqlx::query_scalar("SELECT review_required FROM institutions WHERE id=$1")
+            .bind(institution_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(persisted, "设置应写入机构表并跨会话保留");
+
+    for request in [
+        Request::get("/institution/settings")
+            .header(header::AUTHORIZATION, &doctor_bearer)
+            .body(Body::empty())
+            .unwrap(),
+        Request::patch("/institution/settings")
+            .header(header::AUTHORIZATION, &doctor_bearer)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"review_required": false}).to_string()))
+            .unwrap(),
+    ] {
+        let denied = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    }
+
+    let unchanged: bool =
+        sqlx::query_scalar("SELECT review_required FROM institutions WHERE id=$1")
+            .bind(institution_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(unchanged, "非管理员请求不得修改设置");
+}

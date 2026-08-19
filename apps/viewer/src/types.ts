@@ -999,6 +999,10 @@ export interface AdminUser {
   created_at: string;
 }
 
+export interface InstitutionSettings {
+  review_required: boolean;
+}
+
 export interface PasswordResetRequest {
   id: number;
   user_id: number;

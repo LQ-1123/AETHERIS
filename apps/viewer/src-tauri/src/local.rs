@@ -99,7 +99,7 @@ impl LocalStack {
 
         if !port_open(HTTP_PORT) {
             self.create_admin(password)?;
-            self.spawn_pacsd(password, jwt)?;
+            self.spawn_pacsd(jwt)?;
             wait_for_port(HTTP_PORT, Duration::from_secs(40))
                 .map_err(|e| format!("pacsd 启动超时: {e}"))?;
         }
@@ -304,7 +304,7 @@ impl LocalStack {
         Ok(())
     }
 
-    fn spawn_pacsd(&self, password: &str, jwt: &str) -> Result<(), String> {
+    fn spawn_pacsd(&self, jwt: &str) -> Result<(), String> {
         let log = self.logs_dir().join("pacsd.log");
         let log_file = fs::OpenOptions::new()
             .create(true)
@@ -332,7 +332,7 @@ impl LocalStack {
         if let Ok(mut guard) = self.pacsd_child.lock() {
             *guard = Some(child);
         }
-        tracing::info!(password = %password, "本地 pacsd 已启动");
+        tracing::info!("本地 pacsd 已启动");
         Ok(())
     }
 }

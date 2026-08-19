@@ -1,5 +1,7 @@
 #define AppName "AETHERIS"
-#define AppVersion "0.2.0"
+#ifndef AppVersion
+  #define AppVersion "0.3.0"
+#endif
 #define Publisher "AETHERIS Medical Imaging Cloud"
 
 [Setup]

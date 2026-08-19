@@ -217,6 +217,11 @@ pub struct AdminUser {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstitutionSettings {
+    pub review_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordResetRequest {
     pub id: i64,
     pub user_id: i64,
@@ -1005,6 +1010,24 @@ impl RemoteState {
     pub async fn list_users(&self) -> Result<Vec<AdminUser>, RemoteError> {
         let url = self.session_url("api/v1/users").await?;
         self.get_json(url).await
+    }
+
+    pub async fn institution_settings(&self) -> Result<InstitutionSettings, RemoteError> {
+        let url = self.session_url("api/v1/institution/settings").await?;
+        self.get_json(url).await
+    }
+
+    pub async fn update_institution_settings(
+        &self,
+        review_required: bool,
+    ) -> Result<InstitutionSettings, RemoteError> {
+        let url = self.session_url("api/v1/institution/settings").await?;
+        self.authorized_json(
+            Method::PATCH,
+            url,
+            Some(serde_json::json!({ "review_required": review_required })),
+        )
+        .await
     }
 
     pub async fn create_user(

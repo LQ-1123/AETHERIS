@@ -1,6 +1,7 @@
 import {
   approveDevice,
   createUser,
+  getInstitutionSettings,
   listDevices,
   listPasswordResetRequests,
   listSeriesSources,
@@ -14,6 +15,7 @@ import {
   resolveSeriesSource,
   setDeviceStatus,
   updateUser,
+  updateInstitutionSettings,
   workloadReport,
 } from './api';
 import type { AdminUser, DicomDevice, PasswordResetRequest, SeriesSourceEntry, WorkloadRow } from './types';
@@ -24,7 +26,7 @@ function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return found as T;
 }
 
-type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'sources' | 'grants' | 'workload';
+type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'sources' | 'grants' | 'workload' | 'settings';
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   legacy_unattributed: '历史未归属',
@@ -109,7 +111,8 @@ export class AdminConsole {
       else if (this.tab === 'devices') await this.renderDevices();
       else if (this.tab === 'sources') await this.renderSources();
       else if (this.tab === 'grants') await this.renderGrants();
-      else await this.renderWorkload();
+      else if (this.tab === 'workload') await this.renderWorkload();
+      else await this.renderSettings();
     } catch (error) {
       this.showError(errorMessage(error));
     } finally {
@@ -727,6 +730,58 @@ export class AdminConsole {
     table.append(body); wrap.append(table); fragment.append(wrap);
     if (generation !== this.renderGeneration) return;
     this.body.replaceChildren(fragment);
+  }
+
+  private async renderSettings(): Promise<void> {
+    const generation = ++this.renderGeneration;
+    const settings = await getInstitutionSettings();
+    const fragment = document.createDocumentFragment();
+    const panel = document.createElement('section');
+    panel.className = 'admin-settings-panel';
+    const heading = document.createElement('div');
+    heading.className = 'admin-settings-copy';
+    const title = document.createElement('strong');
+    title.textContent = '报告审核闭环';
+    const description = document.createElement('span');
+    description.textContent = '开启后，医生提交的报告必须经具备审核权限的医生审核通过才能签发。关闭时保留直接签发，适合单医生或演示环境。';
+    heading.append(title, description);
+
+    const switchLabel = document.createElement('label');
+    switchLabel.className = 'admin-switch';
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = settings.review_required;
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-label', '启用报告审核闭环');
+    const track = document.createElement('span');
+    track.className = 'admin-switch-track';
+    const state = document.createElement('span');
+    state.className = 'admin-switch-state';
+    state.textContent = toggle.checked ? '已开启' : '已关闭';
+    toggle.addEventListener('change', () => void this.saveReviewRequired(toggle, state));
+    switchLabel.append(toggle, track, state);
+    panel.append(heading, switchLabel);
+    fragment.append(panel);
+    if (generation !== this.renderGeneration) return;
+    this.body.replaceChildren(fragment);
+  }
+
+  private async saveReviewRequired(toggle: HTMLInputElement, state: HTMLElement): Promise<void> {
+    const previous = !toggle.checked;
+    toggle.disabled = true;
+    this.clearError();
+    try {
+      const settings = await updateInstitutionSettings(toggle.checked);
+      toggle.checked = settings.review_required;
+      state.textContent = settings.review_required ? '已开启' : '已关闭';
+      this.showSuccess(`报告审核闭环已${settings.review_required ? '开启' : '关闭'}，新流程即时生效。`);
+    } catch (error) {
+      toggle.checked = previous;
+      state.textContent = previous ? '已开启' : '已关闭';
+      this.showError(errorMessage(error));
+    } finally {
+      toggle.disabled = false;
+    }
   }
 }
 

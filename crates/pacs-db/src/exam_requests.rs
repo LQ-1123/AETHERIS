@@ -130,10 +130,10 @@ pub async fn list_exam_requests(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<ExamRequest>, DbError> {
-    if let Some(status) = status {
-        if !matches!(status, "pending" | "executed" | "completed") {
-            return Err(DbError::Invalid("申请单状态无效".to_owned()));
-        }
+    if let Some(status) = status
+        && !matches!(status, "pending" | "executed" | "completed")
+    {
+        return Err(DbError::Invalid("申请单状态无效".to_owned()));
     }
     let mut query = QueryBuilder::<Postgres>::new(EXAM_REQUEST_SELECT);
     query.push(" WHERE er.institution_id=");

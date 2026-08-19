@@ -4,9 +4,9 @@ use crate::ai::AiState;
 use crate::mpr::{MprMetadata, MprRenderOptions, PixelStatistics, Plane, ProjectionMode, RoiShape};
 use crate::remote::{
     AdminUser, ClinicalWorkItem, DiagnosticReport, DicomDevice, DownloadProgress, ExamRequest,
-    ExamRequestStudyCandidate, PasswordResetRequest, PatientSummary, QueueStudyRow, RemoteState,
-    RemoteUser, ReportReviewEvent, ReportTemplate, ReportVersion, SeriesSourceEntry, SeriesSummary,
-    StudySummary, UserWindowPreset, WorkloadRow,
+    ExamRequestStudyCandidate, InstitutionSettings, PasswordResetRequest, PatientSummary,
+    QueueStudyRow, RemoteState, RemoteUser, ReportReviewEvent, ReportTemplate, ReportVersion,
+    SeriesSourceEntry, SeriesSummary, StudySummary, UserWindowPreset, WorkloadRow,
 };
 use crate::state::{SeriesMetadata, ViewerState};
 use pacs_ai::{SegmentationEngine, SegmentationRequest, SegmentationResult};
@@ -884,6 +884,27 @@ pub async fn resolve_series_source(
 #[tauri::command]
 pub async fn list_users(state: State<'_, RemoteState>) -> Result<Vec<AdminUser>, String> {
     state.list_users().await.map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn get_institution_settings(
+    state: State<'_, RemoteState>,
+) -> Result<InstitutionSettings, String> {
+    state
+        .institution_settings()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn update_institution_settings(
+    review_required: bool,
+    state: State<'_, RemoteState>,
+) -> Result<InstitutionSettings, String> {
+    state
+        .update_institution_settings(review_required)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

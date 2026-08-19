@@ -72,6 +72,19 @@ try {
   assert.equal(reviewCall?.args.approve, true);
   await page.screenshot({ path: `${outputDirectory}/admin-password-reset-approved.png` });
 
+  await page.click('[data-admin-tab="settings"]');
+  await page.getByText('报告审核闭环', { exact: true }).waitFor();
+  const reviewSwitch = page.getByRole('switch', { name: '启用报告审核闭环' });
+  assert.equal(await reviewSwitch.isChecked(), false);
+  await page.screenshot({ path: `${outputDirectory}/institution-review-disabled.png` });
+  await page.locator('.admin-switch').click();
+  await page.getByText('报告审核闭环已开启，新流程即时生效。').waitFor();
+  assert.equal(await reviewSwitch.isChecked(), true);
+  const settingCall = await page.evaluate(() => window.__passwordResetAcceptance?.calls
+    .find((call) => call.command === 'update_institution_settings'));
+  assert.equal(settingCall?.args.reviewRequired, true);
+  await page.screenshot({ path: `${outputDirectory}/institution-review-enabled.png` });
+
   const metrics = await page.evaluate(() => ({
     viewportWidth: window.innerWidth,
     scrollWidth: document.documentElement.scrollWidth,

@@ -125,6 +125,8 @@ fn main() {
             commands::list_series_sources,
             commands::resolve_series_source,
             commands::list_users,
+            commands::get_institution_settings,
+            commands::update_institution_settings,
             commands::create_user,
             commands::update_user,
             commands::list_password_reset_requests,

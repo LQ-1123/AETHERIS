@@ -3,6 +3,7 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 export interface PasswordResetAcceptanceState {
   calls: Array<{ command: string; args: Record<string, unknown> }>;
   approved: boolean;
+  reviewRequired: boolean;
 }
 
 declare global {
@@ -12,7 +13,7 @@ declare global {
 }
 
 export function installPasswordResetAcceptanceMock(): void {
-  const state: PasswordResetAcceptanceState = { calls: [], approved: false };
+  const state: PasswordResetAcceptanceState = { calls: [], approved: false, reviewRequired: false };
   window.__passwordResetAcceptance = state;
   mockWindows('main');
   const invokeHandler = async (command: string, payload?: Record<string, unknown>): Promise<unknown> => {
@@ -59,6 +60,13 @@ export function installPasswordResetAcceptanceMock(): void {
       ];
     }
     if (command === 'list_user_permissions') return [];
+    if (command === 'get_institution_settings') {
+      return { review_required: state.reviewRequired };
+    }
+    if (command === 'update_institution_settings') {
+      state.reviewRequired = Boolean(args.reviewRequired);
+      return { review_required: state.reviewRequired };
+    }
     if (command === 'list_password_reset_requests') {
       return state.approved ? [] : [{
         id: 17,

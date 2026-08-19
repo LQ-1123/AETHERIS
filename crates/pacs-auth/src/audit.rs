@@ -47,6 +47,7 @@ pub enum Action {
     DeviceApproved,
     DeviceRegistered,
     DeviceGrantChanged,
+    InstitutionSettingsChanged,
     WorkItemClaimed,
     WorkItemAssigned,
     ExamRequestCreated,
@@ -85,6 +86,7 @@ impl Action {
             Self::DeviceApproved => "device_approved",
             Self::DeviceRegistered => "device_registered",
             Self::DeviceGrantChanged => "device_grant_changed",
+            Self::InstitutionSettingsChanged => "institution_settings_changed",
             Self::WorkItemClaimed => "work_item_claimed",
             Self::WorkItemAssigned => "work_item_assigned",
             Self::ExamRequestCreated => "exam_request_created",
@@ -255,6 +257,7 @@ mod tests {
             Action::SegmentationDeleted,
             Action::SegmentationTagsUpdated,
             Action::SegmentationMaskUpdated,
+            Action::InstitutionSettingsChanged,
         ];
         let unique: std::collections::HashSet<_> = actions.iter().map(|a| a.as_str()).collect();
         assert_eq!(unique.len(), actions.len(), "动作名有重复,统计会串");

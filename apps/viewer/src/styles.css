@@ -876,6 +876,94 @@ button svg {
   min-height: 200px;
 }
 
+.admin-settings-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px;
+  border: 1px solid #33505c;
+  border-radius: 10px;
+  background: #111b20;
+}
+
+.admin-settings-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 720px;
+}
+
+.admin-settings-copy strong {
+  color: #edf7fa;
+  font-size: 15px;
+}
+
+.admin-settings-copy span {
+  color: #9fc3cd;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.admin-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  cursor: pointer;
+}
+
+.admin-switch input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+
+.admin-switch-track {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: #40545c;
+  transition: background 160ms ease;
+}
+
+.admin-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #edf7fa;
+  transition: transform 160ms ease;
+}
+
+.admin-switch input:checked + .admin-switch-track {
+  background: #2aa7b8;
+}
+
+.admin-switch input:checked + .admin-switch-track::after {
+  transform: translateX(20px);
+}
+
+.admin-switch input:focus-visible + .admin-switch-track {
+  outline: 2px solid #79d6e2;
+  outline-offset: 3px;
+}
+
+.admin-switch input:disabled + .admin-switch-track {
+  opacity: 0.55;
+}
+
+.admin-switch-state {
+  min-width: 42px;
+  color: #c8e8ed;
+  font-size: 12px;
+}
+
 .admin-device-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

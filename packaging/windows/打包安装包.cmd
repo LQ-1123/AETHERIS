@@ -10,6 +10,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo 打包完成：packaging\windows\output\AETHERIS-Setup-0.2.0-x64.exe
+echo 打包完成，请在 packaging\windows\output 查看带版本号的安装包。
 pause
-
