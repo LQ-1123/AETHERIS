@@ -53,3 +53,5 @@ temp/generated/
 temp/*-acceptance/
 temp/acceptance/
 temp/exam-request-workload-checklist/
+temp/release-0.3.0/
+temp/readme-preview/
