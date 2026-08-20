@@ -2,6 +2,18 @@
 
 本项目所有值得记录的变更。
 
+## [v0.4.0] — 2026-08-20
+
+### DICOM Query/Retrieve
+
+- 实现 C-MOVE SCP：Study Root 查询、Move Destination 白名单、逐实例 C-STORE 子操作与完成/失败/警告计数响应。
+- 实现 C-GET SCP：同一 association 返回 C-STORE 子操作，并保持原始归档实例与传输语法。
+- 实现 C-FIND/C-MOVE SCU，管理员可从外部 PACS 查询检查并主动拉取；回传数据继续走现有 C-STORE 幂等入库与来源归属链路。
+- `dicom_devices` 新增外部检索源标记、DIMSE 端口与 TLS 配置；未批准设备不能启用，C-MOVE 目的地只从本机 AE 或已批准设备解析。
+- 管理控制台新增“外部 PACS / 拉取”页签，支持检索源配置、患者/模态/日期查询和检查级拉取结果。
+- 外部拉取改为持久化后台任务，展示 Pending 子操作进度与结果计数，支持任务列表、详情和合作式 C-CANCEL。
+- 新增 DCMTK `movescu`/`getscu` 互操作回归，覆盖双实例 Pending、`0xA801 Move Destination Unknown` 和 C-GET Storage 角色协商。
+
 ## [v0.3.0] — 2026-08-19
 
 > 完整功能、升级步骤、安装包校验值和已知限制见 [v0.3.0 发布说明](doc/releases/v0.3.0.md)。

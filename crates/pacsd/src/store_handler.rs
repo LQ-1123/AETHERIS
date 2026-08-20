@@ -20,6 +20,7 @@ use pacs_db::{
 };
 use pacs_dimse::{
     FindFailure, FindHandler, FindRequest, FindResponse, IncomingAssociation, IncomingInstance,
+    MoveDestination, RetrieveFailure, RetrieveHandler, RetrieveRequest, RetrievedInstance,
     StoreFailure, StoreHandler,
 };
 use pacs_store::{InstanceKey, Store};
@@ -31,14 +32,23 @@ pub struct PacsStoreHandler {
     pool: PgPool,
     /// 单次 C-FIND 的结果条数上限。
     find_limit: usize,
+    ae_title: String,
+    dimse_bind: std::net::SocketAddr,
 }
 
 impl PacsStoreHandler {
-    pub fn new(store: Store, pool: PgPool) -> Self {
+    pub fn new(
+        store: Store,
+        pool: PgPool,
+        ae_title: impl Into<String>,
+        dimse_bind: std::net::SocketAddr,
+    ) -> Self {
         Self {
             store,
             pool,
             find_limit: pacs_db::DEFAULT_LIMIT,
+            ae_title: ae_title.into(),
+            dimse_bind,
         }
     }
 }
@@ -199,6 +209,118 @@ impl FindHandler for PacsStoreHandler {
             keys_unsupported: !results.unsupported_keys.is_empty(),
             identifiers: results.identifiers,
         })
+    }
+}
+
+impl RetrieveHandler for PacsStoreHandler {
+    async fn retrieve(
+        &self,
+        request: RetrieveRequest<'_>,
+    ) -> Result<Vec<RetrievedInstance>, RetrieveFailure> {
+        use dicom::dictionary_std::tags;
+        use pacs_core::query::MatchKey;
+
+        let authorized = pacs_db::is_authorized_dimse_peer(
+            &self.pool,
+            1,
+            request.calling_ae_title,
+            &request.remote_addr.ip().to_string(),
+        )
+        .await
+        .map_err(|error| RetrieveFailure::Processing(error.to_string()))?;
+        if !authorized {
+            tracing::warn!(
+                calling_ae_title=request.calling_ae_title,
+                remote_addr=%request.remote_addr,
+                "未批准设备尝试 DICOM 检索"
+            );
+            return Err(RetrieveFailure::Unsupported(
+                "对端设备未获检索授权".to_owned(),
+            ));
+        }
+
+        let study_uid = match request.query.keys.get(&tags::STUDY_INSTANCE_UID) {
+            Some(MatchKey::Single(uid)) => uid.as_str(),
+            _ => {
+                return Err(RetrieveFailure::Unsupported(
+                    "v0.4.0 首期要求 StudyInstanceUID 单值".to_owned(),
+                ));
+            }
+        };
+        let rows = pacs_db::list_study_retrieval_instances(&self.pool, 1, study_uid)
+            .await
+            .map_err(|error| RetrieveFailure::Processing(error.to_string()))?;
+        let mut instances = Vec::with_capacity(rows.len());
+        for row in rows {
+            if row.sop_class_uid.is_empty() {
+                tracing::warn!(sop_instance_uid=%row.sop_instance_uid, "检索实例缺少 SOP Class UID，跳过");
+                continue;
+            }
+            let bytes = self
+                .store
+                .read(&row.storage_path)
+                .await
+                .map_err(|error| RetrieveFailure::Processing(error.to_string()))?;
+            instances.push(RetrievedInstance {
+                sop_class_uid: row.sop_class_uid,
+                sop_instance_uid: row.sop_instance_uid,
+                transfer_syntax_uid: row.transfer_syntax_uid,
+                file_bytes: bytes,
+            });
+        }
+        Ok(instances)
+    }
+
+    async fn move_destination(
+        &self,
+        _calling_ae_title: &str,
+        destination: &str,
+    ) -> Result<Option<MoveDestination>, RetrieveFailure> {
+        let destination = destination.trim();
+        if destination.is_empty() {
+            return Ok(None);
+        }
+        if destination == self.ae_title {
+            let host = if self.dimse_bind.ip().is_unspecified() {
+                "127.0.0.1".to_owned()
+            } else {
+                self.dimse_bind.ip().to_string()
+            };
+            return Ok(Some(MoveDestination {
+                ae_title: destination.to_owned(),
+                config: pacs_dimse::DimseClientConfig::new(
+                    host,
+                    self.dimse_bind.port(),
+                    destination,
+                    &self.ae_title,
+                ),
+            }));
+        }
+
+        let Some(device) = pacs_db::move_destination_by_ae(&self.pool, 1, destination)
+            .await
+            .map_err(|error| RetrieveFailure::Processing(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let Some(port) = device
+            .retrieval_port
+            .and_then(|port| u16::try_from(port).ok())
+        else {
+            return Ok(None);
+        };
+        let mut config = pacs_dimse::DimseClientConfig::new(
+            device.source_ip,
+            port,
+            device.calling_ae_title.clone(),
+            &self.ae_title,
+        );
+        config.use_tls = device.retrieval_use_tls;
+        config.ca_pem = device.retrieval_ca_pem;
+        Ok(Some(MoveDestination {
+            ae_title: device.calling_ae_title,
+            config,
+        }))
     }
 }
 

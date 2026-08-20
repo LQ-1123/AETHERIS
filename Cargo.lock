@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aetheris-launcher"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "aho-corasick"
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-ai"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "serde",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-auth"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-codec"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dicom",
  "dicom-pixeldata",
@@ -2700,7 +2700,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "dicom",
@@ -2716,7 +2716,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-db"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "dicom",
@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-dimse"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dicom",
  "dicom-dictionary-std",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-store"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "futures",
  "pacs-core",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "pacs-web"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "base64",
@@ -2801,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "pacsd"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",

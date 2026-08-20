@@ -1667,6 +1667,21 @@ impl RemoteState {
         Ok(())
     }
 
+    pub async fn retrieval_get(&self, path: &str) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url(&format!("api/v1/retrieval/{path}")).await?;
+        self.get_json(url).await
+    }
+
+    pub async fn retrieval_write(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, RemoteError> {
+        let url = self.session_url(&format!("api/v1/retrieval/{path}")).await?;
+        self.authorized_json(method, url, body).await
+    }
+
     pub async fn lifecycle_get(&self, path: &str) -> Result<serde_json::Value, RemoteError> {
         let url = self
             .session_url(&format!("api/v1/lifecycle/{path}"))

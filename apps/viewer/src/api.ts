@@ -58,6 +58,8 @@ import type {
   VoiFunction,
   UserWindowPreset,
   WorkloadRow,
+  RemotePacsStudy,
+  RetrievalJob,
 } from './types';
 
 type InvokeFn = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -110,6 +112,32 @@ async function routerDelete(path: string): Promise<void> {
   const invoke = await getInvoke();
   await invoke('router_delete', { path });
 }
+
+async function retrievalGet<T>(path: string): Promise<T> {
+  const invoke = await getInvoke();
+  return invoke<T>('retrieval_get', { path });
+}
+
+async function retrievalWrite<T>(method: 'POST' | 'PUT', path: string, body: unknown): Promise<T> {
+  const invoke = await getInvoke();
+  return invoke<T>('retrieval_write', { method, path, body });
+}
+
+export const listRetrievalSources = (): Promise<DicomDevice[]> => retrievalGet('sources');
+export const configureRetrievalSource = (
+  deviceId: string,
+  input: { enabled: boolean; port: number | null; use_tls: boolean; ca_pem?: string },
+): Promise<DicomDevice> => retrievalWrite('PUT', `sources/${deviceId}`, input);
+export const queryRetrievalSource = (
+  deviceId: string,
+  input: { patient_id?: string; accession_number?: string; study_date_from?: string; study_date_to?: string; modality?: string },
+): Promise<RemotePacsStudy[]> => retrievalWrite('POST', `sources/${deviceId}/query`, input);
+export const moveRetrievalStudy = (deviceId: string, studyInstanceUid: string): Promise<RetrievalJob> =>
+  retrievalWrite('POST', `sources/${deviceId}/move`, { study_instance_uid: studyInstanceUid });
+export const listRetrievalJobs = (): Promise<RetrievalJob[]> => retrievalGet('jobs');
+export const getRetrievalJob = (jobId: string): Promise<RetrievalJob> => retrievalGet(`jobs/${jobId}`);
+export const cancelRetrievalJob = (jobId: string): Promise<RetrievalJob> =>
+  retrievalWrite('POST', `jobs/${jobId}/cancel`, {});
 
 export const listRouteDestinations = (): Promise<RouteDestination[]> => routerGet('destinations');
 export const getLocalDicomNode = (): Promise<LocalDicomNode> => routerGet('node');

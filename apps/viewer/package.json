@@ -1,12 +1,13 @@
 {
   "name": "pacs-viewer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
     "test:visual": "node scripts/visual-check.mjs",
+    "test:retrieval-visual": "node scripts/retrieval-visual.mjs",
     "test:visual:queue": "node scripts/queue-page-visual.mjs",
     "test:visual:report": "node scripts/report-workspace-visual.mjs",
     "test:visual:password-reset": "node scripts/password-reset-acceptance.mjs",

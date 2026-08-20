@@ -26,6 +26,19 @@ pub const FIND: &[&str] = &[
     "1.2.840.10008.5.1.4.1.2.2.1", // Study Root Query/Retrieve - FIND
 ];
 
+/// Query/Retrieve Move and Get SOP Classes (Patient Root and Study Root).
+pub const RETRIEVE: &[&str] = &[
+    "1.2.840.10008.5.1.4.1.2.1.2", // Patient Root - MOVE
+    "1.2.840.10008.5.1.4.1.2.2.2", // Study Root - MOVE
+    "1.2.840.10008.5.1.4.1.2.1.3", // Patient Root - GET
+    "1.2.840.10008.5.1.4.1.2.2.3", // Study Root - GET
+];
+
+pub const PATIENT_ROOT_MOVE: &str = "1.2.840.10008.5.1.4.1.2.1.2";
+pub const STUDY_ROOT_MOVE: &str = "1.2.840.10008.5.1.4.1.2.2.2";
+pub const PATIENT_ROOT_GET: &str = "1.2.840.10008.5.1.4.1.2.1.3";
+pub const STUDY_ROOT_GET: &str = "1.2.840.10008.5.1.4.1.2.2.3";
+
 /// Patient Root 的 C-FIND SOP Class,查询层级从 PATIENT 起。
 pub const PATIENT_ROOT_FIND: &str = "1.2.840.10008.5.1.4.1.2.1.1";
 /// Study Root 的 C-FIND SOP Class,查询层级从 STUDY 起。

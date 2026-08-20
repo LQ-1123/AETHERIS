@@ -470,6 +470,10 @@ async fn openapi_document() -> Json<serde_json::Value> {
         .as_object_mut()
         .expect("OpenAPI paths must be an object")
         .extend(lifecycle_openapi_paths());
+    document["paths"]
+        .as_object_mut()
+        .expect("OpenAPI paths must be an object")
+        .extend(retrieval_openapi_paths());
     Json(document)
 }
 
@@ -567,6 +571,35 @@ fn lifecycle_openapi_paths() -> serde_json::Map<String, serde_json::Value> {
         }
     }) else {
         unreachable!("lifecycle OpenAPI paths must be an object")
+    };
+    paths
+}
+
+fn retrieval_openapi_paths() -> serde_json::Map<String, serde_json::Value> {
+    let serde_json::Value::Object(paths) = serde_json::json!({
+        "/api/v1/retrieval/sources": {
+            "get": {"summary": "List approved external PACS retrieval sources", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Retrieval source list"}}}
+        },
+        "/api/v1/retrieval/sources/{device_id}": {
+            "put": {"summary": "Enable or disable one approved device as a retrieval source", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Updated retrieval source"}}}
+        },
+        "/api/v1/retrieval/sources/{device_id}/query": {
+            "post": {"summary": "Run a Study Root C-FIND against an external PACS", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Remote Study matches"}}}
+        },
+        "/api/v1/retrieval/sources/{device_id}/move": {
+            "post": {"summary": "Queue a Study Root C-MOVE into the local PACS", "security": [{"userAccessToken": []}], "responses": {"202": {"description": "Durable retrieval job queued"}}}
+        },
+        "/api/v1/retrieval/jobs": {
+            "get": {"summary": "List external PACS retrieval jobs and progress", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Retrieval job list"}}}
+        },
+        "/api/v1/retrieval/jobs/{job_id}": {
+            "get": {"summary": "Get one external PACS retrieval job", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Retrieval job"}}}
+        },
+        "/api/v1/retrieval/jobs/{job_id}/cancel": {
+            "post": {"summary": "Request cooperative C-CANCEL for a queued or running retrieval", "security": [{"userAccessToken": []}], "responses": {"200": {"description": "Cancellation requested"}, "409": {"description": "Job already finished"}}}
+        }
+    }) else {
+        unreachable!("retrieval OpenAPI paths must be an object")
     };
     paths
 }
@@ -851,7 +884,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn openapi_includes_exam_request_and_review_workflows() {
+    async fn openapi_includes_clinical_and_retrieval_workflows() {
         let Json(document) = openapi_document().await;
         let paths = document["paths"].as_object().expect("OpenAPI paths");
         for path in [
@@ -860,6 +893,9 @@ mod tests {
             "/api/v1/workload",
             "/api/v1/reports/{report_id}/submit",
             "/api/v1/reports/{report_id}/review/approve",
+            "/api/v1/retrieval/sources/{device_id}/query",
+            "/api/v1/retrieval/sources/{device_id}/move",
+            "/api/v1/retrieval/jobs/{job_id}/cancel",
         ] {
             assert!(paths.contains_key(path), "missing OpenAPI path {path}");
         }

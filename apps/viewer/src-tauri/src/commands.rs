@@ -1486,6 +1486,35 @@ pub async fn router_delete(path: String, state: State<'_, RemoteState>) -> Resul
 }
 
 #[tauri::command]
+pub async fn retrieval_get(
+    path: String,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .retrieval_get(&path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn retrieval_write(
+    method: String,
+    path: String,
+    body: serde_json::Value,
+    state: State<'_, RemoteState>,
+) -> Result<serde_json::Value, String> {
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| "外部 PACS HTTP 方法无效".to_owned())?;
+    if !matches!(method, reqwest::Method::POST | reqwest::Method::PUT) {
+        return Err("外部 PACS 只允许 POST 或 PUT".to_owned());
+    }
+    state
+        .retrieval_write(method, &path, Some(body))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn lifecycle_get(
     path: String,
     state: State<'_, RemoteState>,

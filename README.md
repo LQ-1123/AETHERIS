@@ -197,6 +197,8 @@ Only implemented protocol surfaces are listed here.
 | DIMSE | C-ECHO SCP | Connectivity verification |
 | DIMSE | C-STORE SCP | Durable DICOM object receipt with transfer-syntax negotiation, including RLE Lossless |
 | DIMSE | C-FIND SCP | Patient, study, series, and instance hierarchy queries |
+| DIMSE | C-MOVE SCP / SCU | Study Root retrieval with destination allowlisting and C-STORE ingestion |
+| DIMSE | C-GET SCP | Same-association Study Root retrieval with sub-operation counters |
 | DICOMweb | QIDO-RS | Authenticated, institution-scoped metadata search |
 | DICOMweb | WADO-RS | Authenticated object, instance, metadata, and frame retrieval |
 | DICOMweb | STOW-RS | Multipart DICOM Part 10 ingestion |

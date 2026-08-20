@@ -247,6 +247,63 @@ export function installQueueAcceptanceMock(): void {
       const offset = Number(args.offset ?? 0);
       return rows.slice(offset, offset + limit);
     }
+    if (command === 'list_devices') {
+      return [
+        {
+          id: '00000000-0000-4000-8000-000000000401', name: '华东影像中心 PACS',
+          calling_ae_title: 'EAST_PACS', source_ip: '10.20.30.40', modality_hint: 'CT / MR',
+          status: 'active', is_retrieval_source: true, retrieval_port: 104,
+          retrieval_use_tls: false, approved_at: '2026-08-20T01:00:00Z',
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000402', name: '分院归档节点',
+          calling_ae_title: 'BRANCH_PACS', source_ip: '10.20.40.12', modality_hint: 'DX',
+          status: 'active', is_retrieval_source: false, retrieval_port: null,
+          retrieval_use_tls: false, approved_at: '2026-08-20T01:00:00Z',
+        },
+      ];
+    }
+    if (command === 'list_users') return [];
+    if (command === 'list_password_reset_requests') return [];
+    if (command === 'retrieval_get') {
+      const path = String(args.path ?? '');
+      if (path === 'jobs') {
+        return [
+          {
+            id: '00000000-0000-4000-8000-000000000501', kind: 'retrieval', status: 'running',
+            payload: { device_id: '00000000-0000-4000-8000-000000000401', source_name: '华东影像中心 PACS', source_ae_title: 'EAST_PACS', study_instance_uid: '1.2.840.113619.2.55.3.604688.20260820.1' },
+            result: { remaining: 54, completed: 72, failed: 1, warning: 1 },
+            progress_completed: 74, progress_total: 128, cancel_requested: false, error_message: null,
+            created_at: '2026-08-20T01:10:00Z', started_at: '2026-08-20T01:10:01Z', completed_at: null,
+          },
+          {
+            id: '00000000-0000-4000-8000-000000000502', kind: 'retrieval', status: 'succeeded',
+            payload: { device_id: '00000000-0000-4000-8000-000000000401', source_name: '华东影像中心 PACS', source_ae_title: 'EAST_PACS', study_instance_uid: '1.2.840.113619.2.55.3.604688.20260818.7' },
+            result: { remaining: 0, completed: 96, failed: 0, warning: 0 },
+            progress_completed: 96, progress_total: 96, cancel_requested: false, error_message: null,
+            created_at: '2026-08-20T00:40:00Z', started_at: '2026-08-20T00:40:01Z', completed_at: '2026-08-20T00:41:12Z',
+          },
+        ];
+      }
+      return [{
+        id: '00000000-0000-4000-8000-000000000401', name: '华东影像中心 PACS',
+        calling_ae_title: 'EAST_PACS', source_ip: '10.20.30.40', modality_hint: 'CT / MR',
+        status: 'active', is_retrieval_source: true, retrieval_port: 104,
+        retrieval_use_tls: false, approved_at: '2026-08-20T01:00:00Z',
+      }];
+    }
+    if (command === 'retrieval_write') {
+      const path = String(args.path ?? '');
+      if (path.endsWith('/query')) {
+        return [
+          { study_instance_uid: '1.2.840.113619.2.55.3.604688.20260820.1', patient_id: 'P-20260820-01', patient_name: '张^明', study_date: '20260820', accession_number: 'EXT-CT-26082001', modalities: 'CT', description: '胸部薄层 CT' },
+          { study_instance_uid: '1.2.840.113619.2.55.3.604688.20260818.7', patient_id: 'P-20260818-07', patient_name: '李^华', study_date: '20260818', accession_number: 'EXT-MR-26081807', modalities: 'MR', description: '颅脑 MR 平扫' },
+        ];
+      }
+      if (path.endsWith('/cancel')) return { id: path.split('/')[1], kind: 'retrieval', status: 'running', cancel_requested: true };
+      if (path.endsWith('/move')) return { id: '00000000-0000-4000-8000-000000000503', kind: 'retrieval', status: 'queued', payload: {}, result: {}, progress_completed: 0, progress_total: 0, cancel_requested: false, error_message: null, created_at: '2026-08-20T01:20:00Z', started_at: null, completed_at: null };
+      return null;
+    }
     if (command === 'list_patient_studies') return remoteStudies(Number(args.patientId ?? 0));
     if (command === 'list_study_series') return remoteSeries(String(args.studyUid ?? ''));
     if (command === 'open_remote_series') {

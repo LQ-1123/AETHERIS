@@ -3,6 +3,12 @@ import {
   createUser,
   getInstitutionSettings,
   listDevices,
+  listRetrievalSources,
+  configureRetrievalSource,
+  queryRetrievalSource,
+  moveRetrievalStudy,
+  listRetrievalJobs,
+  cancelRetrievalJob,
   listPasswordResetRequests,
   listSeriesSources,
   listUserDeviceGrants,
@@ -18,7 +24,7 @@ import {
   updateInstitutionSettings,
   workloadReport,
 } from './api';
-import type { AdminUser, DicomDevice, PasswordResetRequest, SeriesSourceEntry, WorkloadRow } from './types';
+import type { AdminUser, DicomDevice, PasswordResetRequest, RemotePacsStudy, RetrievalJob, SeriesSourceEntry, WorkloadRow } from './types';
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -26,7 +32,7 @@ function element<T extends HTMLElement = HTMLElement>(id: string): T {
   return found as T;
 }
 
-type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'sources' | 'grants' | 'workload' | 'settings';
+type AdminTab = 'accounts' | 'password-resets' | 'devices' | 'retrieval' | 'sources' | 'grants' | 'workload' | 'settings';
 
 const SOURCE_STATUS_LABELS: Record<string, string> = {
   legacy_unattributed: '历史未归属',
@@ -47,6 +53,10 @@ export class AdminConsole {
   private devices: DicomDevice[] = [];
   private users: AdminUser[] = [];
   private passwordResetRequests: PasswordResetRequest[] = [];
+  private retrievalSources: DicomDevice[] = [];
+  private retrievalResults: RemotePacsStudy[] = [];
+  private retrievalJobs: RetrievalJob[] = [];
+  private retrievalPollingTimer: number | null = null;
   private busy = false;
   private sourcesOffset = 0;
   /** 渲染代际：每次渲染自增；过期渲染不得写 DOM（防快速点击时的交错渲染）。 */
@@ -54,11 +64,13 @@ export class AdminConsole {
 
   constructor(private readonly reportError: (message: string) => void) {
     element<HTMLButtonElement>('admin-console-btn').addEventListener('click', () => void this.open());
-    element<HTMLButtonElement>('admin-console-close').addEventListener('click', () => this.dialog.close());
+    element<HTMLButtonElement>('admin-console-close').addEventListener('click', () => this.close());
+    this.dialog.addEventListener('close', () => this.stopRetrievalPolling());
     element<HTMLButtonElement>('admin-console-refresh').addEventListener('click', () => void this.refresh());
     for (const button of document.querySelectorAll<HTMLButtonElement>('[data-admin-tab]')) {
       button.addEventListener('click', () => {
         this.tab = button.dataset.adminTab as AdminTab;
+        if (this.tab !== 'retrieval') this.stopRetrievalPolling();
         for (const candidate of document.querySelectorAll<HTMLButtonElement>('[data-admin-tab]')) {
           candidate.classList.toggle('active', candidate === button);
         }
@@ -73,6 +85,7 @@ export class AdminConsole {
   }
 
   close(): void {
+    this.stopRetrievalPolling();
     if (this.dialog.open) this.dialog.close();
   }
 
@@ -109,6 +122,7 @@ export class AdminConsole {
       if (this.tab === 'accounts') await this.renderAccounts();
       else if (this.tab === 'password-resets') this.renderPasswordResetRequests();
       else if (this.tab === 'devices') await this.renderDevices();
+      else if (this.tab === 'retrieval') await this.renderRetrieval();
       else if (this.tab === 'sources') await this.renderSources();
       else if (this.tab === 'grants') await this.renderGrants();
       else if (this.tab === 'workload') await this.renderWorkload();
@@ -118,6 +132,202 @@ export class AdminConsole {
     } finally {
       this.busy = false;
     }
+  }
+
+  private async renderRetrieval(): Promise<void> {
+    [this.retrievalSources, this.retrievalJobs] = await Promise.all([
+      listRetrievalSources(),
+      listRetrievalJobs(),
+    ]);
+    const fragment = document.createDocumentFragment();
+    const intro = document.createElement('p');
+    intro.className = 'admin-section-note';
+    intro.textContent = '仅管理员可配置已批准的外部 PACS。查询使用 Study Root C-FIND，拉取通过 C-MOVE 回到本机 AE；地址不会由浏览器直接连接。';
+    fragment.append(intro);
+
+    const sourceList = document.createElement('div');
+    sourceList.className = 'admin-list retrieval-source-list';
+    const candidates = this.devices.filter((device) => device.status === 'active');
+    if (candidates.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'admin-empty';
+      empty.textContent = '暂无已批准设备。先在“设备”页批准外部 PACS。';
+      sourceList.append(empty);
+    }
+    for (const device of candidates) {
+      const row = document.createElement('div');
+      row.className = 'admin-row retrieval-source-row';
+      const info = document.createElement('div');
+      info.className = 'admin-row-info';
+      const title = document.createElement('strong');
+      title.textContent = device.name;
+      const meta = document.createElement('span');
+      meta.textContent = `${device.calling_ae_title} · ${device.source_ip}${device.modality_hint ? ` · ${device.modality_hint}` : ''}`;
+      info.append(title, meta);
+      const controls = document.createElement('div');
+      controls.className = 'admin-row-actions retrieval-source-controls';
+      const port = document.createElement('input');
+      port.type = 'number'; port.min = '1'; port.max = '65535'; port.placeholder = 'DIMSE 端口';
+      port.value = device.retrieval_port ? String(device.retrieval_port) : '11112';
+      const tls = document.createElement('label');
+      tls.className = 'admin-inline-check';
+      const tlsInput = document.createElement('input'); tlsInput.type = 'checkbox'; tlsInput.checked = device.retrieval_use_tls;
+      tls.append(tlsInput, document.createTextNode('TLS'));
+      const toggle = document.createElement('button');
+      toggle.type = 'button'; toggle.className = 'command-button';
+      toggle.textContent = device.is_retrieval_source ? '停用检索' : '启用检索';
+      toggle.addEventListener('click', () => void (async () => {
+        try {
+          await configureRetrievalSource(device.id, {
+            enabled: !device.is_retrieval_source,
+            port: Number(port.value) || null,
+            use_tls: tlsInput.checked,
+          });
+          this.showSuccess(`${device.name} 检索源配置已更新`);
+          await this.refresh();
+        } catch (error) { this.showError(errorMessage(error)); }
+      })());
+      controls.append(port, tls, toggle);
+      row.append(info, controls); sourceList.append(row);
+    }
+    fragment.append(sourceList);
+
+    const form = document.createElement('form');
+    form.className = 'retrieval-query-form';
+    const source = document.createElement('select');
+    source.required = true;
+    for (const device of this.retrievalSources) {
+      const option = document.createElement('option'); option.value = device.id; option.textContent = `${device.name}（${device.calling_ae_title}）`; source.append(option);
+    }
+    const patient = document.createElement('input'); patient.placeholder = '患者 ID（可选）';
+    const modality = document.createElement('input'); modality.placeholder = '模态（如 CT）';
+    const from = document.createElement('input'); from.type = 'date';
+    const to = document.createElement('input'); to.type = 'date';
+    const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'command-button'; submit.textContent = '查询外部检查';
+    const label = (caption: string, input: HTMLElement) => { const wrapper = document.createElement('label'); wrapper.textContent = caption; wrapper.append(input); return wrapper; };
+    form.append(label('来源', source), label('患者 ID', patient), label('模态', modality), label('起始日期', from), label('结束日期', to), submit);
+    form.addEventListener('submit', (event) => { event.preventDefault(); void (async () => {
+      try {
+        this.retrievalResults = await queryRetrievalSource(source.value, { patient_id: patient.value || undefined, modality: modality.value || undefined, study_date_from: from.value || undefined, study_date_to: to.value || undefined });
+        await this.renderRetrieval();
+      } catch (error) { this.showError(errorMessage(error)); }
+    })(); });
+    fragment.append(form);
+    await this.renderRetrievalResults(fragment, source.value);
+    this.renderRetrievalJobs(fragment);
+    this.body.replaceChildren(fragment);
+    this.scheduleRetrievalPolling();
+  }
+
+  private async renderRetrievalResults(fragment: DocumentFragment, sourceId: string): Promise<void> {
+    const list = document.createElement('div'); list.className = 'admin-list retrieval-results';
+    if (this.retrievalResults.length === 0) { const empty = document.createElement('p'); empty.className = 'admin-empty'; empty.textContent = '填写条件并查询，结果将在此显示。'; list.append(empty); }
+    for (const study of this.retrievalResults) {
+      const row = document.createElement('div'); row.className = 'admin-row';
+      const info = document.createElement('div'); info.className = 'admin-row-info';
+      const title = document.createElement('strong'); title.textContent = study.patient_name || study.patient_id || '未命名患者';
+      const meta = document.createElement('span'); meta.textContent = [study.study_date, study.accession_number, study.modalities, study.description].filter(Boolean).join(' · ');
+      const uid = document.createElement('code'); uid.textContent = study.study_instance_uid;
+      info.append(title, meta, uid);
+      const pull = document.createElement('button'); pull.type = 'button'; pull.className = 'command-button'; pull.textContent = '拉取入库';
+      pull.addEventListener('click', () => void (async () => {
+        pull.disabled = true;
+        try {
+          await moveRetrievalStudy(sourceId, study.study_instance_uid);
+          this.showSuccess('C-MOVE 拉取任务已创建，可在下方查看进度或取消');
+          await this.refresh();
+        }
+        catch (error) { this.showError(errorMessage(error)); } finally { pull.disabled = false; }
+      })());
+      row.append(info, pull); list.append(row);
+    }
+    fragment.append(list);
+  }
+
+  private renderRetrievalJobs(fragment: DocumentFragment): void {
+    const heading = document.createElement('h3');
+    heading.className = 'retrieval-jobs-heading';
+    heading.textContent = '拉取任务';
+    fragment.append(heading);
+    const list = document.createElement('div');
+    list.className = 'admin-list retrieval-jobs';
+    if (this.retrievalJobs.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'admin-empty';
+      empty.textContent = '暂无拉取任务。';
+      list.append(empty);
+    }
+    const statusLabels: Record<RetrievalJob['status'], string> = {
+      queued: '排队中', running: '拉取中', succeeded: '已完成', failed: '失败', cancelled: '已取消',
+    };
+    for (const job of this.retrievalJobs) {
+      const row = document.createElement('div');
+      row.className = `admin-row retrieval-job retrieval-job-${job.status}`;
+      const info = document.createElement('div');
+      info.className = 'admin-row-info';
+      const title = document.createElement('strong');
+      title.textContent = job.payload.source_name || job.payload.source_ae_title || '外部 PACS';
+      const status = document.createElement('span');
+      status.className = 'retrieval-job-status';
+      status.textContent = job.cancel_requested && job.status === 'running' ? '正在取消' : statusLabels[job.status];
+      const uid = document.createElement('code');
+      uid.textContent = job.payload.study_instance_uid || 'Study UID 未记录';
+      const counts = document.createElement('span');
+      const completed = job.result.completed ?? 0;
+      const failed = job.result.failed ?? 0;
+      const warning = job.result.warning ?? 0;
+      counts.textContent = job.progress_total > 0
+        ? `已处理 ${job.progress_completed}/${job.progress_total} · 成功 ${completed} · 失败 ${failed} · 警告 ${warning}`
+        : '等待远端返回子操作计数';
+      info.append(title, status, uid, counts);
+      if (job.error_message && job.status === 'failed') {
+        const error = document.createElement('span');
+        error.className = 'retrieval-job-error';
+        error.textContent = job.error_message;
+        info.append(error);
+      }
+      const actions = document.createElement('div');
+      actions.className = 'admin-row-actions';
+      if (job.status === 'queued' || job.status === 'running') {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'command-button danger';
+        cancel.textContent = job.cancel_requested ? '取消请求已发送' : '取消拉取';
+        cancel.disabled = job.cancel_requested;
+        cancel.addEventListener('click', () => void (async () => {
+          cancel.disabled = true;
+          try {
+            await cancelRetrievalJob(job.id);
+            this.showSuccess('已发送取消请求');
+            await this.refresh();
+          } catch (error) {
+            this.showError(errorMessage(error));
+            cancel.disabled = false;
+          }
+        })());
+        actions.append(cancel);
+      }
+      row.append(info, actions);
+      list.append(row);
+    }
+    fragment.append(list);
+  }
+
+  private scheduleRetrievalPolling(): void {
+    this.stopRetrievalPolling();
+    const active = this.retrievalJobs.some((job) => job.status === 'queued' || job.status === 'running');
+    if (!active || !this.dialog.open || this.tab !== 'retrieval') return;
+    this.retrievalPollingTimer = window.setTimeout(() => {
+      this.retrievalPollingTimer = null;
+      if (this.dialog.open && this.tab === 'retrieval') {
+        void this.refresh().finally(() => this.scheduleRetrievalPolling());
+      }
+    }, 1_500);
+  }
+
+  private stopRetrievalPolling(): void {
+    if (this.retrievalPollingTimer != null) window.clearTimeout(this.retrievalPollingTimer);
+    this.retrievalPollingTimer = null;
   }
 
   private activeDevices(): DicomDevice[] {

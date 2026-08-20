@@ -167,6 +167,7 @@ async fn main() -> Result<()> {
     let _transfer_worker = pacs_web::start_transfer_worker(transform_state.clone());
     let _router_worker = pacs_web::start_router_worker(transform_state.clone());
     let _lifecycle_worker = pacs_web::start_lifecycle_worker(transform_state.clone());
+    let _retrieval_worker = pacs_web::start_retrieval_worker(transform_state.clone());
     let api_routes = pacs_web::worklist_routes(api_state.clone(), auth_service.clone())
         .merge(pacs_web::window_preset_routes(
             api_state.clone(),
@@ -213,6 +214,10 @@ async fn main() -> Result<()> {
                 .merge(pacs_web::clinical_routes(
                     api_state.clone(),
                     auth_service.clone(),
+                ))
+                .merge(pacs_web::retrieval_routes(
+                    api_state.clone(),
+                    auth_service.clone(),
                 )),
         )
         .nest(
@@ -237,7 +242,12 @@ async fn main() -> Result<()> {
     .await
     .with_context(|| format!("DIMSE 无法监听 {}", config.dimse_bind))?;
 
-    let dimse_handler = Arc::new(PacsStoreHandler::new(store, pool));
+    let dimse_handler = Arc::new(PacsStoreHandler::new(
+        store,
+        pool,
+        config.ae_title.clone(),
+        config.dimse_bind,
+    ));
 
     tracing::info!(
         version = pacs_core::VERSION,

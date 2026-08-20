@@ -973,7 +973,45 @@ export interface DicomDevice {
   source_ip: string;
   modality_hint: string | null;
   status: 'pending' | 'active' | 'disabled';
+  is_retrieval_source: boolean;
+  retrieval_port: number | null;
+  retrieval_use_tls: boolean;
   approved_at: string | null;
+}
+
+export interface RemotePacsStudy {
+  study_instance_uid: string;
+  patient_id: string | null;
+  patient_name: string | null;
+  study_date: string | null;
+  accession_number: string | null;
+  modalities: string | null;
+  description: string | null;
+}
+
+export interface RetrievalJob {
+  id: string;
+  kind: 'retrieval';
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  payload: {
+    device_id?: string;
+    source_name?: string;
+    source_ae_title?: string;
+    study_instance_uid?: string;
+  };
+  result: {
+    remaining?: number;
+    completed?: number;
+    failed?: number;
+    warning?: number;
+  };
+  progress_completed: number;
+  progress_total: number;
+  cancel_requested: boolean;
+  error_message: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 }
 
 export interface SeriesSourceEntry {

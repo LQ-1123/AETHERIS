@@ -48,6 +48,7 @@ pub use jobs::{
     recover_expired_jobs as recover_background_jobs, release_job as release_background_job,
     request_job_cancellation, start_job_item as start_background_job_item,
     update_job_progress as update_background_job_progress,
+    update_job_progress_with_result as update_background_job_progress_with_result,
 };
 pub use lifecycle::{
     LegalHold, LifecycleEvent, LifecycleFile, LifecyclePathUpdate, LifecyclePolicy,
@@ -62,7 +63,8 @@ pub use lifecycle::{
     switch_study_storage_tier, update_lifecycle_policy,
 };
 pub use retrieve::{
-    StoredInstance, find_instance, find_instance_for_institution, list_series_instances,
+    RetrievalInstance, StoredInstance, find_instance, find_instance_for_institution,
+    list_series_instances, list_study_retrieval_instances,
 };
 pub use router::{
     ObservedDicomPeer, RoutableSeries, RouteDelivery, RouteDestination, RouteDestinationInput,
@@ -150,12 +152,13 @@ pub use clinical::{
     ApproveDevice, ClinicalWorkItem, DiagnosticReport, DicomDevice, ReportReviewEvent,
     ReportTemplate, ReportVersion, SeriesSourceEntry, approve_device, approve_report,
     assign_work_item, begin_report_amendment, can_access_series, can_access_study, claim_study,
-    claim_work_item, create_report, institution_today, list_clinical_work, list_devices,
-    list_report_review_events, list_report_templates, list_report_versions, list_reports,
-    list_series_sources, observe_device, record_dimse_origin, register_device, release_study,
-    release_work_item, replace_user_device_grants, resolve_series_source, set_device_status,
-    sign_report, start_report_review, study_work_items, submit_report, update_report_draft,
-    user_device_grants, work_item_for_series,
+    claim_work_item, configure_retrieval_source, create_report, institution_today,
+    is_authorized_dimse_peer, list_clinical_work, list_devices, list_report_review_events,
+    list_report_templates, list_report_versions, list_reports, list_retrieval_sources,
+    list_series_sources, move_destination_by_ae, observe_device, record_dimse_origin,
+    register_device, release_study, release_work_item, replace_user_device_grants,
+    resolve_series_source, retrieval_source, set_device_status, sign_report, start_report_review,
+    study_work_items, submit_report, update_report_draft, user_device_grants, work_item_for_series,
 };
 pub use exam_requests::{
     ExamRequest, ExamRequestInput, ExamRequestStudyCandidate, ExistingStudyExamRequestInput,

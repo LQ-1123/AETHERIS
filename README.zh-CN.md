@@ -197,6 +197,8 @@ Rust 服务统一承载 DIMSE、DICOMweb、认证和临床 API。PostgreSQL 保�
 | DIMSE | C-ECHO SCP | 连通性验证 |
 | DIMSE | C-STORE SCP | 持久接收 DICOM 对象并协商传输语法，包括 RLE Lossless |
 | DIMSE | C-FIND SCP | 患者、检查、序列和实例层级查询 |
+| DIMSE | C-MOVE SCP / SCU | Study Root 检索、目的 AE 白名单与 C-STORE 回传入库 |
+| DIMSE | C-GET SCP | 同一 association 内的 Study Root 检索与子操作计数 |
 | DICOMweb | QIDO-RS | 认证后按机构范围查询元数据 |
 | DICOMweb | WADO-RS | 认证后取回对象、实例、元数据和帧 |
 | DICOMweb | STOW-RS | Multipart DICOM Part 10 接入 |

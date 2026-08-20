@@ -164,6 +164,8 @@ fn main() {
             commands::router_get,
             commands::router_write,
             commands::router_delete,
+            commands::retrieval_get,
+            commands::retrieval_write,
             commands::lifecycle_get,
             commands::lifecycle_write,
             commands::lifecycle_delete,

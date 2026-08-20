@@ -7,13 +7,20 @@ pub mod client;
 pub mod command;
 pub mod find;
 pub mod message;
+pub mod retrieve;
 pub mod scp;
 pub mod server;
 pub mod sop_class;
 
-pub use client::{ClientError, DimseClientConfig, echo as c_echo, store as c_store};
+pub use client::{
+    ClientError, DimseClientConfig, MoveResult, echo as c_echo, find as c_find,
+    move_retrieve as c_move, move_retrieve_controlled as c_move_controlled, store as c_store,
+};
 pub use command::{Command, CommandError, CommandField, Status};
 pub use find::{FindFailure, FindHandler, FindRequest, FindResponse};
 pub use message::{DimseMessage, Ended, MessageError};
+pub use retrieve::{
+    MoveDestination, RetrieveFailure, RetrieveHandler, RetrieveRequest, RetrievedInstance,
+};
 pub use scp::{IncomingAssociation, IncomingInstance, StoreFailure, StoreHandler};
 pub use server::{DimseServer, ServerConfig, ServerError};

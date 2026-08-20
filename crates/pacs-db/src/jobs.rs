@@ -1,4 +1,4 @@
-//! Durable background jobs shared by import, export, routing and lifecycle workers.
+//! Durable background jobs shared by import, export, routing, retrieval and lifecycle workers.
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,7 @@ pub enum JobKind {
     Export,
     Route,
     Lifecycle,
+    Retrieval,
 }
 
 impl JobKind {
@@ -24,6 +25,7 @@ impl JobKind {
             Self::Export => "export",
             Self::Route => "route",
             Self::Lifecycle => "lifecycle",
+            Self::Retrieval => "retrieval",
         }
     }
 
@@ -33,6 +35,7 @@ impl JobKind {
             "export" => Ok(Self::Export),
             "route" => Ok(Self::Route),
             "lifecycle" => Ok(Self::Lifecycle),
+            "retrieval" => Ok(Self::Retrieval),
             _ => Err(DbError::Invalid(format!("未知后台任务类型 {raw:?}"))),
         }
     }
@@ -350,6 +353,36 @@ pub async fn update_job_progress(
     Ok(result.rows_affected() == 1)
 }
 
+/// Update both the generic processed/total counters and a kind-specific
+/// progress snapshot. The latter lets callers expose richer counters (for
+/// example DIMSE completed/failed/warning suboperations) without adding
+/// columns to the shared queue.
+pub async fn update_job_progress_with_result(
+    pool: &PgPool,
+    id: Uuid,
+    worker_id: Uuid,
+    completed: i64,
+    total: i64,
+    result: &Value,
+) -> Result<bool, DbError> {
+    if completed < 0 || total < 0 || (total != 0 && completed > total) {
+        return Err(DbError::Invalid("任务进度无效".to_owned()));
+    }
+    let changed = sqlx::query(
+        "UPDATE background_jobs
+         SET progress_completed = $3, progress_total = $4, result = $5
+         WHERE id = $1 AND status = 'running' AND lease_owner = $2",
+    )
+    .bind(id)
+    .bind(worker_id)
+    .bind(completed)
+    .bind(total)
+    .bind(result)
+    .execute(pool)
+    .await?;
+    Ok(changed.rows_affected() == 1)
+}
+
 pub async fn complete_job(
     pool: &PgPool,
     id: Uuid,
@@ -606,6 +639,7 @@ mod tests {
         let migration = [
             include_str!("../migrations/0009_background_jobs.sql"),
             include_str!("../migrations/0016_pause_purge_for_legal_hold.sql"),
+            include_str!("../migrations/0033_retrieval_jobs.sql"),
         ]
         .concat();
         for kind in [
@@ -613,6 +647,7 @@ mod tests {
             JobKind::Export,
             JobKind::Route,
             JobKind::Lifecycle,
+            JobKind::Retrieval,
         ] {
             assert!(migration.contains(&format!("'{}'", kind.as_str())));
         }

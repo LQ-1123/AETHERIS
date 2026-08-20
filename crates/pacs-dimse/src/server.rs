@@ -4,14 +4,37 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use dicom_ul::association::Association;
-use dicom_ul::association::server::ServerAssociationOptions;
+use dicom_ul::association::server::{Negotiation, ServerAssociationOptions};
+use dicom_ul::pdu::RequestorRoles;
 use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::find::FindHandler;
 use crate::message::DEFAULT_MAX_DATASET_BYTES;
+use crate::retrieve::RetrieveHandler;
 use crate::scp::{self, StoreHandler};
 use crate::sop_class;
+
+/// C-GET reverses the normal Storage roles on the same association: the
+/// requestor receives C-STORE as SCP and this server sends it as SCU.
+#[derive(Debug, Clone, Copy)]
+struct RetrieveRoleNegotiation;
+
+impl Negotiation for RetrieveRoleNegotiation {
+    fn negotiate_roles(
+        &self,
+        sop_class_uid: &str,
+        scu_role: bool,
+        scp_role: bool,
+    ) -> Option<RequestorRoles> {
+        sop_class::STORAGE
+            .contains(&sop_class_uid)
+            .then_some(RequestorRoles {
+                scu: scu_role,
+                scp: scp_role,
+            })
+    }
+}
 
 /// DIMSE 服务端配置。
 #[derive(Debug, Clone)]
@@ -23,6 +46,8 @@ pub struct ServerConfig {
     pub max_dataset_bytes: usize,
     /// 单个 PDU 的最大长度。
     pub max_pdu_length: u32,
+    /// Maximum concurrent outbound C-STORE sub-operations for one C-MOVE.
+    pub max_move_suboperations: usize,
 }
 
 impl ServerConfig {
@@ -31,8 +56,11 @@ impl ServerConfig {
             bind,
             ae_title: ae_title.into(),
             max_dataset_bytes: DEFAULT_MAX_DATASET_BYTES,
-            // 16 KiB 是常见取值,大到不会让分帧开销明显,小到单连接内存可控
-            max_pdu_length: 16_384,
+            // C-GET 客户端通常会在 A-ASSOCIATE-RQ 中一次提出上百个 Storage
+            // 表示上下文（DCMTK 3.7 默认 121 个），请求本身会超过 16 KiB。
+            // 128 KiB 可完整接收该协商；数据集仍由 max_dataset_bytes 独立限流。
+            max_pdu_length: 131_072,
+            max_move_suboperations: 4,
         }
     }
 }
@@ -81,7 +109,7 @@ impl DimseServer {
     /// 接受连接并一直服务下去。每个 association 一个任务。
     pub async fn run<H>(self, handler: Arc<H>) -> Result<(), ServerError>
     where
-        H: StoreHandler + FindHandler + 'static,
+        H: StoreHandler + FindHandler + RetrieveHandler + 'static,
     {
         tracing::info!(
             bind = %self.config.bind,
@@ -116,9 +144,10 @@ async fn serve_connection<H>(
     handler: &H,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
-    H: StoreHandler + FindHandler,
+    H: StoreHandler + FindHandler + RetrieveHandler,
 {
     let mut options = ServerAssociationOptions::new()
+        .with_negotiation(RetrieveRoleNegotiation)
         // Called AE Title 必须匹配。这不是认证(AE Title 可以随便填),
         // 只是避免把发错地方的影像收下来。真正的访问控制在阶段 3/8。
         .accept_called_ae_title()
@@ -132,6 +161,9 @@ where
     for uid in sop_class::FIND {
         options = options.with_abstract_syntax(*uid);
     }
+    for uid in sop_class::RETRIEVE {
+        options = options.with_abstract_syntax(*uid);
+    }
     for uid in sop_class::TRANSFER_SYNTAXES {
         options = options.with_transfer_syntax(*uid);
     }
@@ -142,7 +174,14 @@ where
         remote_addr: peer,
     };
     handler.association_opened(&observed).await;
-    let result = scp::serve(association, handler, config.max_dataset_bytes, peer).await;
+    let result = scp::serve(
+        association,
+        handler,
+        config.max_dataset_bytes,
+        config.max_move_suboperations,
+        peer,
+    )
+    .await;
     handler.association_closed(&observed).await;
     result?;
     Ok(())

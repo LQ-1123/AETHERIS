@@ -588,6 +588,53 @@ STOW 目标使用 `stow_url`，可选 `auth_token` 和 `ca_pem`。读取目标�
 
 新目标需经过批准后用于正式投递。`priority` 决定规则匹配次序；部署方应避免多个规则产生意外重复发送。
 
+### 12.1 外部 PACS 查询与拉取
+
+Base URL 为 `/api/v1/retrieval`，仅管理员 JWT 可用。浏览器只提交设备 UUID 和查询条件；外部地址、AE Title、端口及 TLS 配置始终由服务端从本机构的已批准设备记录解析。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `GET /sources` | 列出已启用的外部 PACS 检索源 |
+| `PUT /sources/{device_id}` | 启用、停用或更新检索端口/TLS |
+| `POST /sources/{device_id}/query` | 通过 Study Root C-FIND 查询远端检查 |
+| `POST /sources/{device_id}/move` | 创建持久化 Study Root C-MOVE 拉取任务，返回 `202` |
+| `GET /jobs` | 列出最近 100 个拉取任务及 Pending 进度 |
+| `GET /jobs/{job_id}` | 查询单个拉取任务 |
+| `POST /jobs/{job_id}/cancel` | 取消排队任务或向运行中任务发送合作式 C-CANCEL |
+
+启用检索源：
+
+```json
+{
+  "enabled": true,
+  "port": 104,
+  "use_tls": false,
+  "ca_pem": null
+}
+```
+
+查询条件均可选；日期使用 `YYYY-MM-DD`：
+
+```json
+{
+  "patient_id": "P-2026",
+  "accession_number": null,
+  "study_date_from": "2026-08-01",
+  "study_date_to": "2026-08-20",
+  "modality": "CT"
+}
+```
+
+创建拉取任务：
+
+```json
+{"study_instance_uid":"1.2.840.113619.2.55.3.604688.1"}
+```
+
+`POST /move` 不等待远端传输完成，而是返回通用后台任务对象。`status` 依次为 `queued`、`running` 和终态 `succeeded`、`failed` 或 `cancelled`；`progress_completed/progress_total` 表示已处理子操作，`result` 保存 DIMSE `remaining/completed/failed/warning` 计数。运行中取消会设置 `cancel_requested`，worker 在当前 association 上发送 C-CANCEL，并在收到远端取消终态后结束任务。
+
+外部 PACS 必须把 C-STORE 回推到本机 AE；回传实例继续进入现有幂等入库、来源设备归属和机构授权链路。作为 C-MOVE SCP 时，服务端只允许本机 AE 或机构内 active 且已配置端口的目的 AE；未知目的地返回标准 `0xA801 Move Destination Unknown`，不会尝试把请求中的 AE 当作网络地址。
+
 ## 13. 生命周期 API
 
 Base URL 为 `/api/v1/lifecycle`。要求管理员 JWT 或 API Key `admin` Scope。这些接口可能移动或永久清除影像，应只供受控管理程序使用。

@@ -75,6 +75,11 @@ pub struct DicomDevice {
     pub source_ip: String,
     pub modality_hint: Option<String>,
     pub status: String,
+    pub is_retrieval_source: bool,
+    pub retrieval_port: Option<i32>,
+    pub retrieval_use_tls: bool,
+    #[serde(skip_serializing)]
+    pub retrieval_ca_pem: Option<String>,
     pub first_seen_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub approved_at: Option<DateTime<Utc>>,
@@ -99,6 +104,7 @@ pub async fn observe_device(
            ON CONFLICT (institution_id,calling_ae_title,source_ip) DO UPDATE
              SET last_seen_at=now()
            RETURNING id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                     is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
                      first_seen_at,last_seen_at,approved_at"#,
     )
     .bind(Uuid::new_v4())
@@ -117,6 +123,7 @@ pub async fn list_devices(
 ) -> Result<Vec<DicomDevice>, DbError> {
     Ok(sqlx::query_as(
         r#"SELECT id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                  is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
                   first_seen_at,last_seen_at,approved_at
            FROM dicom_devices WHERE institution_id=$1 AND ($2::TEXT IS NULL OR status=$2)
            ORDER BY status,name,calling_ae_title,source_ip"#,
@@ -142,6 +149,7 @@ pub async fn register_device(
                    modality_hint)
            VALUES($1,$2,$3,$4,$5,$6)
            RETURNING id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                     is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
                      first_seen_at,last_seen_at,approved_at"#,
     )
     .bind(Uuid::new_v4())
@@ -158,6 +166,120 @@ pub async fn register_device(
         }
         other => DbError::from(other),
     })
+}
+
+/// 将已登记设备配置为外部 PACS 检索源。只有 active 设备才允许启用，避免
+/// 未经批准的自动发现对端获得主动外连能力。
+pub async fn configure_retrieval_source(
+    pool: &PgPool,
+    institution_id: i64,
+    device_id: Uuid,
+    enabled: bool,
+    port: Option<i32>,
+    use_tls: bool,
+    ca_pem: Option<&str>,
+) -> Result<DicomDevice, DbError> {
+    if enabled && !matches!(port, Some(1..=65_535)) {
+        return Err(DbError::Invalid(
+            "启用外部 PACS 检索时必须提供 1-65535 端口".to_owned(),
+        ));
+    }
+    sqlx::query_as(
+        r#"UPDATE dicom_devices
+           SET is_retrieval_source=$3,
+               retrieval_port=CASE WHEN $3 THEN $4 ELSE NULL END,
+               retrieval_use_tls=CASE WHEN $3 THEN $5 ELSE false END,
+               retrieval_ca_pem=CASE WHEN $3 THEN $6 ELSE NULL END
+           WHERE institution_id=$1 AND id=$2 AND (NOT $3 OR status='active')
+           RETURNING id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                     is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
+                     first_seen_at,last_seen_at,approved_at"#,
+    )
+    .bind(institution_id)
+    .bind(device_id)
+    .bind(enabled)
+    .bind(port)
+    .bind(use_tls)
+    .bind(ca_pem)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::NotFound)
+}
+
+pub async fn list_retrieval_sources(
+    pool: &PgPool,
+    institution_id: i64,
+) -> Result<Vec<DicomDevice>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                  is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
+                  first_seen_at,last_seen_at,approved_at
+           FROM dicom_devices
+           WHERE institution_id=$1 AND is_retrieval_source
+           ORDER BY name,calling_ae_title,source_ip"#,
+    )
+    .bind(institution_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn retrieval_source(
+    pool: &PgPool,
+    institution_id: i64,
+    device_id: Uuid,
+) -> Result<DicomDevice, DbError> {
+    sqlx::query_as(
+        r#"SELECT id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                  is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
+                  first_seen_at,last_seen_at,approved_at
+           FROM dicom_devices
+           WHERE institution_id=$1 AND id=$2 AND status='active' AND is_retrieval_source"#,
+    )
+    .bind(institution_id)
+    .bind(device_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DbError::NotFound)
+}
+
+/// Resolve a C-MOVE destination only from approved institution devices.
+pub async fn move_destination_by_ae(
+    pool: &PgPool,
+    institution_id: i64,
+    ae_title: &str,
+) -> Result<Option<DicomDevice>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                  is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
+                  first_seen_at,last_seen_at,approved_at
+           FROM dicom_devices
+           WHERE institution_id=$1 AND status='active'
+             AND calling_ae_title=$2 AND retrieval_port IS NOT NULL
+           ORDER BY last_seen_at DESC LIMIT 1"#,
+    )
+    .bind(institution_id)
+    .bind(ae_title.trim())
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn is_authorized_dimse_peer(
+    pool: &PgPool,
+    institution_id: i64,
+    ae_title: &str,
+    source_ip: &str,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT EXISTS(
+             SELECT 1 FROM dicom_devices
+             WHERE institution_id=$1 AND status='active'
+               AND calling_ae_title=$2 AND source_ip=$3)"#,
+    )
+    .bind(institution_id)
+    .bind(ae_title.trim())
+    .bind(source_ip)
+    .fetch_one(pool)
+    .await?)
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -217,6 +339,7 @@ pub async fn approve_device(
                   approved_by=$5,approved_at=COALESCE(approved_at,now())
            WHERE institution_id=$1 AND id=$2
            RETURNING id,institution_id,name,calling_ae_title,source_ip,modality_hint,status,
+                     is_retrieval_source,retrieval_port,retrieval_use_tls,retrieval_ca_pem,
                      first_seen_at,last_seen_at,approved_at"#,
     )
     .bind(institution_id)

@@ -15,6 +15,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::command::{self, CommandField, Status};
 use crate::find::{self, FindHandler};
 use crate::message::{self, DimseMessage, Ended, MessageError};
+use crate::retrieve::{self, RetrieveHandler};
 
 /// 一份收到的影像。
 #[derive(Debug)]
@@ -85,11 +86,12 @@ pub async fn serve<S, H>(
     mut association: AsyncServerAssociation<S>,
     handler: &H,
     max_dataset_bytes: usize,
+    max_move_suboperations: usize,
     remote_addr: SocketAddr,
 ) -> Result<(), MessageError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
-    H: StoreHandler + FindHandler,
+    H: StoreHandler + FindHandler + RetrieveHandler,
 {
     let calling_ae_title = association.peer_ae_title().to_owned();
     tracing::info!(calling_ae_title, "association 已建立");
@@ -131,6 +133,40 @@ where
                     context_id,
                     handler,
                     &calling_ae_title,
+                )
+                .await?;
+                continue;
+            }
+            Ok(CommandField::CMoveRq) => {
+                retrieve::handle_move(
+                    &mut association,
+                    handler,
+                    retrieve::RetrieveMessage {
+                        command: &message.command,
+                        identifier_bytes: message.dataset.as_deref(),
+                        presentation_context_id: context_id,
+                        calling_ae_title: &calling_ae_title,
+                        remote_addr,
+                        max_dataset_bytes,
+                        max_suboperations: max_move_suboperations,
+                    },
+                )
+                .await?;
+                continue;
+            }
+            Ok(CommandField::CGetRq) => {
+                retrieve::handle_get(
+                    &mut association,
+                    handler,
+                    retrieve::RetrieveMessage {
+                        command: &message.command,
+                        identifier_bytes: message.dataset.as_deref(),
+                        presentation_context_id: context_id,
+                        calling_ae_title: &calling_ae_title,
+                        remote_addr,
+                        max_dataset_bytes,
+                        max_suboperations: max_move_suboperations,
+                    },
                 )
                 .await?;
                 continue;

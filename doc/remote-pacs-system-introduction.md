@@ -44,7 +44,7 @@ Remote PACS 将这些问题视为同一系统中的一致性与边界设计问�
 
 ### 1.3 研究内容与范围
 
-本文研究对象包括服务端 Rust workspace、Tauri 桌面 Viewer、PostgreSQL 数据结构和本地文件归档。系统已经实现 C-ECHO、C-STORE、C-FIND、QIDO-RS、WADO-RS 与 STOW-RS，但尚未实现 C-MOVE/C-GET SCP；Viewer 已覆盖灰度、RGB/YBR/Palette Color、Cine、MPR、MIP/MinIP、基于 Three.js/WebGL2 的 GPU 体渲染和 PET SUVbw 条件计算，但并非对所有可归档 SOP Class 都提供专科级显示；`pacs-ai` 当前只是空的占位 crate，没有推理模型、运行时或任务表实现。上述边界在第 10 章进一步讨论。
+本文研究对象包括服务端 Rust workspace、Tauri 桌面 Viewer、PostgreSQL 数据结构和本地文件归档。系统已经实现 C-ECHO、C-STORE、C-FIND、Study Root C-MOVE/C-GET、QIDO-RS、WADO-RS 与 STOW-RS；管理员还能通过独立控制台配置外部 PACS，使用 C-FIND 查询并以 C-MOVE 拉取检查。Viewer 已覆盖灰度、RGB/YBR/Palette Color、Cine、MPR、MIP/MinIP、基于 Three.js/WebGL2 的 GPU 体渲染和 PET SUVbw 条件计算，但并非对所有可归档 SOP Class 都提供专科级显示；`pacs-ai` 当前只是空的占位 crate，没有推理模型、运行时或任务表实现。上述边界在第 10 章进一步讨论。
 
 ---
 
@@ -210,16 +210,16 @@ PostgreSQL 当前是系统唯一关系数据库实现；本地热层、冷层和
 
 系统对外接口分为四组。
 
-1. DIMSE：C-ECHO、C-STORE 和 Patient Root/Study Root C-FIND；路由侧另提供 C-ECHO/C-STORE SCU。
+1. DIMSE：C-ECHO、C-STORE、Patient Root/Study Root C-FIND、Study Root C-MOVE/C-GET；路由侧另提供 C-ECHO/C-STORE SCU，外部拉取侧提供 C-FIND/C-MOVE SCU。
 2. DICOMweb：`/dicomweb/studies` 下的 QIDO-RS、WADO-RS 和 STOW-RS。
 3. Viewer API：`/api` 下的患者/检查/序列、共享标注、分割，以及 `/api/dicom` 修订接口。
-4. 管理与临床 API：`/api/v1` 下的用户、角色、设备授权、待诊工作项、诊断报告、服务账号、导入导出、Router、Lifecycle 与 OpenAPI 文档。
+4. 管理与临床 API：`/api/v1` 下的用户、角色、设备授权、待诊工作项、诊断报告、外部 PACS 检索任务、服务账号、导入导出、Router、Lifecycle 与 OpenAPI 文档。
 
 路由树采用默认保护原则。例如 DICOMweb 读取子树统一要求 `ViewImages`，STOW 子树要求个人上传权限或服务账号 `upload` Scope；Router 接受管理员 JWT 或 `route` Scope；Lifecycle 接受管理员 JWT 或 `admin` Scope。权限中间件先识别身份并写入 Request Extension，处理器再使用身份中的 Institution ID 约束 SQL。
 
 ### 4.4 后台任务架构
 
-导入、导出、路由和生命周期共用 `background_jobs` 与 `background_job_items`。任务状态包含 `queued`、`running`、`paused`、`succeeded`、`failed` 和 `cancelled`；明细状态用于表达单文件或单实例的成功、跳过、冲突和失败。Worker 使用 PostgreSQL 原子领取：
+导入、导出、路由、外部 PACS 拉取和生命周期共用 `background_jobs` 与 `background_job_items`。任务状态包含 `queued`、`running`、`paused`、`succeeded`、`failed` 和 `cancelled`；明细状态用于表达单文件或单实例的成功、跳过、冲突和失败。拉取任务还把 C-MOVE Pending 的 remaining/completed/failed/warning 写入 `result`，并通过数据库取消标志驱动合作式 C-CANCEL。Worker 使用 PostgreSQL 原子领取：
 
 ```sql
 SELECT id
@@ -710,7 +710,7 @@ UID 会进入文件路径，因此在入库前必须使用 `Uid::parse` 校验�
 
 ### 8.3 资源控制
 
-主要资源边界包括：DIMSE 单 Dataset 上限和 16 KiB PDU；QIDO/C-FIND 最大结果数；上传分块 8 MiB、单文件 1 GiB；归档条目 100 000、展开总量 20 GiB、压缩比 100；Mask 单层 64 MiB、批量最多 2048 层；MPR 体数据 768 MiB、切片缓存 192 MiB；前端帧 LRU 约 128 MiB、Rust 解码帧缓存约 512 MiB。压缩像素解码和 MPR 使用阻塞线程或并行计算，不在异步网络任务中直接执行。
+主要资源边界包括：DIMSE 单 Dataset 独立上限和 128 KiB 入站 PDU 上限（可容纳 DCMTK C-GET 默认 121 个表示上下文，P-DATA 仍按双方协商值分帧）；QIDO/C-FIND 最大结果数；上传分块 8 MiB、单文件 1 GiB；归档条目 100 000、展开总量 20 GiB、压缩比 100；Mask 单层 64 MiB、批量最多 2048 层；MPR 体数据 768 MiB、切片缓存约 192 MiB；前端帧 LRU 约 128 MiB、Rust 解码帧缓存约 512 MiB。压缩像素解码和 MPR 使用阻塞线程或并行计算，不在异步网络任务中直接执行。
 
 ### 8.4 Viewer 异步正确性
 
@@ -733,7 +733,7 @@ Viewer 为帧请求维护版本号。当用户快速滚动、切换 Series 或�
 | Rust 单元测试 | UID、布局、查询、字符集、几何、间距、LUT、帧号、RLE、CLI 等纯逻辑 |
 | PostgreSQL 集成测试 | 入库事务、版本链、任务租约、Annotation、Segmentation、Router、Lifecycle |
 | HTTP 集成测试 | STOW、认证、服务账号、导入导出和接口错误语义 |
-| DCMTK 互操作测试 | `echoscu`、`storescu`、`findscu`、`storescp` 与真实 TCP 流量 |
+| DCMTK 互操作测试 | `echoscu`、`storescu`、`findscu`、`movescu`、`getscu`、`storescp` 与真实 TCP 流量 |
 | 字节保真测试 | 验证接收后 Dataset 字节与发送方一致，重复发送不产生新实例 |
 | Viewer TypeScript 测试 | 几何变换、Annotation、Mask、LRU、请求版本、拓扑和报告 |
 | Tauri Rust 测试 | 文件解析、帧解码、图像分组、MPR、体纹理、RGB/Cine/PET 元数据 |
@@ -743,7 +743,7 @@ Viewer 为帧请求维护版本号。当用户快速滚动、切换 Series 或�
 
 ### 9.2 关键验收场景
 
-关键场景包括：相同 SOP 重传、同 UID 异内容、数据库提交失败、文件摘要不符、中文错误字符集、C-FIND 不支持键、QIDO 空结果、WADO 帧边界、Refresh Token 重放、Annotation/Mask Revision 冲突、上传偏移冲突、归档路径穿越、路由离线与死信重放、层迁移中断、Hold 暂停清除、隔离数据不可见和 PET 必要 Tag 缺失。
+关键场景包括：相同 SOP 重传、同 UID 异内容、数据库提交失败、文件摘要不符、中文错误字符集、C-FIND 不支持键、C-MOVE 双实例 Pending/Success、未知 Move Destination 0xA801 拒绝、C-GET Storage 角色反转、QIDO 空结果、WADO 帧边界、Refresh Token 重放、Annotation/Mask Revision 冲突、上传偏移冲突、归档路径穿越、路由离线与死信重放、层迁移中断、Hold 暂停清除、隔离数据不可见和 PET 必要 Tag 缺失。
 
 ### 9.3 性能验证
 
@@ -755,7 +755,7 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 
 参数分别表示实例数、并发数和像素边长。基准必须使用 Release 构建，因为 Debug 下 DICOM 解析性能与生产行为差异显著。Viewer 性能主要通过有界缓存、二进制帧协议、预取、请求版本和 MPR 资源上限控制；当前仓库没有给出跨硬件统一的临床帧率指标，因此本文不虚构固定吞吐量或延迟结论。
 
-本文基线核对期间，Viewer 的 29 项 Vitest 测试全部通过，`npm run build` 生产构建通过。构建产物中的体渲染模块压缩前约 530 KiB，触发 Vite 的 500 KiB Chunk 提示但不导致构建失败；后续可通过按模式动态加载或手工分包降低首次加载成本。本文档任务没有重新执行依赖真实 PostgreSQL、DCMTK 和桌面运行环境的全 Workspace 测试，相关结论引用仓库既有集成测试和验收记录。
+本次 v0.4.0 验收中，Viewer 的 15 个 Vitest 测试文件、78 项测试全部通过，`npm run build` 生产构建通过；Rust 侧已实际执行 `cargo fmt --all -- --check`、`cargo check --workspace`、严格 Clippy 和全 Workspace 测试，并覆盖真实 PostgreSQL 集成测试。DCMTK 互操作验收也已实际执行 `echoscu`、`storescu`、`findscu`、`movescu`、`getscu` 和 `storescp`，包括双实例 C-MOVE、Pending/Success 计数、未知目的 AE 拒绝及 C-GET Storage 角色反转。构建产物中的体渲染模块压缩前约 530 KiB，触发 Vite 的 500 KiB Chunk 提示但不导致构建失败；后续可通过按模式动态加载或手工分包降低首次加载成本。
 
 ---
 
@@ -763,14 +763,13 @@ cargo run --release -p pacsd --example bench_ingest -- 200 8 512
 
 ### 10.1 当前未实现能力
 
-1. DIMSE C-MOVE/C-GET SCP 尚未实现；当前取回主要使用 WADO-RS。
-2. Mask 尚不能发布或导入标准 DICOM SEG，也没有待关联 SEG 工作流。
-3. 高级科研查询尚未形成独立 `/api/v1/search/studies` 组合查询接口。
-4. Mask 半自动算法、区域生长、连通域、形态学、插层和 DICOM SEG 验证尚未实现。
-5. GPU 体渲染当前是单体数据的直接体绘制，尚未包含裁剪平面、Mask 三维叠加、分割表面重建或 PET/CT 融合。
-6. PET/CT 融合、MG 专科挂片和完整 Hanging Protocol 尚未实现。
-7. `pacs-ai` 只有接口预留，不包含 ONNX、Torch、GPU 推理、模型管理或自动诊断。
-8. 本地文件系统分层尚未扩展到对象存储和跨节点高可用部署。
+1. Mask 尚不能发布或导入标准 DICOM SEG，也没有待关联 SEG 工作流。
+2. 高级科研查询尚未形成独立 `/api/v1/search/studies` 组合查询接口。
+3. Mask 半自动算法、区域生长、连通域、形态学、插层和 DICOM SEG 验证尚未实现。
+4. GPU 体渲染当前是单体数据的直接体绘制，尚未包含裁剪平面、Mask 三维叠加、分割表面重建或 PET/CT 融合。
+5. PET/CT 融合、MG 专科挂片和完整 Hanging Protocol 尚未实现。
+6. `pacs-ai` 只有接口预留，不包含 ONNX、Torch、GPU 推理、模型管理或自动诊断。
+7. 本地文件系统分层尚未扩展到对象存储和跨节点高可用部署。
 
 ### 10.2 后续研究方向
 

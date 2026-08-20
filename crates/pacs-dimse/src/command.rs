@@ -96,6 +96,8 @@ impl Status {
     pub const PROCESSING_FAILURE: Self = Self(0x0110);
     /// SOP Class 不被支持。
     pub const SOP_CLASS_NOT_SUPPORTED: Self = Self(0x0122);
+    /// C-MOVE:请求中的 Move Destination 未配置或未获批准。
+    pub const MOVE_DESTINATION_UNKNOWN: Self = Self(0xA801);
     /// 参数值非法 —— 比如 UID 校验没过。
     pub const INVALID_ARGUMENT_VALUE: Self = Self(0x0115);
     /// C-FIND:标识符与 SOP Class 对不上(层级非法、缺 QueryRetrieveLevel)。
@@ -214,8 +216,29 @@ impl Command {
         self.text_at(tags::AFFECTED_SOP_INSTANCE_UID)
     }
 
+    /// C-MOVE-RQ 的 Move Destination(AE Title)。
+    pub fn move_destination(&self) -> Option<String> {
+        self.text_at(tags::MOVE_DESTINATION)
+    }
+
     pub fn status(&self) -> Option<Status> {
         self.u16_at(tags::STATUS).map(Status)
+    }
+
+    pub fn remaining_suboperations(&self) -> Option<u16> {
+        self.u16_at(tags::NUMBER_OF_REMAINING_SUBOPERATIONS)
+    }
+
+    pub fn completed_suboperations(&self) -> Option<u16> {
+        self.u16_at(tags::NUMBER_OF_COMPLETED_SUBOPERATIONS)
+    }
+
+    pub fn failed_suboperations(&self) -> Option<u16> {
+        self.u16_at(tags::NUMBER_OF_FAILED_SUBOPERATIONS)
+    }
+
+    pub fn warning_suboperations(&self) -> Option<u16> {
+        self.u16_at(tags::NUMBER_OF_WARNING_SUBOPERATIONS)
     }
 
     /// 后面是否跟着数据集。
@@ -350,6 +373,81 @@ pub fn c_find_rq(message_id: u16, sop_class_uid: &str) -> Command {
     ]))
 }
 
+/// C-MOVE/C-GET-RSP。
+///
+/// Pending 响应携带四个子操作计数，最终响应只需要状态码；不过把计数一并
+/// 填入可以让 DCMTK 和管理界面给出有用的进度，而不会改变最终响应语义。
+pub fn c_retrieve_rsp(
+    request: &Command,
+    field: CommandField,
+    status: Status,
+    remaining: u16,
+    completed: u16,
+    failed: u16,
+    warning: u16,
+) -> Command {
+    let mut elements = vec![
+        element_us(tags::COMMAND_FIELD, field.as_u16()),
+        element_us(
+            tags::MESSAGE_ID_BEING_RESPONDED_TO,
+            request.message_id().unwrap_or(0),
+        ),
+        element_us(tags::COMMAND_DATA_SET_TYPE, NO_DATA_SET),
+        element_us(tags::STATUS, status.0),
+        element_us(tags::NUMBER_OF_REMAINING_SUBOPERATIONS, remaining),
+        element_us(tags::NUMBER_OF_COMPLETED_SUBOPERATIONS, completed),
+        element_us(tags::NUMBER_OF_FAILED_SUBOPERATIONS, failed),
+        element_us(tags::NUMBER_OF_WARNING_SUBOPERATIONS, warning),
+    ];
+    if let Some(uid) = request.affected_sop_class_uid() {
+        elements.push(element_ui(tags::AFFECTED_SOP_CLASS_UID, &uid));
+    }
+    elements.sort_by_key(|element| element.header().tag);
+    Command(InMemDicomObject::command_from_element_iter(elements))
+}
+
+/// C-MOVE-RQ。Move Destination 是 AE Title，不是网络地址；地址解析必须由
+/// SCP 的白名单处理器完成，避免把协议层变成任意外连能力。
+pub fn c_move_rq(message_id: u16, sop_class_uid: &str, destination: &str) -> Command {
+    let mut elements = vec![
+        element_ui(tags::AFFECTED_SOP_CLASS_UID, sop_class_uid),
+        element_us(tags::COMMAND_FIELD, CommandField::CMoveRq.as_u16()),
+        element_us(tags::MESSAGE_ID, message_id),
+        element_us(tags::PRIORITY, 0x0000),
+        element_us(tags::COMMAND_DATA_SET_TYPE, IDENTIFIER_PRESENT),
+        DataElement::new(
+            tags::MOVE_DESTINATION,
+            VR::AE,
+            PrimitiveValue::from(destination.to_owned()),
+        ),
+    ];
+    elements.sort_by_key(|element| element.header().tag);
+    Command(InMemDicomObject::command_from_element_iter(elements))
+}
+
+/// C-GET-RQ。C-GET 没有 Move Destination，影像在同一 association 返回。
+pub fn c_get_rq(message_id: u16, sop_class_uid: &str) -> Command {
+    Command(InMemDicomObject::command_from_element_iter([
+        element_ui(tags::AFFECTED_SOP_CLASS_UID, sop_class_uid),
+        element_us(tags::COMMAND_FIELD, CommandField::CGetRq.as_u16()),
+        element_us(tags::MESSAGE_ID, message_id),
+        element_us(tags::PRIORITY, 0x0000),
+        element_us(tags::COMMAND_DATA_SET_TYPE, IDENTIFIER_PRESENT),
+    ]))
+}
+
+/// C-CANCEL-RQ uses MessageIDBeingRespondedTo to identify the in-flight operation.
+pub fn c_cancel_rq(message_id_being_responded_to: u16) -> Command {
+    Command(InMemDicomObject::command_from_element_iter([
+        element_us(tags::COMMAND_FIELD, CommandField::CCancelRq.as_u16()),
+        element_us(
+            tags::MESSAGE_ID_BEING_RESPONDED_TO,
+            message_id_being_responded_to,
+        ),
+        element_us(tags::COMMAND_DATA_SET_TYPE, NO_DATA_SET),
+    ]))
+}
+
 fn element_us(tag: dicom::core::Tag, value: u16) -> dicom::object::mem::InMemElement {
     DataElement::new(tag, VR::US, PrimitiveValue::from(value))
 }
@@ -471,6 +569,31 @@ mod tests {
             "发送方靠它判断是哪一份影像存成功了"
         );
         assert!(!response.has_data_set());
+    }
+
+    #[test]
+    fn move_request_and_response_preserve_destination_and_counts() {
+        let request = c_move_rq(9, crate::sop_class::STUDY_ROOT_MOVE, "REMOTE_PACS");
+        let decoded = Command::decode(&request.encode().unwrap()).unwrap();
+        assert_eq!(decoded.command_field().unwrap(), CommandField::CMoveRq);
+        assert_eq!(decoded.move_destination().as_deref(), Some("REMOTE_PACS"));
+        assert!(decoded.has_data_set());
+
+        let response = c_retrieve_rsp(
+            &decoded,
+            CommandField::CMoveRsp,
+            Status::PENDING,
+            3,
+            5,
+            1,
+            2,
+        );
+        let response = Command::decode(&response.encode().unwrap()).unwrap();
+        assert_eq!(response.message_id_being_responded_to(), Some(9));
+        assert_eq!(response.remaining_suboperations(), Some(3));
+        assert_eq!(response.completed_suboperations(), Some(5));
+        assert_eq!(response.failed_suboperations(), Some(1));
+        assert_eq!(response.warning_suboperations(), Some(2));
     }
 
     /// CommandDataSetType 不是布尔量,只有 0x0101 表示「没有数据集」。

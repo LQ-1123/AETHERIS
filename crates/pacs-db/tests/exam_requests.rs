@@ -226,7 +226,8 @@ async fn exam_requests_are_tenant_scoped_bind_once_and_aggregate_workload() {
     .await
     .unwrap();
 
-    let rows = pacs_db::workload_report(&pool, 1, Utc::now().date_naive(), Utc::now().date_naive())
+    let today = pacs_db::institution_today(&pool, 1).await.unwrap();
+    let rows = pacs_db::workload_report(&pool, 1, today, today)
         .await
         .unwrap();
     let tech = rows.iter().find(|row| row.user_id == technician).unwrap();

@@ -55,3 +55,6 @@ temp/acceptance/
 temp/exam-request-workload-checklist/
 temp/release-0.3.0/
 temp/readme-preview/
+
+# Playwright 验收截图（可重建）
+temp/playwright/

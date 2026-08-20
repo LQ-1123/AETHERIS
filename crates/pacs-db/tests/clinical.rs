@@ -99,7 +99,7 @@ async fn device_scope_claim_and_signed_report_are_enforced() {
         1,
         doctor,
         false,
-        chrono::Utc::now().date_naive(),
+        pacs_db::institution_today(&pool, 1).await.unwrap(),
         None,
     )
     .await

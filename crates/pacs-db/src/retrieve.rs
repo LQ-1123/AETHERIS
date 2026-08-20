@@ -16,6 +16,37 @@ pub struct StoredInstance {
     pub transfer_syntax_uid: String,
 }
 
+/// DIMSE C-MOVE/C-GET uses the same immutable archived object as WADO-RS, but
+/// needs every instance in a study and its negotiated SOP identity.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct RetrievalInstance {
+    pub storage_path: String,
+    pub sop_instance_uid: String,
+    pub sop_class_uid: String,
+    pub transfer_syntax_uid: String,
+}
+
+pub async fn list_study_retrieval_instances(
+    pool: &PgPool,
+    institution_id: i64,
+    study_uid: &str,
+) -> Result<Vec<RetrievalInstance>, DbError> {
+    Ok(sqlx::query_as(
+        r#"SELECT i.storage_path,i.sop_instance_uid,
+                  COALESCE(i.sop_class_uid,'') sop_class_uid,i.transfer_syntax_uid
+           FROM instances i
+           JOIN series se ON se.id=i.series_fk
+           JOIN studies st ON st.id=se.study_fk
+           WHERE st.institution_id=$1 AND st.study_instance_uid=$2
+             AND st.storage_tier <> 'quarantine'
+           ORDER BY se.series_instance_uid,i.instance_number NULLS LAST,i.sop_instance_uid"#,
+    )
+    .bind(institution_id)
+    .bind(study_uid)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// 按三层 UID 定位一个实例。
 ///
 /// 三个 UID 都要匹配,不能只用 SOPInstanceUID。虽然它本身唯一,但 URL 里的
